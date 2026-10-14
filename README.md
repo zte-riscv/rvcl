@@ -67,7 +67,7 @@ The datatype model separates **roles** (storage / compute / accumulation); the u
 
 ## Quick Start
 
-Requirements: CMake ≥ 3.16, a C11 compiler, pthread. No RISC-V toolchain needed for now — the reference backend builds and runs on x86_64 hosts (it is the golden implementation for differential testing).
+Requirements: CMake ≥ 3.16, a C++17 compiler, pthread. No RISC-V toolchain needed for now — the reference backend builds and runs on x86_64 hosts (it is the golden implementation for differential testing).
 
 ```bash
 git clone <repo-url> && cd rvcl
@@ -95,7 +95,7 @@ cmake -B build -S . -DRVCL_ENABLE_RVV=ON   # likewise IME / VME / AME
 **Cross-build for rv64 and run under QEMU** (what the riscv64 CI does — see `.github/workflows/ci-riscv.yml` and `.github/automation/riscv/`):
 
 ```bash
-sudo apt install gcc-14-riscv64-linux-gnu qemu-user-static ninja-build
+sudo apt install g++-14-riscv64-linux-gnu qemu-user-static ninja-build
 cmake -B build-rv64 -S . -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/riscv64.cmake \
@@ -111,7 +111,7 @@ The capability gate (`rvcl_capability_assert`) prints the detected feature set a
 
 ## Usage Examples
 
-**One-shot call** (full example in `examples/matmul.c`):
+**One-shot call** (full example in `examples/matmul.cpp`):
 
 ```c
 #include "rvcl/rvcl.h"
@@ -160,12 +160,12 @@ rvcl/
 │   ├── runtime/         # capability / registry / dispatch / init / scheduler
 │   ├── operators/       # semantic-layer operators (matmul)
 │   └── backends/        # reference/ (golden FP32); rvv/ ime/ vme/ ame/ per roadmap
-├── examples/matmul.c
-├── tests/smoke_test.c   # 24 contract checks
+├── examples/matmul.cpp
+├── tests/smoke_test.cpp # 24 contract checks
 └── CMakeLists.txt
 ```
 
-Adding a backend = a new `src/backends/<name>/` directory + one registration line in `init.c` + one CMake switch. The dispatch/registry/scheduler/memory framework needs zero changes.
+Adding a backend = a new `src/backends/<name>/` directory + one registration line in `init.cpp` + one CMake switch. The dispatch/registry/scheduler/memory framework needs zero changes.
 
 ## Roadmap
 

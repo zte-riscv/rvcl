@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/bench_matmul.c — benchmark harness with mode separation + JSONL
+ * tests/bench_matmul.cpp — benchmark harness with mode separation + JSONL
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -43,9 +43,9 @@
 #include <time.h>
 
 #include "rvcl/rvcl.h"
-#include "golden.h"
-#include "../src/backends/rvv/rvv_fp16.h"
-#include "../src/backends/rvv/rvv_internal.h"
+#include "golden.hpp"
+#include "../src/backends/rvv/rvv_fp16.hpp"
+#include "../src/backends/rvv/rvv_internal.hpp"
 
 /* ------------------------------------------------------------- timing */
 
@@ -123,7 +123,8 @@ static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
             bcorpus_fatal(file, line, "duplicate label n\"%s\"", label);
     if (c->count == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 64;
-        c->cases = realloc(c->cases, (size_t)c->cap * sizeof(*c->cases));
+        c->cases = (bcase_t *)realloc(c->cases,
+                (size_t)c->cap * sizeof(*c->cases));
         if (!c->cases) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
@@ -404,18 +405,18 @@ typedef enum { MODE_C, MODE_P, MODE_S } bench_mode_t;
  * optimization by design; C shares data with the differential run) */
 static void fill_case(case_t *cs, int f16, bench_mode_t mode) {
     const uint32_t seed = golden_case_seed(cs->m, cs->n, cs->k);
-    cs->a = calloc((size_t)(cs->m * cs->k), 4);
-    cs->b = calloc((size_t)(cs->k * cs->n), 4);
-    cs->c = calloc((size_t)(cs->m * cs->n), 4);
-    cs->bias = calloc((size_t)cs->n, 4);
+    cs->a = (float *)calloc((size_t)(cs->m * cs->k), 4);
+    cs->b = (float *)calloc((size_t)(cs->k * cs->n), 4);
+    cs->c = (float *)calloc((size_t)(cs->m * cs->n), 4);
+    cs->bias = (float *)calloc((size_t)cs->n, 4);
     lcg_fill_f32(cs->a, (size_t)(cs->m * cs->k), seed);
     lcg_fill_f32(cs->b, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
     lcg_fill_f32(cs->bias, (size_t)cs->n, seed ^ 0x85ebca6bu);
     if (!f16) return;
 
     if (mode == MODE_P) {
-        cs->ah = calloc((size_t)(cs->m * cs->k), 2);
-        cs->bh = calloc((size_t)(cs->k * cs->n), 2);
+        cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
+        cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
         for (int64_t i = 0; i < cs->m * cs->k; i++)
             cs->ah[i] = rvv_f32_to_f16(cs->a[i]);
         for (int64_t i = 0; i < cs->k * cs->n; i++)
@@ -425,8 +426,8 @@ static void fill_case(case_t *cs, int f16, bench_mode_t mode) {
         free(cs->b);
         cs->a = NULL;
         cs->b = NULL;
-        cs->ah = calloc((size_t)(cs->m * cs->k), 2);
-        cs->bh = calloc((size_t)(cs->k * cs->n), 2);
+        cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
+        cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
         lcg_fill_f16(cs->ah, (size_t)(cs->m * cs->k), seed);
         lcg_fill_f16(cs->bh, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
     }
@@ -501,7 +502,8 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     rvcl_tensor_pack_add_out(&g->pack, RVCL_TENSOR_DST, &g->tc);
     rvcl_tensor_pack_add(&g->pack, RVCL_TENSOR_BIAS, &g->tbias);
     for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
-        rvcl_tensor_pack_add(&g->pack, RVCL_TENSOR_AUX_0 + i, &g->ws_t[i]);
+        rvcl_tensor_pack_add(&g->pack,
+                (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &g->ws_t[i]);
     g->full = rvcl_work_range_full(cs->m, cs->n, cs->k);
     return 1;
 }
@@ -564,7 +566,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    bcorpus_t corpus = {0};
+    bcorpus_t corpus = {};
     char op[32] = "matmul";
     if (batch) {
         bparse_corpus(batch, &corpus);
@@ -601,7 +603,7 @@ int main(int argc, char **argv) {
 
     int nok = 0, nfail = 0, nskip = 0;
     for (int s = 0; s < total; s++) {
-        case_t cs = {0};
+        case_t cs = {};
         if (batch) {
             cs.m = corpus.cases[s].m;
             cs.n = corpus.cases[s].n;
@@ -625,13 +627,14 @@ int main(int argc, char **argv) {
                 continue;
             const char *dtstr = dt ? "f16" : "f32";
 
-            cs.d = (rvcl_matmul_desc_t){
+            cs.d = rvcl_matmul_desc_t{
                 .m = cs.m, .n = cs.n, .k = cs.k,
                 .dtype_a = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
                 .dtype_b = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
                 .dtype_acc = RVCL_DTYPE_AUTO,
                 .dtype_c = RVCL_DTYPE_FP32,
                 .dtype_bias = RVCL_DTYPE_AUTO,
+                .quant = {},
             };
             fill_case(&cs, dt, mode);
             const double flops = 2.0 * cs.m * cs.n * cs.k;
@@ -659,7 +662,7 @@ int main(int argc, char **argv) {
                         detail = dbuf;
                         ok = 0;
                     } else {
-                        float *golden = malloc(
+                        float *golden = (float *)malloc(
                                 (size_t)(cs.m * cs.n) * 4);
                         if (dt)
                             golden_f16(cs.ah, cs.bh, cs.bias, golden,
@@ -741,7 +744,7 @@ int main(int argc, char **argv) {
                 rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
             }
 
-            konly_ctx_t kc = {.cs = &cs, .packed = packed};
+            konly_ctx_t kc = {.cs = &cs, .packed = packed, .gemm = NULL};
             /* kernel-only goes through the same selector the backend
              * binds (rvv_pick_*); --path=c forces the C micro-kernel */
             kc.gemm = path_c ? (dt ? rvv_gemm_f16_c : rvv_gemm_f32_c)

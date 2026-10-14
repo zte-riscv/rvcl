@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * registry.c — kernel registration and indexing
+ * registry.cpp — kernel registration and indexing
  *
  * SPDX-License-Identifier: Apache-2.0
  *

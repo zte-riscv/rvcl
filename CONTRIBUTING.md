@@ -33,6 +33,20 @@ ctest --test-dir build        # or: cd build && ctest (ctest < 3.21)
 No RISC-V toolchain is required: the reference backend builds and runs on
 x86_64 hosts and is the golden implementation for differential testing.
 
+## Languages
+
+The build language is C++17 (gnu++17) across the implementation, tests and
+examples. The boundary:
+
+- `include/rvcl/*.h` are the public headers and stay plain C headers with a
+  C ABI (`extern "C"` guards throughout): both C and C++ consumers link
+  against the library unchanged.
+- Implementation, tests and examples are C++17 (`.cpp` / internal `.hpp`).
+  Existing designated initializers rely on GNU extensions (`-std=gnu++17`),
+  so MSVC is not a supported host compiler.
+- The upcoming JIT layer (vendored xbyak_riscv, pure C++) links into the
+  same single-language build — that is why the tree is not bilingual.
+
 Good first tasks:
 
 - a new dtype tuple for an existing backend (e.g. fp16 reference);
@@ -61,7 +75,7 @@ compiler. A kernel PR will not be merged unless the `run()` path:
    feature requirements, shape bounds, alignments) — dispatch trusts it.
 
 Backend layout: one directory per backend under `src/backends/<name>/`,
-plus one `rvcl_<name>_register()` call in `src/runtime/init.c` and one
+plus one `rvcl_<name>_register()` call in `src/runtime/init.cpp` and one
 CMake `RVCL_ENABLE_<NAME>` switch. Framework code should need zero changes.
 
 ## Public API changes
@@ -77,7 +91,7 @@ CMake `RVCL_ENABLE_<NAME>` switch. Framework code should need zero changes.
 
 - [ ] `src/backends/<name>/` with kernels + `<name>_register()`
 - [ ] CMake option `RVCL_ENABLE_<NAME>` (default OFF)
-- [ ] one registration line in `src/runtime/init.c` `register_all()`
+- [ ] one registration line in `src/runtime/init.cpp` `register_all()`
 - [ ] differential test vs the reference backend where dtypes overlap
 - [ ] kernels honor the five invariants above (self-review against
       ARCH-0001 §6)

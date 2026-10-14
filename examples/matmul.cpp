@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * examples/matmul.c — first runnable: dispatch → reference kernel → check
+ * examples/matmul.cpp — first runnable: dispatch → reference kernel → check
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -35,6 +35,7 @@ int main(void) {
         .dtype_acc = RVCL_DTYPE_AUTO, /* habit rule: fp32 → acc fp32 */
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {}, /* non-quantized */
     };
 
     /* Show what dispatch selected (the "dispatch once" half of the API),

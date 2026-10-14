@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * rvv_fp16.h — IEEE 754 half-precision soft conversions (internal)
+ * rvv_fp16.hpp — IEEE 754 half-precision soft conversions (internal)
  *
  * SPDX-License-Identifier: Apache-2.0
  *

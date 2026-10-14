@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * rvv_pack.c — B panel packing (plain row-major -> NC-wide column panels)
+ * rvv_pack.cpp — B panel packing (plain row-major -> NC-wide column panels)
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -13,7 +13,7 @@
  * same routine serves f32 and f16 kernels: layout depends only on shapes.
  ******************************************************************************/
 
-#include "rvv_internal.h"
+#include "rvv_internal.hpp"
 
 #include <string.h>
 

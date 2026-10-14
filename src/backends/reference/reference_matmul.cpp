@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * reference_matmul.c — golden FP32 MatMul (reference backend)
+ * reference_matmul.cpp — golden FP32 MatMul (reference backend)
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -46,7 +46,7 @@ static rvcl_status_t ref_configure(rvcl_kernel_t *k,
     rk->n = desc->matmul.n;
     rk->k = desc->matmul.k;
     /* Golden path needs no temporary memory. */
-    if (ws_req) *ws_req = (rvcl_workspace_req_t){0};
+    if (ws_req) *ws_req = rvcl_workspace_req_t{};
     if (num_ws) *num_ws = 0;
     return RVCL_SUCCESS;
 }

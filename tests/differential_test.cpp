@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/differential_test.c — reference vs RVV backend differential testing
+ * tests/differential_test.cpp — reference vs RVV backend differential testing
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -38,8 +38,8 @@
 #include <string.h>
 
 #include "rvcl/rvcl.h"
-#include "golden.h"
-#include "../src/backends/rvv/rvv_fp16.h"
+#include "golden.hpp"
+#include "../src/backends/rvv/rvv_fp16.hpp"
 
 static int g_failures;
 
@@ -145,7 +145,8 @@ static rvcl_status_t run_named_kernel_range(const char *name,
             .strides = {1},
             .dtype = RVCL_DTYPE_UINT8};
         rvcl_tensor_init(&ws_t[i], &wd, ws_buf[i]);
-        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_AUX_0 + i, &ws_t[i]);
+        rvcl_tensor_pack_add(&pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i),
+                &ws_t[i]);
     }
 
     {
@@ -250,13 +251,14 @@ static void corpus_add(corpus_t *c, int64_t m, int64_t n, int64_t k,
             corpus_fatal(file, line, "duplicate label n\"%s\"", label);
     if (c->count == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 64;
-        c->cases = realloc(c->cases, (size_t)c->cap * sizeof(*c->cases));
+        c->cases = (corpus_case_t *)realloc(c->cases,
+                (size_t)c->cap * sizeof(*c->cases));
         if (!c->cases) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
         }
     }
-    c->cases[c->count++] = (corpus_case_t){m, n, k, label};
+    c->cases[c->count++] = corpus_case_t{m, n, k, label};
 }
 
 static void parse_header(corpus_t *c, const char *text, const char *file,
@@ -453,23 +455,26 @@ static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt,
 
     const int64_t elems = cc->m * cc->n;
     const uint32_t seed = golden_case_seed(cc->m, cc->n, cc->k);
-    float *golden = malloc((size_t)elems * 4);
-    float *c = malloc((size_t)elems * 4);
+    float *golden = (float *)malloc((size_t)elems * 4);
+    float *c = (float *)malloc((size_t)elems * 4);
     int fails = 0;
 
     rvcl_matmul_desc_t d = {
         .m = cc->m, .n = cc->n, .k = cc->k,
+        .dtype_a = RVCL_DTYPE_AUTO,
+        .dtype_b = RVCL_DTYPE_AUTO,
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
-    float *bias = malloc((size_t)cc->n * 4);
+    float *bias = (float *)malloc((size_t)cc->n * 4);
     lcg_fill_f32(bias, (size_t)cc->n, seed ^ 0x85ebca6bu);
 
     if (dt == RVCL_DTYPE_FP32) {
         d.dtype_a = d.dtype_b = RVCL_DTYPE_FP32;
-        float *a = malloc((size_t)(cc->m * cc->k) * 4);
-        float *b = malloc((size_t)(cc->k * cc->n) * 4);
+        float *a = (float *)malloc((size_t)(cc->m * cc->k) * 4);
+        float *b = (float *)malloc((size_t)(cc->k * cc->n) * 4);
         lcg_fill_f32(a, (size_t)(cc->m * cc->k), seed);
         lcg_fill_f32(b, (size_t)(cc->k * cc->n), seed ^ 0x9e3779b9u);
         golden_f32(a, b, bias, golden, cc->m, cc->n, cc->k);
@@ -502,8 +507,8 @@ static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt,
         free(b);
     } else {
         d.dtype_a = d.dtype_b = RVCL_DTYPE_FP16;
-        uint16_t *ah = malloc((size_t)(cc->m * cc->k) * 2);
-        uint16_t *bh = malloc((size_t)(cc->k * cc->n) * 2);
+        uint16_t *ah = (uint16_t *)malloc((size_t)(cc->m * cc->k) * 2);
+        uint16_t *bh = (uint16_t *)malloc((size_t)(cc->k * cc->n) * 2);
         lcg_fill_f16(ah, (size_t)(cc->m * cc->k), seed);
         lcg_fill_f16(bh, (size_t)(cc->k * cc->n), seed ^ 0x9e3779b9u);
         golden_f16(ah, bh, bias, golden, cc->m, cc->n, cc->k);
@@ -598,10 +603,10 @@ int main(int argc, char **argv) {
 
     /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
     enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
-    float *a = malloc(M * K * 4), *b = malloc(K * N * 4);
-    float *bias = malloc(N * 4);
-    float *c_ref = malloc(M * N * 4), *c_rvv = malloc(M * N * 4);
-    float *golden = malloc(M * N * 4);
+    float *a = (float *)malloc(M * K * 4), *b = (float *)malloc(K * N * 4);
+    float *bias = (float *)malloc(N * 4);
+    float *c_ref = (float *)malloc(M * N * 4), *c_rvv = (float *)malloc(M * N * 4);
+    float *golden = (float *)malloc(M * N * 4);
     for (int i = 0; i < M * K; i++) a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
     for (int i = 0; i < K * N; i++) b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
     for (int j = 0; j < N; j++) bias[j] = 0.25f;
@@ -613,6 +618,7 @@ int main(int argc, char **argv) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
 
     golden_f32(a, b, bias, golden, M, N, K);
@@ -649,7 +655,7 @@ int main(int argc, char **argv) {
     CHECK(bad_nobias == 0, "rvv f32 no-bias matches naive golden (bit-exact)");
 
     /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
-    uint16_t *ah = malloc(M * K * 2), *bh = malloc(K * N * 2);
+    uint16_t *ah = (uint16_t *)malloc(M * K * 2), *bh = (uint16_t *)malloc(K * N * 2);
     for (int i = 0; i < M * K; i++)
         ah[i] = rvv_f32_to_f16((float)((i * 11) % 23) / 23.0f - 0.5f);
     for (int i = 0; i < K * N; i++)
@@ -662,6 +668,7 @@ int main(int argc, char **argv) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
     golden_f16(ah, bh, bias, golden, M, N, K);
     CHECK(run_named_kernel("rvcl_matmul_f16_rvv", &d16, ah, bh, bias, c_rvv)
@@ -763,8 +770,8 @@ int main(int argc, char **argv) {
 
         int ok = 0, fail = 0, skip = 0, fi = 0;
         const rvcl_dtype_t dts[2] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16};
-        const char **failed_labels = calloc((size_t)corpus.count * 2,
-                sizeof(*failed_labels));
+        const char **failed_labels = (const char **)calloc(
+                (size_t)corpus.count * 2, sizeof(*failed_labels));
         for (int i = 0; i < corpus.count; i++) {
             for (int dti = 0; dti < 2; dti++) {
                 if (corpus.dt_explicit && corpus.dt != dts[dti]) continue;

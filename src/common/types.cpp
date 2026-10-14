@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * types.c — basic type helpers
+ * types.cpp — basic type helpers
  *
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/

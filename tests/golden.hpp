@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/golden.h — shared golden helpers for the test executables
+ * tests/golden.hpp — shared golden helpers for the test executables
  *
  * SPDX-License-Identifier: Apache-2.0
  *

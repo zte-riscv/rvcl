@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * rvv_gemm_f16.c — FP16 GEMM micro-kernels (RVV intrinsics + C fallback)
+ * rvv_gemm_f16.cpp — FP16 GEMM micro-kernels (RVV intrinsics + C fallback)
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -8,13 +8,13 @@
  * output fp32 (PLAN §4.5.1 habit rule). On RVV hosts with Zvfh the K loop
  * widens fp16 segments to fp32 vectors and accumulates in fp32. On hosts
  * without Zvfh the C path uses the bit-exact soft conversions in
- * rvv_fp16.h, keeping the x86 CI differential tests meaningful.
+ * rvv_fp16.hpp, keeping the x86 CI differential tests meaningful.
  *
  * Both paths accumulate K in ascending order → bit-identical results.
  ******************************************************************************/
 
-#include "rvv_fp16.h"
-#include "rvv_internal.h"
+#include "rvv_fp16.hpp"
+#include "rvv_internal.hpp"
 
 #include <string.h>
 

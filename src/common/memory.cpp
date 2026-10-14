@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * memory.c — memory contract implementation
+ * memory.cpp — memory contract implementation
  *
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/

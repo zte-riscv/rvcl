@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/capability_assert.c — environment self-check gate (G7)
+ * tests/capability_assert.cpp — environment self-check gate (G7)
  *
  * SPDX-License-Identifier: Apache-2.0
  *

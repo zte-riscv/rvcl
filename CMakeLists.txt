@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(rvcl
     VERSION 0.1.0
     DESCRIPTION "RISC-V Compute Library — unified kernel abstraction and dispatch runtime"
-    LANGUAGES C)
+    LANGUAGES CXX)
 
 # ------------------------------------------------------------------ options
 # Backends are independently buildable (PLAN §4.12).
@@ -36,16 +36,16 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_CURRENT_BINARY_DIR)
 endif()
 
 set(RVCL_RUNTIME_SOURCES
-    src/common/types.c
-    src/common/memory.c
-    src/runtime/capability.c
-    src/runtime/kernel.c
-    src/runtime/registry.c
-    src/runtime/dispatch.c
-    src/runtime/init.c
-    src/runtime/scheduler/scheduler.c
-    src/operators/matmul.c
-    src/backends/reference/reference_matmul.c
+    src/common/types.cpp
+    src/common/memory.cpp
+    src/runtime/capability.cpp
+    src/runtime/kernel.cpp
+    src/runtime/registry.cpp
+    src/runtime/dispatch.cpp
+    src/runtime/init.cpp
+    src/runtime/scheduler/scheduler.cpp
+    src/operators/matmul.cpp
+    src/backends/reference/reference_matmul.cpp
 )
 
 # ------------------------------------------------------------ RVV backend
@@ -55,10 +55,10 @@ set(RVCL_RUNTIME_SOURCES
 # testable on x86 CI (PLAN §6.2 item 12).
 if(RVCL_ENABLE_RVV)
     list(APPEND RVCL_RUNTIME_SOURCES
-        src/backends/rvv/rvv_backend.c
-        src/backends/rvv/rvv_pack.c
-        src/backends/rvv/rvv_gemm_f32.c
-        src/backends/rvv/rvv_gemm_f16.c
+        src/backends/rvv/rvv_backend.cpp
+        src/backends/rvv/rvv_pack.cpp
+        src/backends/rvv/rvv_gemm_f32.cpp
+        src/backends/rvv/rvv_gemm_f16.cpp
     )
 endif()
 
@@ -67,8 +67,8 @@ add_library(rvcl SHARED ${RVCL_RUNTIME_SOURCES})
 set_target_properties(rvcl PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    C_STANDARD 11
-    C_STANDARD_REQUIRED YES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
     PUBLIC_HEADER
         "include/rvcl/rvcl.h;include/rvcl/types.h;include/rvcl/init.h;\
 include/rvcl/capability.h;include/rvcl/memory.h;include/rvcl/scheduler.h;\
@@ -92,27 +92,27 @@ if(RVCL_ENABLE_RVV)
 endif()
 
 # On real RVV targets ensure the vector extension is enabled in -march.
-# rvv_backend.c MUST be in the list: create_f32/create_f16 bind the
+# rvv_backend.cpp MUST be in the list: create_f32/create_f16 bind the
 # intrinsics micro-kernels only when __riscv_vector is defined in that
 # translation unit — without the override they silently bind the C
-# fallback and the intrinsics path is unreachable. capability.c MUST be
-# in the list too: the compile-time detection layer only reports RVV /
-# FP16 features when the __riscv_* macros are visible there.
+# fallback and the intrinsics path is unreachable. capability.cpp MUST
+# be in the list too: the compile-time detection layer only reports RVV
+# / FP16 features when the __riscv_* macros are visible there.
 if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
     set(RVCL_RVV_MARCH "" CACHE STRING "Extra -march vector flags for RVV files")
     if(RVCL_RVV_MARCH)
         set_source_files_properties(
-            src/runtime/capability.c
-            src/backends/rvv/rvv_backend.c
-            src/backends/rvv/rvv_pack.c
-            src/backends/rvv/rvv_gemm_f32.c
-            src/backends/rvv/rvv_gemm_f16.c
+            src/runtime/capability.cpp
+            src/backends/rvv/rvv_backend.cpp
+            src/backends/rvv/rvv_pack.cpp
+            src/backends/rvv/rvv_gemm_f32.cpp
+            src/backends/rvv/rvv_gemm_f16.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
     endif()
 endif()
 
 # Backends (RVCL_ENABLE_*): each adds sources + a rvcl_<backend>_register()
-# call in init.c's register_all(). Gated per PLAN §4.12:
+# call in init.cpp's register_all(). Gated per PLAN §4.12:
 #   cmake -DRVCL_ENABLE_RVV=ON -DRVCL_ENABLE_IME=OFF ...
 
 # ------------------------------------------------------------------- tests
@@ -120,7 +120,7 @@ endif()
 # executables (differential + bench C mode). Corpus parsers stay
 # deliberately double-implemented — cross-validation is the feature.
 if(RVCL_BUILD_TESTS OR RVCL_BUILD_BENCH)
-    add_library(rvcl_test_golden STATIC tests/golden.c)
+    add_library(rvcl_test_golden STATIC tests/golden.cpp)
 endif()
 
 if(RVCL_BUILD_TESTS)
@@ -132,15 +132,15 @@ if(RVCL_BUILD_TESTS)
     # emulator (e.g. QEMU too old for hwprobe) must fail loudly instead
     # of degrading to a green-but-meaningless run. Without the variable
     # it is print-only, so local ctest runs stay host-agnostic.
-    add_executable(rvcl_capability_assert tests/capability_assert.c)
+    add_executable(rvcl_capability_assert tests/capability_assert.cpp)
     target_link_libraries(rvcl_capability_assert PRIVATE rvcl)
     add_test(NAME capability_assert COMMAND rvcl_capability_assert)
 
-    add_executable(rvcl_smoke tests/smoke_test.c)
+    add_executable(rvcl_smoke tests/smoke_test.cpp)
     target_link_libraries(rvcl_smoke PRIVATE rvcl)
     add_test(NAME smoke COMMAND rvcl_smoke)
 
-    add_executable(rvcl_differential tests/differential_test.c)
+    add_executable(rvcl_differential tests/differential_test.cpp)
     target_link_libraries(rvcl_differential PRIVATE rvcl m rvcl_test_golden)
     add_test(NAME differential COMMAND rvcl_differential)
 
@@ -174,22 +174,22 @@ endif()
 
 # ---------------------------------------------------------------- examples
 if(RVCL_BUILD_EXAMPLES)
-    add_executable(example_matmul examples/matmul.c)
+    add_executable(example_matmul examples/matmul.cpp)
     target_link_libraries(example_matmul PRIVATE rvcl)
     add_test(NAME example_matmul COMMAND example_matmul)
 
-    add_executable(example_dispatch examples/dispatch.c)
+    add_executable(example_dispatch examples/dispatch.cpp)
     target_link_libraries(example_dispatch PRIVATE rvcl)
     add_test(NAME example_dispatch COMMAND example_dispatch)
 
-    add_executable(example_scheduler examples/scheduler.c)
+    add_executable(example_scheduler examples/scheduler.cpp)
     target_link_libraries(example_scheduler PRIVATE rvcl)
     add_test(NAME example_scheduler COMMAND example_scheduler)
 endif()
 
 # -------------------------------------------------------------------- bench
 if(RVCL_BUILD_BENCH)
-    add_executable(rvcl_bench tests/bench_matmul.c)
+    add_executable(rvcl_bench tests/bench_matmul.cpp)
     target_link_libraries(rvcl_bench PRIVATE rvcl m rvcl_test_golden)
 endif()
 

@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * examples/scheduler.c — inject a custom host scheduler
+ * examples/scheduler.cpp — inject a custom host scheduler
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -41,7 +41,11 @@ typedef struct {
     pthread_cond_t cv_work, cv_done;
 } pool_t;
 
-static pool_t g_pool = {.mu = PTHREAD_MUTEX_INITIALIZER,
+static pool_t g_pool = {.tasks = {},
+    .num_tasks = 0,
+    .next = 0,
+    .done = 0,
+    .mu = PTHREAD_MUTEX_INITIALIZER,
     .cv_work = PTHREAD_COND_INITIALIZER,
     .cv_done = PTHREAD_COND_INITIALIZER};
 
@@ -125,8 +129,9 @@ int main(void) {
 
     /* 2. Matmul through the injected scheduler. */
     enum { M = 97, N = 65, K = 33 }; /* ragged: exercises slicing edges */
-    float *a = malloc(M * K * 4), *b = malloc(K * N * 4), *c = malloc(M * N * 4);
-    float *bias = malloc(N * 4), *golden = malloc(M * N * 4);
+    float *a = (float *)malloc(M * K * 4), *b = (float *)malloc(K * N * 4),
+            *c = (float *)malloc(M * N * 4);
+    float *bias = (float *)malloc(N * 4), *golden = (float *)malloc(M * N * 4);
     for (int i = 0; i < M * K; i++) a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
     for (int i = 0; i < K * N; i++) b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
     for (int j = 0; j < N; j++) bias[j] = 0.25f;
@@ -146,6 +151,7 @@ int main(void) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
     st = rvcl_matmul(&d, a, b, bias, c);
     if (st != RVCL_SUCCESS) {

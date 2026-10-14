@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * examples/dispatch.c — dispatch-once-run-many + cache observability
+ * examples/dispatch.cpp — dispatch-once-run-many + cache observability
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -33,6 +33,7 @@ int main(void) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
 
     /* 1. Dispatch once (populates the cache). */
@@ -102,7 +103,7 @@ int main(void) {
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
         for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
             rvcl_tensor_pack_add(&pack,
-                    RVCL_TENSOR_AUX_0 + i, &ws_t[i]);
+                    (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
 
         rvcl_work_range_t full = rvcl_work_range_full(M, N, K);
         st = rvcl_kernel_run(rvcl_dispatch_kernel(r), &pack, &full);

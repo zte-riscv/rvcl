@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/smoke_test.c — Phase 0 smoke test
+ * tests/smoke_test.cpp — Phase 0 smoke test
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -100,6 +100,7 @@ int main(void) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_AUTO,
+        .quant = {},
     };
     rvcl_dispatch_result_t *r = NULL;
     CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
@@ -148,6 +149,7 @@ int main(void) {
         .dtype_acc = RVCL_DTYPE_AUTO,
         .dtype_c = RVCL_DTYPE_FP32,
         .dtype_bias = RVCL_DTYPE_FP32,
+        .quant = {},
     };
     CHECK(rvcl_matmul(&de, a, b, bias, c) == RVCL_SUCCESS,
             "rvcl_matmul succeeds");

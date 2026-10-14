@@ -1,15 +1,15 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * tests/golden.c — shared golden helpers (see golden.h for the contract)
+ * tests/golden.cpp — shared golden helpers (see golden.hpp for the contract)
  *
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
-#include "golden.h"
+#include "golden.hpp"
 
 #include <string.h>
 
-#include "../src/backends/rvv/rvv_fp16.h"
+#include "../src/backends/rvv/rvv_fp16.hpp"
 
 /* ------------------------------------------------------------- goldens */
 

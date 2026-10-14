@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * matmul.c — semantic MatMul API (Layer 1)
+ * matmul.cpp — semantic MatMul API (Layer 1)
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -75,7 +75,11 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
 
     /* 3. Workspace: caller of the semantic API is the caller here, so we
      * allocate what configure() reported and feed AUX slots (kernels
-     * themselves never malloc; PLAN §4.3). */
+     * themselves never malloc; PLAN §4.3). Declared before the loop so
+     * the error goto below does not cross their initialization (C++
+     * jump rules). */
+    run_task_ctx_t ctx = {.kernel = rvcl_dispatch_kernel(r), .pack = &pack};
+    rvcl_work_range_t full = rvcl_work_range_full(desc->m, desc->n, desc->k);
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
     void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
@@ -92,12 +96,11 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
             .strides = {1},
             .dtype = RVCL_DTYPE_UINT8};
         rvcl_tensor_init(&ws_t[i], &wd, ws_buf[i]);
-        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_AUX_0 + i, &ws_t[i]);
+        rvcl_tensor_pack_add(&pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i),
+                &ws_t[i]);
     }
 
     /* 4. Run through the current scheduler over the full range. */
-    run_task_ctx_t ctx = {.kernel = rvcl_dispatch_kernel(r), .pack = &pack};
-    rvcl_work_range_t full = rvcl_work_range_full(desc->m, desc->n, desc->k);
     rvcl_parallel_for(&full, run_task, &ctx);
 
     st = RVCL_SUCCESS;

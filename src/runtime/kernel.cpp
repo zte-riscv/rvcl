@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * kernel.c — kernel instance lifecycle helpers
+ * kernel.cpp — kernel instance lifecycle helpers
  *
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
@@ -15,7 +15,7 @@ rvcl_status_t rvcl_kernel_alloc(rvcl_kernel_t **out,
     if (!out || !desc || instance_size < sizeof(rvcl_kernel_t))
         return RVCL_ERROR_INVALID_ARGUMENT;
 
-    rvcl_kernel_t *k = calloc(1, instance_size);
+    rvcl_kernel_t *k = (rvcl_kernel_t *)calloc(1, instance_size);
     if (!k) return RVCL_ERROR_OUT_OF_MEMORY;
     k->desc = *desc; /* copies metadata into the instance */
     *out = k;

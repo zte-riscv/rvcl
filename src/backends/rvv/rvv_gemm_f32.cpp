@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * rvv_gemm_f32.c — FP32 GEMM micro-kernels (RVV intrinsics + C fallback)
+ * rvv_gemm_f32.cpp — FP32 GEMM micro-kernels (RVV intrinsics + C fallback)
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -15,7 +15,7 @@
  * same ascending order and produce bit-identical results.
  ******************************************************************************/
 
-#include "rvv_internal.h"
+#include "rvv_internal.hpp"
 
 #include <string.h>
 

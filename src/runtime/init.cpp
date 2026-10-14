@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * init.c — library initialization / backend registration entry
+ * init.cpp — library initialization / backend registration entry
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -9,6 +9,7 @@
  * discovers what exists purely through the registry.
  ******************************************************************************/
 
+#include "rvcl/init.h"
 #include "rvcl/registry.h"
 #include "rvcl/types.h"
 

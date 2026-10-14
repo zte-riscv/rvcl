@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * dispatch.c — kernel selection pipeline
+ * dispatch.cpp — kernel selection pipeline
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -251,7 +251,7 @@ rvcl_status_t rvcl_dispatch_matmul(const rvcl_matmul_desc_t *desc,
         }
     }
 
-    rvcl_dispatch_result_t *r = calloc(1, sizeof(*r));
+    rvcl_dispatch_result_t *r = (rvcl_dispatch_result_t *)calloc(1, sizeof(*r));
     if (!r) {
         rvcl_kernel_destroy(k);
         return RVCL_ERROR_OUT_OF_MEMORY;

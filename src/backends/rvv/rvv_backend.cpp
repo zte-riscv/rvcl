@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * rvv_backend.c — RVV backend framework adapter: validate/configure/run
+ * rvv_backend.cpp — RVV backend framework adapter: validate/configure/run
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -13,12 +13,12 @@
  * never creates threads. The work range is honored exactly.
  ******************************************************************************/
 
-#include "rvv_internal.h"
+#include "rvv_internal.hpp"
 
 #include <stdio.h>
 #include <string.h>
 
-/* run()-side panel packer implemented in rvv_pack.c. */
+/* run()-side panel packer implemented in rvv_pack.cpp. */
 rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
         int64_t m, int64_t n, int64_t k_dim, size_t elt);
 
@@ -58,12 +58,12 @@ static rvcl_status_t rvv_configure(rvcl_kernel_t *k,
     size_t elt = rvcl_dtype_size(d->dtype_a);
     size_t bytes = rvv_packed_b_bytes(d->k, d->n, elt);
     if (ws_req) {
-        ws_req[RVV_WS_PACKED_B] = (rvcl_workspace_req_t){
+        ws_req[RVV_WS_PACKED_B] = rvcl_workspace_req_t{
             .size = (int64_t)bytes,
             .alignment = 64,
             .lifetime = RVCL_WS_LIFETIME_RUN,
         };
-        ws_req[RVV_WS_ACC] = (rvcl_workspace_req_t){0};
+        ws_req[RVV_WS_ACC] = rvcl_workspace_req_t{};
     }
     if (num_ws) *num_ws = 1;
     return RVCL_SUCCESS;
@@ -77,7 +77,7 @@ static rvcl_status_t rvv_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     const rvcl_tensor_t *c = rvcl_tensor_pack_get(pack, RVCL_TENSOR_DST);
     const rvcl_tensor_t *bias = rvcl_tensor_pack_get(pack, RVCL_TENSOR_BIAS);
     const rvcl_tensor_t *ws = rvcl_tensor_pack_get(pack,
-            RVCL_TENSOR_AUX_0 + RVV_WS_PACKED_B);
+            (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + RVV_WS_PACKED_B));
     if (!a || !b || !c || !ws) return RVCL_ERROR_INVALID_ARGUMENT;
 
     /* Pack B into the workspace (dispatch-once-run-many callers may pre-pack
@@ -117,7 +117,7 @@ static const rvcl_kernel_vtable_t g_rvv_vtable = {
 /* ---------------------------------------------- micro-kernel selection */
 
 /* Single source of truth for the live micro-kernel per dtype (see
- * rvv_internal.h): the intrinsics kernels only exist under
+ * rvv_internal.hpp): the intrinsics kernels only exist under
  * __riscv_vector in this translation unit; otherwise the C-portable
  * fallback runs. Bench kernel-only timing calls the same selectors, so
  * it always measures what dispatch actually bound. */

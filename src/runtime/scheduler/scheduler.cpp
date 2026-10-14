@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * scheduler.c — serial scheduler + host injection (set-once)
+ * scheduler.cpp — serial scheduler + host injection (set-once)
  *
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/

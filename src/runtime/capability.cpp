@@ -1,6 +1,6 @@
 /*******************************************************************************
  * RVCL — RISC-V Compute Library
- * capability.c — host capability detection (cached)
+ * capability.cpp — host capability detection (cached)
  *
  * SPDX-License-Identifier: Apache-2.0
  *

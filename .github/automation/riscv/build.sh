@@ -18,7 +18,7 @@ set -o errexit -o pipefail -o noclobber
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
-# Defines CC, MP and CMAKE_TOOLCHAIN_FILE.
+# Defines CXX, MP and CMAKE_TOOLCHAIN_FILE.
 source "${SCRIPT_DIR}/common.sh"
 
 CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE:-"Release"}
