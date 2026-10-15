@@ -22,7 +22,7 @@ Security fixes are applied to the latest released version line only
 
 Please report privately via GitHub's **"Report a vulnerability"** action on
 the repository's *Security* tab, or by email to
-`<TODO: security@example.org>` (PGP key published at the same address).
+`zhang.jian60@zte.com.cn`.
 
 Include where possible:
 

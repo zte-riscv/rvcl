@@ -5,10 +5,10 @@ It is the authoritative answer to "who reviews and merges what".
 
 ## Current maintainers
 
-| Name | Affiliation | Areas | GitHub |
-| ---- | ----------- | ----- | ------ |
-| <TODO: name> | ZTE | project lead; dispatch / registry / capability runtime; API & RFC process | <TODO> |
-| <TODO: name> | ZTE | kernel contracts; reference & RVV backends; differential testing | <TODO> |
+| Name | Affiliation | GitHub |
+| ---- | ----------- | ----- |
+| Yunxiang Jia | ZTE | [jiayunxiang](https://github.com/jiayunxiang) |
+| Jian Zhang | ZTE | [zhangjian29](https://github.com/zhangjian29) |
 
 > Initial maintainer list at project opening. Additional maintainers are
 > expected as the community grows — see "Becoming a maintainer" below.
@@ -19,11 +19,11 @@ It is the authoritative answer to "who reviews and merges what".
 
 | Area | Path | Default reviewer |
 | ---- | ---- | ---------------- |
-| Public API surface | `include/rvcl/` | project lead |
-| Dispatch / registry / capability | `src/runtime/` | project lead |
-| Memory & scheduler contracts | `src/common/`, `src/runtime/scheduler/` | project lead |
-| Reference backend (golden) | `src/backends/reference/` | backend lead |
-| RVV backend | `src/backends/rvv/` | backend lead |
+| Public API surface | `include/rvcl/` | Yunxiang Jia |
+| Dispatch / registry / capability | `src/runtime/` | Yunxiang Jia |
+| Memory & scheduler contracts | `src/common/`, `src/runtime/scheduler/` | Yunxiang Jia |
+| Reference backend (golden) | `src/backends/reference/` | Jian Zhang |
+| RVV backend | `src/backends/rvv/` | Jian Zhang |
 | IME / VME / AME backends | `src/backends/{ime,vme,ame}/` | area maintainers (TBD as they land) |
 | Build system & CI | `CMakeLists.txt`, `.github/workflows/` | any maintainer |
 | Tests & examples | `tests/`, `examples/` | any maintainer |
