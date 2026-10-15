@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a bug or unexpected behavior in RVCL
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken, in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: capability
+    attributes:
+      label: Capability description
+      description: >-
+        Paste the output of `rvcl_get_capability()` (or the matching fields)
+        so we know which host / backend / VLEN combination is involved.
+      placeholder: |
+        api-version: ...
+        backend: reference (rvv ...)
+        vlen: ...
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: build-config
+    attributes:
+      label: Build configuration
+      description: >-
+        Compiler and version, flags (especially `-Werror`), enabled backend
+        switches (`RVCL_ENABLE_*`), and whether you built natively or cross
+        compiled for a RISC-V target / QEMU.
+      placeholder: |
+        compiler: g++-14 / clang-18
+        flags: -O2 -Wall -Wextra -Werror
+        backend switches: ...
+        target: x86_64 host / riscv64 (QEMU args) / real hardware
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproducer
+      description: >-
+        Minimal code or test that triggers the problem, and the exact steps
+        to run it. Include inputs / shapes / dtypes where relevant.
+      render: shell
+      placeholder: |
+        cmake -B build -S .
+        cmake --build build
+        ctest --test-dir build ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      description: What you expected to happen, and what actually happened (paste error output).
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, QEMU version / VLEN (e.g. 128), any hardware notes.
+    validations:
+      required: false
