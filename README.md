@@ -8,8 +8,6 @@
 RVCL is a unified kernel abstraction and dispatch runtime for RISC-V vector and matrix architectures: **Capability** (what the hardware can do) → **Registry** (which kernel implementations exist) → **Dispatch** (which kernel should run) → **Kernel** (do the actual computation), with an injectable **Scheduler** and a zero-copy **Memory** contract crossing all layers. The goal: one operator API that automatically selects the best kernel for the current hardware across RVV / IME / VME / AME / vendor extensions, and integrates upward with oneDNN (and through it, frameworks such as PyTorch).
 
 > **Status:** Phase 0 complete (v0.1.0-dev). The FP32 reference kernel and the full dispatch framework are in place; the RVV backend is under development.
-> Design documents (Chinese): [PLAN-0001](../docs/PLAN-0001_RVCL项目开发计划.md) · [ARCH-0001](../docs/ARCH-0001_RVCL系统架构文档.md) · RFC-0001/0002
-> Concise English architecture overview: [ARCH-0001-EN](../docs/ARCH-0001_EN_RVCL_Architecture.md)
 
 ---
 
@@ -63,7 +61,7 @@ Two cross-cutting contracts stay under host control, invisible to kernels:
    (Capability feeds dispatch from the side; Scheduler/Memory cross all layers)
 ```
 
-The datatype model separates **roles** (storage / compute / accumulation); the unit of dispatch matching is the `(A, B, acc, C)` tuple. Habit rules such as `fp32→fp32`, `bf16→fp32`, and `s8→s32` are resolved automatically via `RVCL_DTYPE_AUTO`. INT8 quantization (requant) and INT4 weight-only land in v0.4 / v0.5 respectively. See PLAN-0001 §4.5 for details.
+The datatype model separates **roles** (storage / compute / accumulation); the unit of dispatch matching is the `(A, B, acc, C)` tuple. Habit rules such as `fp32→fp32`, `bf16→fp32`, and `s8→s32` are resolved automatically via `RVCL_DTYPE_AUTO`. INT8 quantization (requant) and INT4 weight-only land in v0.4 / v0.5 respectively.
 
 ## Quick Start
 
@@ -178,15 +176,13 @@ Adding a backend = a new `src/backends/<name>/` directory + one registration lin
 | v0.5    | Full oneDNN integration + INT4 weight-only + PyTorch support                               |
 | v1.0    | Stable ABI commitment                                                                      |
 
-Full breakdown in PLAN-0001 §5–§6; the first full-stack use case (PyTorch + oneDNN + RVCL) in PLAN-0001 §6.4.1.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide (DCO sign-off,
 workflow, review bar). The essentials:
 
-- Kernel implementations must honor the kernel-contract invariants (review checklist in ARCH-0001 §6): no malloc and no thread creation on the run() path, all memory from pack slots, correct handling of arbitrary work ranges;
-- Public API changes go through the RFC process (RFC-0001/0002 came first); breaking changes to the project-stable layer (kernel.h/registry.h/dispatch.h) require review;
+- Kernel implementations must honor the kernel-contract invariants: no malloc and no thread creation on the run() path, all memory from pack slots, correct handling of arbitrary work ranges;
+- Public API changes go through the RFC process; breaking changes to the project-stable layer (kernel.h/registry.h/dispatch.h) require review;
 - Before submitting: `cmake --build build && ctest --test-dir build` must be green.
 
 ## License

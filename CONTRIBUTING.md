@@ -4,11 +4,6 @@ Thank you for considering contributing to RVCL — RISC-V Compute Library!
 This document covers the practicalities: licensing of contributions, the
 development workflow, and the review bar for kernels and public APIs.
 
-For the architecture behind the rules below, read
-[ARCH-0001](../docs/ARCH-0001_RVCL系统架构文档.md) (Chinese; §6 has the
-kernel review checklist). For design rationale, see PLAN-0001 and the
-RFC series in the same directory.
-
 ## Code of Conduct
 
 By participating in this project you agree to uphold the
@@ -105,8 +100,8 @@ CMake `RVCL_ENABLE_<NAME>` switch. Framework code should need zero changes.
   are the stable surface: changes are **additive-only** before v1.0.
 - `kernel.h / registry.h / dispatch.h` are project-stable (the kernel ABI):
   breaking changes require an RFC and maintainer consensus.
-- New operations / datatypes / feature ids follow the extension recipes in
-  ARCH-0001 §10.3 — enumerate which files change and which must not.
+- New operations / datatypes / feature ids enumerate which files change and
+  which must not.
 
 ## Adding a backend (checklist)
 
@@ -114,8 +109,7 @@ CMake `RVCL_ENABLE_<NAME>` switch. Framework code should need zero changes.
 - [ ] CMake option `RVCL_ENABLE_<NAME>` (default OFF)
 - [ ] one registration line in `src/runtime/init.cpp` `register_all()`
 - [ ] differential test vs the reference backend where dtypes overlap
-- [ ] kernels honor the five invariants above (self-review against
-      ARCH-0001 §6)
+- [ ] kernels honor the five invariants above
 
 ## Reporting bugs / security issues
 

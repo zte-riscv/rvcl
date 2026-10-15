@@ -13,7 +13,7 @@ It is the authoritative answer to "who reviews and merges what".
 > Initial maintainer list at project opening. Additional maintainers are
 > expected as the community grows — see "Becoming a maintainer" below.
 > External (non-founding-organization) maintainers are a project goal, not
-> an exception; see PLAN-0001 and COMM-0001 §8.
+> an exception.
 
 ## Ownership by area
 
@@ -36,7 +36,7 @@ It is the authoritative answer to "who reviews and merges what".
   project lead's approval; breaking changes to the project-stable layer
   (kernel.h / registry.h / dispatch.h) require an RFC and maintainer
   consensus (see [CONTRIBUTING.md](CONTRIBUTING.md)).
-- Kernel PRs are reviewed against the invariant checklist in ARCH-0001 §6.
+- Kernel PRs are reviewed against the kernel-contract invariants.
 
 ## Becoming a maintainer
 
