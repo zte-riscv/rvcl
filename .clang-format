@@ -88,8 +88,13 @@ PenaltyReturnTypeOnItsOwnLine: 60
 PointerAlignment: Right
 ReferenceAlignment: Pointer
 ReflowComments:  false
+# RemoveSemicolon: the tree has no `do { } while (0)`-style semicolon-terminated
+# macro calls that must survive, and a clean idempotent clang-format-18 dry-run
+# was validated against the whole tree before enabling this.
 RemoveSemicolon: true
-SortIncludes:    true
+# SortIncludes disabled so the one-time reformat stays whitespace-only: with
+# IncludeBlocks: Preserve above, clang-format leaves include order untouched.
+SortIncludes:    false
 SortUsingDeclarations: true
 SpaceAfterCStyleCast: false
 SpaceAfterTemplateKeyword: true
@@ -106,7 +111,8 @@ SpacesInContainerLiterals: false
 SpacesInCStyleCastParentheses: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
-Standard:        Cpp11
+# Standard matches the C++17 codebase (was Cpp11 in the oneDNN-derived ruleset).
+Standard:        c++17
 TabWidth:        4
 UseTab:          Never
 ...

@@ -70,8 +70,12 @@ jobs:
             echo "no C/C++ files to check"; exit 0
           fi
           echo "Checking:"; echo "${FILES}"
-          # shellcheck disable=SC2086
-          clang-format-18 --dry-run --Werror ${FILES}
+          # Iterate one path per line so file names containing spaces (or other
+          # whitespace) are passed as a single argument rather than word-split.
+          # `exit 1` propagates a formatting failure out of the pipeline.
+          printf '%s\n' "${FILES}" | while IFS= read -r file; do
+            clang-format-18 --dry-run --Werror "${file}" || exit 1
+          done
 
   # This job adds a check named "ci-lint" that represents overall workflow
   # status and can be used in branch rulesets. Later lint jobs (license
