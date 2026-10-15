@@ -48,8 +48,8 @@ static rvcl_status_t pack_add(rvcl_tensor_pack_t *p, rvcl_tensor_slot_t slot,
     return RVCL_SUCCESS;
 }
 
-rvcl_status_t rvcl_tensor_pack_add(
-        rvcl_tensor_pack_t *p, rvcl_tensor_slot_t slot, const rvcl_tensor_t *t) {
+rvcl_status_t rvcl_tensor_pack_add(rvcl_tensor_pack_t *p,
+        rvcl_tensor_slot_t slot, const rvcl_tensor_t *t) {
     return pack_add(p, slot, t, 1);
 }
 

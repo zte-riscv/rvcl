@@ -25,8 +25,8 @@
 #include <stdint.h>
 
 /* C = bias? + A * B, row-major plain, accumulate fp32. */
-void golden_f32(const float *a, const float *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k);
+void golden_f32(const float *a, const float *b, const float *bias, float *c,
+        int64_t m, int64_t n, int64_t k);
 void golden_f16(const uint16_t *a, const uint16_t *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k);
 
@@ -53,9 +53,8 @@ typedef struct {
     float exp_first, got_first;
 } golden_cmp_t;
 
-golden_cmp_t golden_cmp_bitexact(const float *got, const float *exp,
-        int64_t n);
-golden_cmp_t golden_cmp_tol(const float *got, const float *exp, int64_t n,
-        float rel_tol);
+golden_cmp_t golden_cmp_bitexact(const float *got, const float *exp, int64_t n);
+golden_cmp_t golden_cmp_tol(
+        const float *got, const float *exp, int64_t n, float rel_tol);
 
 #endif /* RVCL_TEST_GOLDEN_H */

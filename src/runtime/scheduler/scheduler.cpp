@@ -16,9 +16,9 @@ static void serial_parallel_for(rvcl_ischeduler_t *s,
         void *user_ctx);
 
 static rvcl_ischeduler_t g_serial = {
-    .parallel_for = serial_parallel_for,
-    .num_threads = 1,
-    .name = "serial",
+        .parallel_for = serial_parallel_for,
+        .num_threads = 1,
+        .name = "serial",
 };
 
 static void serial_parallel_for(rvcl_ischeduler_t *s,

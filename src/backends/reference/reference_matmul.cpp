@@ -25,12 +25,11 @@ typedef struct {
 
 /* ------------------------------------------------------------- lifecycle */
 
-static rvcl_status_t ref_validate(const rvcl_op_desc_t *desc,
-        const rvcl_capability_t *cap) {
+static rvcl_status_t ref_validate(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
     (void)cap; /* reference kernel runs anywhere, even on x86 CI hosts */
     const rvcl_matmul_desc_t *d = &desc->matmul;
-    if (d->m <= 0 || d->n <= 0 || d->k <= 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (d->m <= 0 || d->n <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
     /* Reference covers exactly the P0 fp32 tuple (PLAN §4.5.2). */
     if (d->dtype_a != RVCL_DTYPE_FP32 || d->dtype_b != RVCL_DTYPE_FP32
             || d->dtype_c != RVCL_DTYPE_FP32)
@@ -38,15 +37,14 @@ static rvcl_status_t ref_validate(const rvcl_op_desc_t *desc,
     return RVCL_SUCCESS;
 }
 
-static rvcl_status_t ref_configure(rvcl_kernel_t *k,
-        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req,
-        int *num_ws) {
+static rvcl_status_t ref_configure(rvcl_kernel_t *k, const rvcl_op_desc_t *desc,
+        rvcl_workspace_req_t *ws_req, int *num_ws) {
     ref_matmul_t *rk = (ref_matmul_t *)k;
     rk->m = desc->matmul.m;
     rk->n = desc->matmul.n;
     rk->k = desc->matmul.k;
     /* Golden path needs no temporary memory. */
-    if (ws_req) *ws_req = rvcl_workspace_req_t{};
+    if (ws_req) *ws_req = rvcl_workspace_req_t {};
     if (num_ws) *num_ws = 0;
     return RVCL_SUCCESS;
 }
@@ -84,16 +82,16 @@ static void ref_destroy(rvcl_kernel_t *k) {
 }
 
 static const rvcl_kernel_vtable_t g_ref_vtable = {
-    .validate = ref_validate,
-    .configure = ref_configure,
-    .pack_a = NULL, /* unpacked kernel */
-    .pack_b = NULL,
-    .run = ref_run,
-    .destroy = ref_destroy,
+        .validate = ref_validate,
+        .configure = ref_configure,
+        .pack_a = NULL, /* unpacked kernel */
+        .pack_b = NULL,
+        .run = ref_run,
+        .destroy = ref_destroy,
 };
 
-static rvcl_status_t ref_create(rvcl_kernel_t **out,
-        const rvcl_kernel_desc_t *desc) {
+static rvcl_status_t ref_create(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
     rvcl_status_t st = rvcl_kernel_alloc(out, desc, sizeof(ref_matmul_t));
     if (st != RVCL_SUCCESS) return st;
     (*out)->vt = &g_ref_vtable;

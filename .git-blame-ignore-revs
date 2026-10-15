@@ -1,0 +1,8 @@
+# Revisions to ignore in `git blame`.
+#
+# Enable locally with:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# The reformat commit of the .clang-format introduction is appended here
+# after the PR lands (its hash is the squash-merge commit on main), so blame
+# does not attribute every line to the formatting-only change.

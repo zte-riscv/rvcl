@@ -42,10 +42,10 @@
 #include <string.h>
 #include <time.h>
 
-#include "rvcl/rvcl.h"
-#include "golden.hpp"
 #include "../src/backends/rvv/rvv_fp16.hpp"
 #include "../src/backends/rvv/rvv_internal.hpp"
+#include "golden.hpp"
+#include "rvcl/rvcl.h"
 
 /* ------------------------------------------------------------- timing */
 
@@ -86,8 +86,8 @@ typedef struct {
 typedef struct {
     bcase_t *cases;
     int count, cap;
-    char file_mode;     /* 'C'|'P'|'S' from the --mode header, 0 if absent */
-    int dt_fixed;       /* 0 = both dtypes */
+    char file_mode; /* 'C'|'P'|'S' from the --mode header, 0 if absent */
+    int dt_fixed; /* 0 = both dtypes */
     rvcl_dtype_t dt;
 } bcorpus_t;
 
@@ -109,8 +109,8 @@ static void bcorpus_fatal(const char *file, int line, const char *fmt, ...) {
     exit(2);
 }
 
-static void bcheck_dim(long long v, const char *file, int line,
-        const char *tok) {
+static void bcheck_dim(
+        long long v, const char *file, int line, const char *tok) {
     if (v < 1 || v > 4096)
         bcorpus_fatal(file, line,
                 "dimension %lld out of bounds 1..4096 in '%s'", v, tok);
@@ -123,8 +123,8 @@ static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
             bcorpus_fatal(file, line, "duplicate label n\"%s\"", label);
     if (c->count == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 64;
-        c->cases = (bcase_t *)realloc(c->cases,
-                (size_t)c->cap * sizeof(*c->cases));
+        c->cases = (bcase_t *)realloc(
+                c->cases, (size_t)c->cap * sizeof(*c->cases));
         if (!c->cases) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
@@ -137,8 +137,8 @@ static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
     snprintf(bc->label, sizeof(bc->label), "%s", label);
 }
 
-static void bparse_header(bcorpus_t *c, char *text, const char *file,
-        int line) {
+static void bparse_header(
+        bcorpus_t *c, char *text, const char *file, int line) {
     char *e = strpbrk(text, " \t#");
     if (e) *e = '\0';
     char *eq = strchr(text, '=');
@@ -153,12 +153,11 @@ static void bparse_header(bcorpus_t *c, char *text, const char *file,
     int known = 0;
     for (int i = 0; g_bench_header_keys[i]; i++)
         if (!strcmp(text, g_bench_header_keys[i])) known = 1;
-    if (!known)
-        bcorpus_fatal(file, line, "unknown header option '%s'", text);
+    if (!known) bcorpus_fatal(file, line, "unknown header option '%s'", text);
 
     if (!strcmp(text, "--mode")) {
-        if (strlen(val) != 1 || (val[0] != 'C' && val[0] != 'P'
-                    && val[0] != 'S'))
+        if (strlen(val) != 1
+                || (val[0] != 'C' && val[0] != 'P' && val[0] != 'S'))
             bcorpus_fatal(file, line,
                     "bad value for --mode: '%s' (want C, P or S)", val);
         c->file_mode = val[0];
@@ -177,8 +176,8 @@ static void bparse_header(bcorpus_t *c, char *text, const char *file,
 }
 
 /* shape token parse via scanf pattern on a NUL-terminated token */
-static void bparse_shape(char *tok, int64_t *pm, int64_t *pn,
-        int64_t *pk, const char *file, int line) {
+static void bparse_shape(char *tok, int64_t *pm, int64_t *pn, int64_t *pk,
+        const char *file, int line) {
     long long t1[3], t2[3], occ;
     int pos = 0;
     if (sscanf(tok, "%lldx%lldx%lld%n", &t1[0], &t1[1], &t1[2], &pos) != 3
@@ -192,8 +191,7 @@ static void bparse_shape(char *tok, int64_t *pm, int64_t *pn,
     if (*rest == ':') { /* MxK:KxN — the two K values must match */
         int pos2 = 0;
         rest++;
-        if (sscanf(rest, "%lldx%lldx%lld%n", &t2[0], &t2[1], &t2[2],
-                    &pos2) != 3
+        if (sscanf(rest, "%lldx%lldx%lld%n", &t2[0], &t2[1], &t2[2], &pos2) != 3
                 || pos2 <= 0)
             bcorpus_fatal(file, line, "unparsable case '%s'", tok);
         bcheck_dim(t2[0], file, line, tok);
@@ -220,12 +218,10 @@ static void bparse_shape(char *tok, int64_t *pm, int64_t *pn,
             bcorpus_fatal(file, line, "unparsable case '%s'", tok);
         rest += pos3;
     }
-    if (*rest != '\0')
-        bcorpus_fatal(file, line, "unparsable case '%s'", tok);
+    if (*rest != '\0') bcorpus_fatal(file, line, "unparsable case '%s'", tok);
 }
 
-static void bparse_case(bcorpus_t *c, char *text, const char *file,
-        int line) {
+static void bparse_case(bcorpus_t *c, char *text, const char *file, int line) {
     /* token = shape(+occurrence); ends at whitespace, '_' or EOL */
     size_t tlen = strcspn(text, " \t_");
     char saved = text[tlen];
@@ -239,25 +235,24 @@ static void bparse_case(bcorpus_t *c, char *text, const char *file,
     rest += strspn(rest, " \t_");
     if (*rest == '\0' || *rest == '#') { /* no label: shape is the label */
         char shape_s[64];
-        snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld",
-                (long long)m, (long long)n, (long long)k);
+        snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)m,
+                (long long)n, (long long)k);
         bcorpus_push(c, m, n, k, shape_s, file, line);
         return;
     }
     if (rest[0] != 'n' || rest[1] != '"')
-        bcorpus_fatal(file, line, "expected n\"label\" after shape in '%s'",
-                text);
+        bcorpus_fatal(
+                file, line, "expected n\"label\" after shape in '%s'", text);
     char *name = rest + 2;
     char *close = strchr(name, '"');
     if (!close || close == name)
-        bcorpus_fatal(file, line, "unterminated or empty label in '%s'",
-                text);
+        bcorpus_fatal(file, line, "unterminated or empty label in '%s'", text);
     for (const char *q = name; q < close; q++)
-        if (!( (*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z')
+        if (!((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z')
                     || (*q >= '0' && *q <= '9') || *q == '_' || *q == '.'
                     || *q == '*' || *q == '-'))
-            bcorpus_fatal(file, line, "bad label character '%c' in '%s'",
-                    *q, text);
+            bcorpus_fatal(
+                    file, line, "bad label character '%c' in '%s'", *q, text);
     *close = '\0';
     close++;
     close += strspn(close, " \t");
@@ -341,8 +336,7 @@ typedef struct {
 static void bench_kernel_only(void *p) {
     konly_ctx_t *kc = (konly_ctx_t *)p;
     const case_t *cs = kc->cs;
-    rvcl_work_range_t full
-            = rvcl_work_range_full(cs->m, cs->n, cs->k);
+    rvcl_work_range_t full = rvcl_work_range_full(cs->m, cs->n, cs->k);
     kc->gemm(cs->d.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
                                               : (const void *)cs->ah,
             kc->packed, cs->bias, cs->c, cs->m, cs->n, cs->k, &full);
@@ -455,45 +449,42 @@ typedef struct {
 
 static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     memset(g, 0, sizeof(*g));
-    if (rvcl_dispatch_matmul(&cs->d, &g->r) != RVCL_SUCCESS || !g->r)
-        return 0;
+    if (rvcl_dispatch_matmul(&cs->d, &g->r) != RVCL_SUCCESS || !g->r) return 0;
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(g->r, &num_ws);
     for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
-        if (posix_memalign(&g->ws_buf[i], align,
-                    (size_t)(ws[i].size + align)) != 0)
+        if (posix_memalign(&g->ws_buf[i], align, (size_t)(ws[i].size + align))
+                != 0)
             return 0;
         rvcl_tensor_desc_t wd = {.ndims = 1,
-            .dims = {ws[i].size + 1},
-            .strides = {1},
-            .dtype = RVCL_DTYPE_UINT8};
+                .dims = {ws[i].size + 1},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_UINT8};
         rvcl_tensor_init(&g->ws_t[i], &wd, g->ws_buf[i]);
     }
     g->num_ws = num_ws;
 
     rvcl_tensor_desc_t td = {.ndims = 2,
-        .dims = {cs->m, cs->k},
-        .strides = {cs->k, 1},
-        .dtype = cs->d.dtype_a};
+            .dims = {cs->m, cs->k},
+            .strides = {cs->k, 1},
+            .dtype = cs->d.dtype_a};
     rvcl_tensor_init(&g->ta, &td,
-            cs->d.dtype_a == RVCL_DTYPE_FP16 ? (void *)cs->ah
-                                             : (void *)cs->a);
+            cs->d.dtype_a == RVCL_DTYPE_FP16 ? (void *)cs->ah : (void *)cs->a);
     td.dims[0] = cs->k;
     td.dims[1] = cs->n;
     td.strides[0] = cs->n;
     td.dtype = cs->d.dtype_b;
     rvcl_tensor_init(&g->tb, &td,
-            cs->d.dtype_b == RVCL_DTYPE_FP16 ? (void *)cs->bh
-                                             : (void *)cs->b);
+            cs->d.dtype_b == RVCL_DTYPE_FP16 ? (void *)cs->bh : (void *)cs->b);
     td.dims[0] = cs->m;
     td.strides[0] = cs->n;
     td.dtype = cs->d.dtype_c;
     rvcl_tensor_init(&g->tc, &td, cs->c);
     rvcl_tensor_desc_t bd = {.ndims = 1,
-        .dims = {cs->n},
-        .strides = {1},
-        .dtype = RVCL_DTYPE_FP32};
+            .dims = {cs->n},
+            .strides = {1},
+            .dtype = RVCL_DTYPE_FP32};
     rvcl_tensor_init(&g->tbias, &bd, cs->bias);
 
     rvcl_tensor_pack_init(&g->pack);
@@ -509,7 +500,8 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
 }
 
 static void rig_release(dispatch_rig_t *g) {
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++) free(g->ws_buf[i]);
+    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
+        free(g->ws_buf[i]);
     rvcl_dispatch_release(g->r);
 }
 
@@ -517,39 +509,44 @@ int main(int argc, char **argv) {
     int json = 0, reps = 5, path_c = 0, mode_given = 0;
     bench_mode_t mode = MODE_P;
     const char *batch = NULL;
-    static const int64_t defaults[][3] = {{64, 64, 64}, {128, 128, 128},
-            {256, 256, 256}, {128, 256, 512}};
+    static const int64_t defaults[][3]
+            = {{64, 64, 64}, {128, 128, 128}, {256, 256, 256}, {128, 256, 512}};
     int64_t shapes[16][3];
     int num_shapes = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--json")) json = 1;
+        if (!strcmp(argv[i], "--json"))
+            json = 1;
         else if (!strcmp(argv[i], "--reps") && i + 1 < argc)
             reps = atoi(argv[++i]);
         else if (!strncmp(argv[i], "--mode=", 7) && argv[i][7]) {
             const char *m = argv[i] + 7;
-            if (!strcmp(m, "C")) mode = MODE_C;
-            else if (!strcmp(m, "P")) mode = MODE_P;
-            else if (!strcmp(m, "S")) mode = MODE_S;
+            if (!strcmp(m, "C"))
+                mode = MODE_C;
+            else if (!strcmp(m, "P"))
+                mode = MODE_P;
+            else if (!strcmp(m, "S"))
+                mode = MODE_S;
             else {
-                fprintf(stderr, "error: bad --mode '%s' (want C, P, S)\n",
-                        m);
+                fprintf(stderr, "error: bad --mode '%s' (want C, P, S)\n", m);
                 return 2;
             }
             mode_given = 1;
-        } else if (!strcmp(argv[i], "--path=c")) path_c = 1;
+        } else if (!strcmp(argv[i], "--path=c"))
+            path_c = 1;
         else if (!strncmp(argv[i], "--batch=", 8) && argv[i][8])
             batch = argv[i] + 8;
         else if (num_shapes < 16) {
             long long m, n, k;
-            if (sscanf(argv[i], "%lldx%lldx%lld", &m, &n, &k) == 3
-                    && m > 0 && n > 0 && k > 0) {
+            if (sscanf(argv[i], "%lldx%lldx%lld", &m, &n, &k) == 3 && m > 0
+                    && n > 0 && k > 0) {
                 shapes[num_shapes][0] = m;
                 shapes[num_shapes][1] = n;
                 shapes[num_shapes][2] = k;
                 num_shapes++;
             } else {
-                fprintf(stderr, "error: bad argument '%s'\n"
+                fprintf(stderr,
+                        "error: bad argument '%s'\n"
                         "usage: %s [--json] [--reps N] [--mode=C|P|S] "
                         "[--path=c] [--batch=FILE] [MxNxK ...]\n",
                         argv[i], argv[0]);
@@ -561,8 +558,9 @@ int main(int argc, char **argv) {
         }
     }
     if (batch && num_shapes) {
-        fprintf(stderr, "error: --batch and shape arguments are mutually "
-                        "exclusive\n");
+        fprintf(stderr,
+                "error: --batch and shape arguments are mutually "
+                "exclusive\n");
         return 2;
     }
 
@@ -573,12 +571,14 @@ int main(int argc, char **argv) {
         op_from_batch_path(batch, op, sizeof(op));
         /* file header --mode is the default; an explicit CLI --mode wins */
         if (!mode_given && corpus.file_mode)
-            mode = corpus.file_mode == 'C' ? MODE_C
-                    : corpus.file_mode == 'S' ? MODE_S : MODE_P;
+            mode = corpus.file_mode == 'C'    ? MODE_C
+                    : corpus.file_mode == 'S' ? MODE_S
+                                              : MODE_P;
     } else if (num_shapes == 0) {
         num_shapes = (int)(sizeof(defaults) / sizeof(defaults[0]));
         for (int i = 0; i < num_shapes; i++)
-            for (int j = 0; j < 3; j++) shapes[i][j] = defaults[i][j];
+            for (int j = 0; j < 3; j++)
+                shapes[i][j] = defaults[i][j];
     }
     if (mode == MODE_S) reps = 1;
     if (reps < 1) reps = 1;
@@ -591,9 +591,9 @@ int main(int argc, char **argv) {
         printf("{\"_meta\":{\"schema\":1,\"rvcl\":\"%s\","
                "\"capability\":\"%s\",\"mode\":\"%c\",\"reps\":%d,"
                "\"batch\":%s%s%s}}\n",
-                rvcl_get_version(), rvcl_get_capability()->description,
-                mode_ch, reps, batch ? "\"" : "null",
-                batch ? batch : "", batch ? "\"" : "");
+                rvcl_get_version(), rvcl_get_capability()->description, mode_ch,
+                reps, batch ? "\"" : "null", batch ? batch : "",
+                batch ? "\"" : "");
     } else {
         printf("RVCL %s bench (mode %c, reps %d) — %s\n", rvcl_get_version(),
                 mode_ch, reps, rvcl_get_capability()->description);
@@ -615,8 +615,8 @@ int main(int argc, char **argv) {
             cs.k = shapes[s][2];
         }
         char shape_s[64];
-        snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld",
-                (long long)cs.m, (long long)cs.n, (long long)cs.k);
+        snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)cs.m,
+                (long long)cs.n, (long long)cs.k);
         if (!cs.label) cs.label = shape_s;
         char label_s[96];
         snprintf(label_s, sizeof(label_s), "%s", cs.label);
@@ -627,14 +627,16 @@ int main(int argc, char **argv) {
                 continue;
             const char *dtstr = dt ? "f16" : "f32";
 
-            cs.d = rvcl_matmul_desc_t{
-                .m = cs.m, .n = cs.n, .k = cs.k,
-                .dtype_a = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
-                .dtype_b = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
-                .dtype_acc = RVCL_DTYPE_AUTO,
-                .dtype_c = RVCL_DTYPE_FP32,
-                .dtype_bias = RVCL_DTYPE_AUTO,
-                .quant = {},
+            cs.d = rvcl_matmul_desc_t {
+                    .m = cs.m,
+                    .n = cs.n,
+                    .k = cs.k,
+                    .dtype_a = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
+                    .dtype_b = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
+                    .dtype_acc = RVCL_DTYPE_AUTO,
+                    .dtype_c = RVCL_DTYPE_FP32,
+                    .dtype_bias = RVCL_DTYPE_AUTO,
+                    .quant = {},
             };
             fill_case(&cs, dt, mode);
             const double flops = 2.0 * cs.m * cs.n * cs.k;
@@ -654,27 +656,24 @@ int main(int argc, char **argv) {
                     run_ctx_t rc = {.k = rvcl_dispatch_kernel(rig.r),
                             .pack = &rig.pack,
                             .range = &rig.full};
-                    rvcl_status_t st = rvcl_kernel_run(rc.k, rc.pack,
-                            rc.range);
+                    rvcl_status_t st = rvcl_kernel_run(rc.k, rc.pack, rc.range);
                     if (st != RVCL_SUCCESS) {
-                        snprintf(dbuf, sizeof(dbuf), "run status %d",
-                                (int)st);
+                        snprintf(dbuf, sizeof(dbuf), "run status %d", (int)st);
                         detail = dbuf;
                         ok = 0;
                     } else {
-                        float *golden = (float *)malloc(
-                                (size_t)(cs.m * cs.n) * 4);
+                        float *golden
+                                = (float *)malloc((size_t)(cs.m * cs.n) * 4);
                         if (dt)
-                            golden_f16(cs.ah, cs.bh, cs.bias, golden,
-                                    cs.m, cs.n, cs.k);
+                            golden_f16(cs.ah, cs.bh, cs.bias, golden, cs.m,
+                                    cs.n, cs.k);
                         else
-                            golden_f32(cs.a, cs.b, cs.bias, golden,
-                                    cs.m, cs.n, cs.k);
-                        golden_cmp_t cmp = dt
-                                ? golden_cmp_tol(cs.c, golden,
-                                        cs.m * cs.n, 1e-3f)
-                                : golden_cmp_bitexact(cs.c, golden,
-                                        cs.m * cs.n);
+                            golden_f32(cs.a, cs.b, cs.bias, golden, cs.m, cs.n,
+                                    cs.k);
+                        golden_cmp_t cmp = dt ? golden_cmp_tol(cs.c, golden,
+                                                        cs.m * cs.n, 1e-3f)
+                                              : golden_cmp_bitexact(cs.c,
+                                                        golden, cs.m * cs.n);
                         free(golden);
                         if (cmp.mismatches) {
                             snprintf(dbuf, sizeof(dbuf),
@@ -696,18 +695,15 @@ int main(int argc, char **argv) {
                            "\"pack_kernel_ms\":null,\"e2e_ms\":null,"
                            "\"gflops_kernel\":null,\"gflops_e2e\":null,"
                            "\"status\":\"%s\"%s%s%s%s}\n",
-                            op, shape_s, label_s, dtstr,
-                            ok ? "\"" : "null",
+                            op, shape_s, label_s, dtstr, ok ? "\"" : "null",
                             ok ? rvcl_dispatch_kernel_name(rig.r) : "",
                             ok ? "\"" : "", ok ? "ok" : "fail",
-                            *detail ? ",\"detail\":" : "",
-                            *detail ? "\"" : "", detail,
-                            *detail ? "\"" : "");
+                            *detail ? ",\"detail\":" : "", *detail ? "\"" : "",
+                            detail, *detail ? "\"" : "");
                 } else {
                     printf("%-16s %-5s %-24s C: %s%s%s\n", shape_s, dtstr,
                             ok ? rvcl_dispatch_kernel_name(rig.r) : "-",
-                            ok ? "ok" : "FAIL", *detail ? " — " : "",
-                            detail);
+                            ok ? "ok" : "FAIL", *detail ? " — " : "", detail);
                 }
                 if (ok) {
                     nok++;
@@ -731,15 +727,15 @@ int main(int argc, char **argv) {
             rvcl_tensor_t b_src, b_dst;
             {
                 rvcl_tensor_desc_t td = {.ndims = 2,
-                    .dims = {cs.k, cs.n},
-                    .strides = {cs.n, 1},
-                    .dtype = cs.d.dtype_b};
-                rvcl_tensor_init(&b_src, &td,
-                        dt ? (void *)cs.bh : (void *)cs.b);
+                        .dims = {cs.k, cs.n},
+                        .strides = {cs.n, 1},
+                        .dtype = cs.d.dtype_b};
+                rvcl_tensor_init(
+                        &b_src, &td, dt ? (void *)cs.bh : (void *)cs.b);
                 rvcl_tensor_desc_t pd = {.ndims = 1,
-                    .dims = {(int64_t)pbytes},
-                    .strides = {1},
-                    .dtype = RVCL_DTYPE_UINT8};
+                        .dims = {(int64_t)pbytes},
+                        .strides = {1},
+                        .dtype = RVCL_DTYPE_UINT8};
                 rvcl_tensor_init(&b_dst, &pd, packed);
                 rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
             }
@@ -748,8 +744,7 @@ int main(int argc, char **argv) {
             /* kernel-only goes through the same selector the backend
              * binds (rvv_pick_*); --path=c forces the C micro-kernel */
             kc.gemm = path_c ? (dt ? rvv_gemm_f16_c : rvv_gemm_f32_c)
-                             : (dt ? rvv_pick_gemm_f16()
-                                   : rvv_pick_gemm_f32());
+                             : (dt ? rvv_pick_gemm_f16() : rvv_pick_gemm_f32());
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)
                     : time_best_of(bench_kernel_only, &kc, reps);
@@ -765,15 +760,15 @@ int main(int argc, char **argv) {
                 run_ctx_t rc = {.k = rvcl_dispatch_kernel(rig.r),
                         .pack = &rig.pack,
                         .range = &rig.full};
-                t_pk = mode == MODE_S ? time_once(bench_pack_kernel, &rc)
-                                      : time_best_of(bench_pack_kernel,
-                                              &rc, reps);
+                t_pk = mode == MODE_S
+                        ? time_once(bench_pack_kernel, &rc)
+                        : time_best_of(bench_pack_kernel, &rc, reps);
                 e2e_ctx_t ec = {.cs = &cs};
                 t_e2e = mode == MODE_S ? time_once(bench_e2e, &ec)
                                        : time_best_of(bench_e2e, &ec, reps);
             }
-            const char *kname = has_dispatch
-                    ? rvcl_dispatch_kernel_name(rig.r) : NULL;
+            const char *kname
+                    = has_dispatch ? rvcl_dispatch_kernel_name(rig.r) : NULL;
 
             if (json) {
                 char b1[32], b2[32], b3[32], b4[32], b5[32];
@@ -787,8 +782,8 @@ int main(int argc, char **argv) {
                        "\"status\":\"%s\"}\n",
                         op, shape_s, label_s, dtstr, mode_ch,
                         kname ? "\"" : "null", kname ? kname : "",
-                        kname ? "\"" : "",
-                        t_kernel, jms(b1, sizeof(b1), t_pack, 1),
+                        kname ? "\"" : "", t_kernel,
+                        jms(b1, sizeof(b1), t_pack, 1),
                         jms(b2, sizeof(b2), t_pk, has_dispatch),
                         jms(b3, sizeof(b3), t_e2e, has_dispatch), b5,
                         jms(b4, sizeof(b4),
@@ -797,10 +792,10 @@ int main(int argc, char **argv) {
                         has_dispatch ? "ok" : "nodispatch");
             } else {
                 char sh[32];
-                snprintf(sh, sizeof(sh), "%lldx%lldx%lld",
-                        (long long)cs.m, (long long)cs.n, (long long)cs.k);
-                printf("%-16s %-5s %-24.24s %10.3f %10.3f %10.3f %10.3f\n",
-                        sh, dtstr, kname ? kname : "-", t_kernel, t_pack,
+                snprintf(sh, sizeof(sh), "%lldx%lldx%lld", (long long)cs.m,
+                        (long long)cs.n, (long long)cs.k);
+                printf("%-16s %-5s %-24.24s %10.3f %10.3f %10.3f %10.3f\n", sh,
+                        dtstr, kname ? kname : "-", t_kernel, t_pack,
                         has_dispatch ? t_pk : 0, has_dispatch ? t_e2e : 0);
             }
 

@@ -29,8 +29,8 @@ extern "C" {
  * never create threads. Returns RVCL_UNSUPPORTED when no kernel serves
  * the requested tuple on this host.
  */
-RVCL_API rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
-        const void *b, const void *bias, void *c);
+RVCL_API rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc,
+        const void *a, const void *b, const void *bias, void *c);
 
 #ifdef __cplusplus
 } /* extern "C" */

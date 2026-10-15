@@ -50,7 +50,7 @@ typedef enum {
     RVCL_ERROR_OUT_OF_MEMORY = 2,
     RVCL_ERROR_INTERNAL = 3,
     /* Dispatch / kernel selection */
-    RVCL_UNSUPPORTED = 10,             /* no kernel can serve the request */
+    RVCL_UNSUPPORTED = 10, /* no kernel can serve the request */
     RVCL_UNSUPPORTED_DTYPE_COMBO = 11, /* (A,B,acc,C) tuple is rejected */
     RVCL_ERROR_ALREADY_REGISTERED = 12,
     RVCL_ERROR_NOT_FOUND = 13,
@@ -135,7 +135,8 @@ typedef struct {
 } rvcl_work_range_t;
 
 /* Full-range constant initializer. */
-RVCL_API rvcl_work_range_t rvcl_work_range_full(int64_t m, int64_t n, int64_t k);
+RVCL_API rvcl_work_range_t rvcl_work_range_full(
+        int64_t m, int64_t n, int64_t k);
 
 #ifdef __cplusplus
 } /* extern "C" */

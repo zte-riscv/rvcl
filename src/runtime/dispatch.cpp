@@ -62,8 +62,8 @@ static int g_cache_hits, g_cache_misses; /* observability (PLAN §8.4) */
 /* forward: cache eviction / clear drop their reference through this */
 static void result_unref(rvcl_dispatch_result_t *r);
 
-static int desc_key_equal(const rvcl_matmul_desc_t *a,
-        const rvcl_matmul_desc_t *b) {
+static int desc_key_equal(
+        const rvcl_matmul_desc_t *a, const rvcl_matmul_desc_t *b) {
     return a->m == b->m && a->n == b->n && a->k == b->k
             && a->dtype_a == b->dtype_a && a->dtype_b == b->dtype_b
             && a->dtype_acc == b->dtype_acc && a->dtype_c == b->dtype_c
@@ -79,8 +79,7 @@ static unsigned desc_key_hash(const rvcl_matmul_desc_t *d) {
 }
 
 /* lookup: returns the result (borrowed, cache-owned) or NULL. */
-static rvcl_dispatch_result_t *cache_lookup(
-        const rvcl_matmul_desc_t *key) {
+static rvcl_dispatch_result_t *cache_lookup(const rvcl_matmul_desc_t *key) {
     unsigned idx = desc_key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
     cache_slot_t *s = &g_cache[idx];
     if (!s->used || !desc_key_equal(&s->key, key)) return NULL;
@@ -88,8 +87,8 @@ static rvcl_dispatch_result_t *cache_lookup(
 }
 
 /* insert: replaces any previous entry in the hashed slot. */
-static void cache_insert(const rvcl_matmul_desc_t *key,
-        rvcl_dispatch_result_t *r) {
+static void cache_insert(
+        const rvcl_matmul_desc_t *key, rvcl_dispatch_result_t *r) {
     unsigned idx = desc_key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
     cache_slot_t *s = &g_cache[idx];
     if (s->used && !desc_key_equal(&s->key, key)) {
@@ -124,19 +123,26 @@ rvcl_status_t rvcl_dispatch_cache_clear(void) {
     return RVCL_SUCCESS;
 }
 
-int rvcl_dispatch_cache_hits(void) { return g_cache_hits; }
-int rvcl_dispatch_cache_misses(void) { return g_cache_misses; }
+int rvcl_dispatch_cache_hits(void) {
+    return g_cache_hits;
+}
+int rvcl_dispatch_cache_misses(void) {
+    return g_cache_misses;
+}
 
 /* ------------------------------------------------------------- filters */
 
-static int filter_datatype(const rvcl_kernel_desc_t *kd,
-        const rvcl_matmul_desc_t *d) {
+static int filter_datatype(
+        const rvcl_kernel_desc_t *kd, const rvcl_matmul_desc_t *d) {
     /* acc=AUTO resolves via habit rules (PLAN §4.5.1). */
     rvcl_dtype_t acc = d->dtype_acc;
     if (acc == RVCL_DTYPE_AUTO) {
-        if (d->dtype_a == RVCL_DTYPE_FP32) acc = RVCL_DTYPE_FP32;
-        else if (d->dtype_a == RVCL_DTYPE_BF16) acc = RVCL_DTYPE_FP32;
-        else if (d->dtype_a == RVCL_DTYPE_INT8 || d->dtype_a == RVCL_DTYPE_UINT8)
+        if (d->dtype_a == RVCL_DTYPE_FP32)
+            acc = RVCL_DTYPE_FP32;
+        else if (d->dtype_a == RVCL_DTYPE_BF16)
+            acc = RVCL_DTYPE_FP32;
+        else if (d->dtype_a == RVCL_DTYPE_INT8
+                || d->dtype_a == RVCL_DTYPE_UINT8)
             acc = RVCL_DTYPE_INT32;
         else
             acc = RVCL_DTYPE_FP32; /* conservative default */
@@ -145,8 +151,8 @@ static int filter_datatype(const rvcl_kernel_desc_t *kd,
             && kd->dtype_acc == acc && kd->dtype_c == d->dtype_c;
 }
 
-static int filter_capability(const rvcl_kernel_desc_t *kd,
-        const rvcl_capability_t *cap) {
+static int filter_capability(
+        const rvcl_kernel_desc_t *kd, const rvcl_capability_t *cap) {
     for (int i = 0; i < kd->num_required_features; i++)
         if (!rvcl_capability_has(cap, kd->required_features[i])) return 0;
     return 1;
@@ -158,8 +164,8 @@ static int in_bounds(int64_t v, int64_t lo, int64_t hi) {
     return 1;
 }
 
-static int filter_shape(const rvcl_kernel_desc_t *kd,
-        const rvcl_matmul_desc_t *d) {
+static int filter_shape(
+        const rvcl_kernel_desc_t *kd, const rvcl_matmul_desc_t *d) {
     return in_bounds(d->m, kd->min_m, kd->max_m)
             && in_bounds(d->n, kd->min_n, kd->max_n)
             && in_bounds(d->k, kd->min_k, kd->max_k);
@@ -186,8 +192,8 @@ static int backend_priority(const rvcl_kernel_desc_t *kd) {
 
 /* ------------------------------------------------------------- dispatch */
 
-rvcl_status_t rvcl_dispatch_matmul(const rvcl_matmul_desc_t *desc,
-        rvcl_dispatch_result_t **result) {
+rvcl_status_t rvcl_dispatch_matmul(
+        const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result) {
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     *result = NULL;
 

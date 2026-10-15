@@ -28,7 +28,7 @@ extern "C" {
 
 typedef struct {
     int ndims;
-    int64_t dims[6];    /* dims[0] outermost ... dims[ndims-1] innermost */
+    int64_t dims[6]; /* dims[0] outermost ... dims[ndims-1] innermost */
     int64_t strides[6]; /* in elements; strides[ndims-1] must be 1 */
     rvcl_dtype_t dtype;
 } rvcl_tensor_desc_t;

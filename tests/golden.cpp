@@ -13,8 +13,8 @@
 
 /* ------------------------------------------------------------- goldens */
 
-void golden_f32(const float *a, const float *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+void golden_f32(const float *a, const float *b, const float *bias, float *c,
+        int64_t m, int64_t n, int64_t k) {
     for (int64_t i = 0; i < m; i++)
         for (int64_t j = 0; j < n; j++) {
             float acc = bias ? bias[j] : 0.0f;
@@ -67,10 +67,10 @@ uint32_t golden_case_seed(int64_t m, int64_t n, int64_t k) {
 
 /* ------------------------------------------------------------ compare */
 
-golden_cmp_t golden_cmp_bitexact(const float *got, const float *exp,
-        int64_t n) {
-    golden_cmp_t r = {.mismatches = 0, .first = -1,
-            .exp_first = 0.0f, .got_first = 0.0f};
+golden_cmp_t golden_cmp_bitexact(
+        const float *got, const float *exp, int64_t n) {
+    golden_cmp_t r = {
+            .mismatches = 0, .first = -1, .exp_first = 0.0f, .got_first = 0.0f};
     for (int64_t i = 0; i < n; i++) {
         if (got[i] != exp[i]) {
             if (r.first < 0) {
@@ -84,10 +84,10 @@ golden_cmp_t golden_cmp_bitexact(const float *got, const float *exp,
     return r;
 }
 
-golden_cmp_t golden_cmp_tol(const float *got, const float *exp, int64_t n,
-        float rel_tol) {
-    golden_cmp_t r = {.mismatches = 0, .first = -1,
-            .exp_first = 0.0f, .got_first = 0.0f};
+golden_cmp_t golden_cmp_tol(
+        const float *got, const float *exp, int64_t n, float rel_tol) {
+    golden_cmp_t r = {
+            .mismatches = 0, .first = -1, .exp_first = 0.0f, .got_first = 0.0f};
     for (int64_t i = 0; i < n; i++) {
         const float diff = got[i] > exp[i] ? got[i] - exp[i] : exp[i] - got[i];
         if (diff > rel_tol * (1.0f + (exp[i] < 0 ? -exp[i] : exp[i]))) {

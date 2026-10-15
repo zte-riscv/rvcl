@@ -28,8 +28,9 @@ static int g_failures;
 
 #define CHECK(cond, msg) \
     do { \
-        if (cond) { printf("  ok: %s\n", msg); } \
-        else { \
+        if (cond) { \
+            printf("  ok: %s\n", msg); \
+        } else { \
             printf("  FAIL: %s (line %d)\n", msg, __LINE__); \
             g_failures++; \
         } \
@@ -38,8 +39,8 @@ static int g_failures;
 /* ---------------------------------------------------------- scheduler test */
 
 static int g_task_ran;
-static void probe_task(rvcl_ischeduler_t *s, const rvcl_work_range_t *r,
-        void *ctx) {
+static void probe_task(
+        rvcl_ischeduler_t *s, const rvcl_work_range_t *r, void *ctx) {
     (void)s;
     (void)r;
     *(int *)ctx = 1;
@@ -78,9 +79,9 @@ int main(void) {
     /* --- memory contract --- */
     float buf[16];
     rvcl_tensor_desc_t td = {.ndims = 2,
-        .dims = {4, 4},
-        .strides = {4, 1},
-        .dtype = RVCL_DTYPE_FP32};
+            .dims = {4, 4},
+            .strides = {4, 1},
+            .dtype = RVCL_DTYPE_FP32};
     rvcl_tensor_t t;
     CHECK(rvcl_tensor_init(&t, &td, buf) == RVCL_SUCCESS, "tensor import ok");
     CHECK(t.data == (void *)buf, "zero-copy: pointer passed through");
@@ -94,13 +95,15 @@ int main(void) {
 
     /* --- dispatch: datatype filtering --- */
     rvcl_matmul_desc_t d = {
-        .m = 16, .n = 16, .k = 16,
-        .dtype_a = RVCL_DTYPE_FP32,
-        .dtype_b = RVCL_DTYPE_FP32,
-        .dtype_acc = RVCL_DTYPE_AUTO,
-        .dtype_c = RVCL_DTYPE_FP32,
-        .dtype_bias = RVCL_DTYPE_AUTO,
-        .quant = {},
+            .m = 16,
+            .n = 16,
+            .k = 16,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_AUTO,
+            .quant = {},
     };
     rvcl_dispatch_result_t *r = NULL;
     CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
@@ -137,19 +140,24 @@ int main(void) {
     /* --- end-to-end vs naive golden --- */
     enum { M = 8, N = 8, K = 16 };
     float a[M * K], b[K * N], bias[N], c[M * N];
-    for (int i = 0; i < M * K; i++) a[i] = (float)((i * 13) % 29) / 29.0f;
-    for (int i = 0; i < K * N; i++) b[i] = (float)((i * 7) % 31) / 31.0f;
-    for (int j = 0; j < N; j++) bias[j] = 0.5f;
+    for (int i = 0; i < M * K; i++)
+        a[i] = (float)((i * 13) % 29) / 29.0f;
+    for (int i = 0; i < K * N; i++)
+        b[i] = (float)((i * 7) % 31) / 31.0f;
+    for (int j = 0; j < N; j++)
+        bias[j] = 0.5f;
     memset(c, 0, sizeof(c));
 
     rvcl_matmul_desc_t de = {
-        .m = M, .n = N, .k = K,
-        .dtype_a = RVCL_DTYPE_FP32,
-        .dtype_b = RVCL_DTYPE_FP32,
-        .dtype_acc = RVCL_DTYPE_AUTO,
-        .dtype_c = RVCL_DTYPE_FP32,
-        .dtype_bias = RVCL_DTYPE_FP32,
-        .quant = {},
+            .m = M,
+            .n = N,
+            .k = K,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {},
     };
     CHECK(rvcl_matmul(&de, a, b, bias, c) == RVCL_SUCCESS,
             "rvcl_matmul succeeds");

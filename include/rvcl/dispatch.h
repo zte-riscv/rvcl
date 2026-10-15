@@ -31,8 +31,8 @@ typedef struct rvcl_dispatch_result rvcl_dispatch_result_t;
  * the result is run repeatedly via rvcl_kernel_run().
  * Returns RVCL_UNSUPPORTED when no candidate survives.
  */
-RVCL_API rvcl_status_t rvcl_dispatch_matmul(const rvcl_matmul_desc_t *desc,
-        rvcl_dispatch_result_t **result);
+RVCL_API rvcl_status_t rvcl_dispatch_matmul(
+        const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result);
 
 /* Kernel name of the selection (for verbose / tests). */
 RVCL_API const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r);

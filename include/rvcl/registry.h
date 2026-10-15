@@ -27,8 +27,8 @@ extern "C" {
  * Thread-safe. Registration is expected at library init / backend
  * registration time, not on hot paths.
  */
-RVCL_API rvcl_status_t rvcl_register_kernel(const rvcl_kernel_desc_t *desc,
-        rvcl_kernel_create_fn create);
+RVCL_API rvcl_status_t rvcl_register_kernel(
+        const rvcl_kernel_desc_t *desc, rvcl_kernel_create_fn create);
 
 /* Removes a kernel by name (mainly for tests). */
 RVCL_API rvcl_status_t rvcl_unregister_kernel(const char *name);

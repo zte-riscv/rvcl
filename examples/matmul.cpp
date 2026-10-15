@@ -20,22 +20,28 @@ int main(void) {
         fprintf(stderr, "rvcl_init failed\n");
         return 1;
     }
-    printf("RVCL %s — %s\n", rvcl_get_version(), rvcl_get_capability()->description);
+    printf("RVCL %s — %s\n", rvcl_get_version(),
+            rvcl_get_capability()->description);
 
     enum { M = 4, N = 4, K = 4 };
     float a[M * K], b[K * N], bias[N], c[M * N];
-    for (int i = 0; i < M * K; i++) a[i] = (float)(i % 7);
-    for (int i = 0; i < K * N; i++) b[i] = (float)((i * 3) % 5);
-    for (int j = 0; j < N; j++) bias[j] = 1.0f;
+    for (int i = 0; i < M * K; i++)
+        a[i] = (float)(i % 7);
+    for (int i = 0; i < K * N; i++)
+        b[i] = (float)((i * 3) % 5);
+    for (int j = 0; j < N; j++)
+        bias[j] = 1.0f;
 
     rvcl_matmul_desc_t d = {
-        .m = M, .n = N, .k = K,
-        .dtype_a = RVCL_DTYPE_FP32,
-        .dtype_b = RVCL_DTYPE_FP32,
-        .dtype_acc = RVCL_DTYPE_AUTO, /* habit rule: fp32 → acc fp32 */
-        .dtype_c = RVCL_DTYPE_FP32,
-        .dtype_bias = RVCL_DTYPE_FP32,
-        .quant = {}, /* non-quantized */
+            .m = M,
+            .n = N,
+            .k = K,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO, /* habit rule: fp32 → acc fp32 */
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {}, /* non-quantized */
     };
 
     /* Show what dispatch selected (the "dispatch once" half of the API),
@@ -64,7 +70,10 @@ int main(void) {
             float acc = bias[j];
             for (int p = 0; p < K; p++)
                 acc += a[i * K + p] * b[p * N + j];
-            if (c[i * N + j] != acc) { bad = 1; break; }
+            if (c[i * N + j] != acc) {
+                bad = 1;
+                break;
+            }
         }
 
     printf("%s\n", bad ? "FAIL" : "OK — reference matmul verified");

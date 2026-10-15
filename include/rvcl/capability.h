@@ -26,7 +26,8 @@ typedef struct {
 } rvcl_capability_t;
 
 /* Returns true if the capability set contains `id`. */
-RVCL_API int rvcl_capability_has(const rvcl_capability_t *cap, rvcl_feature_id_t id);
+RVCL_API int rvcl_capability_has(
+        const rvcl_capability_t *cap, rvcl_feature_id_t id);
 
 /* Looks up a feature; returns NULL when absent. */
 RVCL_API const rvcl_feature_t *rvcl_capability_get(

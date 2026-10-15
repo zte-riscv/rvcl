@@ -91,8 +91,8 @@ typedef struct rvcl_kernel rvcl_kernel_t;
 typedef struct {
     /* Side-effect-free probe. Called heavily at dispatch time.
      * Returns RVCL_SUCCESS when this kernel can serve the request. */
-    rvcl_status_t (*validate)(const rvcl_op_desc_t *desc,
-            const rvcl_capability_t *cap);
+    rvcl_status_t (*validate)(
+            const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
     /* Prepares execution metadata and reports workspace demands.
      * Called once per dispatch result; run() may be called many times. */
@@ -117,8 +117,8 @@ typedef struct {
 } rvcl_kernel_vtable_t;
 
 /* Every kernel implementation exposes this factory symbol. */
-typedef rvcl_status_t (*rvcl_kernel_create_fn)(rvcl_kernel_t **out,
-        const rvcl_kernel_desc_t *desc);
+typedef rvcl_status_t (*rvcl_kernel_create_fn)(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc);
 
 /* The generic kernel header every instance starts with. */
 struct rvcl_kernel {
@@ -132,10 +132,9 @@ RVCL_API rvcl_status_t rvcl_kernel_alloc(rvcl_kernel_t **out,
 
 /* Runtime-facing lifecycle wrappers. */
 RVCL_API rvcl_status_t rvcl_kernel_configure(rvcl_kernel_t *k,
-        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req,
-        int *num_ws);
-RVCL_API rvcl_status_t rvcl_kernel_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
-        const rvcl_work_range_t *range);
+        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req, int *num_ws);
+RVCL_API rvcl_status_t rvcl_kernel_run(rvcl_kernel_t *k,
+        const rvcl_tensor_pack_t *pack, const rvcl_work_range_t *range);
 RVCL_API void rvcl_kernel_destroy(rvcl_kernel_t *k);
 
 #ifdef __cplusplus

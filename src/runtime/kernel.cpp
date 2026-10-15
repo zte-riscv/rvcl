@@ -23,8 +23,7 @@ rvcl_status_t rvcl_kernel_alloc(rvcl_kernel_t **out,
 }
 
 rvcl_status_t rvcl_kernel_configure(rvcl_kernel_t *k,
-        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req,
-        int *num_ws) {
+        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req, int *num_ws) {
     if (!k || !desc || !k->vt || !k->vt->configure)
         return RVCL_ERROR_INVALID_ARGUMENT;
     return k->vt->configure(k, desc, ws_req, num_ws);

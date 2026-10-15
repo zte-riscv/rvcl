@@ -17,13 +17,12 @@
 
 #include <string.h>
 
-__attribute__((visibility("default"))) rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src,
-        rvcl_tensor_t *dst, int64_t m, int64_t n, int64_t k_dim,
-        size_t elt) {
+__attribute__((visibility("default"))) rvcl_status_t rvv_pack_b_panel(
+        const rvcl_tensor_t *src, rvcl_tensor_t *dst, int64_t m, int64_t n,
+        int64_t k_dim, size_t elt) {
     (void)m;
     if (!src || !dst || !dst->data) return RVCL_ERROR_INVALID_ARGUMENT;
-    if (src->desc.dtype == RVCL_DTYPE_AUTO)
-        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (src->desc.dtype == RVCL_DTYPE_AUTO) return RVCL_ERROR_INVALID_ARGUMENT;
 
     const char *sb = (const char *)src->data;
     char *db = (char *)dst->data;

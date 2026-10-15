@@ -75,14 +75,14 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 /* Runtime layer: hwprobe (Linux 6.4+). Absent or failing probes keep the
  * compile-time view; detection failure degrades instead of erroring. */
 #if defined(__riscv) && defined(__linux__)
+#include <unistd.h>
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
-#include <unistd.h>
 
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
-        {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
-        {RISCV_HWPROBE_KEY_MVENDORID, 0},
+            {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
+            {RISCV_HWPROBE_KEY_MVENDORID, 0},
     };
     if (syscall(__NR_riscv_hwprobe, pairs, 2, 0, 0, 0) != 0) {
         /* No hwprobe (pre-6.4 kernel, or an emulator without the
@@ -143,8 +143,7 @@ const rvcl_feature_t *rvcl_capability_get(
         const rvcl_capability_t *cap, rvcl_feature_id_t id) {
     if (!cap) return NULL;
     for (int i = 0; i < cap->num_features; i++)
-        if (cap->features[i].id == id)
-            return &cap->features[i];
+        if (cap->features[i].id == id) return &cap->features[i];
     return NULL;
 }
 
@@ -171,8 +170,7 @@ const rvcl_capability_t *rvcl_get_capability(void) {
                 g_cap.num_features);
     else
         snprintf(g_cap.description, sizeof(g_cap.description),
-                "rvcl-capability: %d feature(s) detected",
-                g_cap.num_features);
+                "rvcl-capability: %d feature(s) detected", g_cap.num_features);
 
     g_cap_initialized = 1;
     return &g_cap;

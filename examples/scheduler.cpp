@@ -35,19 +35,19 @@ typedef struct {
 typedef struct {
     pool_task_t tasks[POOL_MAX_TASKS];
     int num_tasks;
-    int next;              /* next task to grab (atomic-ish via mutex) */
-    int done;              /* completed task count */
+    int next; /* next task to grab (atomic-ish via mutex) */
+    int done; /* completed task count */
     pthread_mutex_t mu;
     pthread_cond_t cv_work, cv_done;
 } pool_t;
 
 static pool_t g_pool = {.tasks = {},
-    .num_tasks = 0,
-    .next = 0,
-    .done = 0,
-    .mu = PTHREAD_MUTEX_INITIALIZER,
-    .cv_work = PTHREAD_COND_INITIALIZER,
-    .cv_done = PTHREAD_COND_INITIALIZER};
+        .num_tasks = 0,
+        .next = 0,
+        .done = 0,
+        .mu = PTHREAD_MUTEX_INITIALIZER,
+        .cv_work = PTHREAD_COND_INITIALIZER,
+        .cv_done = PTHREAD_COND_INITIALIZER};
 
 static void *pool_worker(void *arg) {
     (void)arg;
@@ -106,16 +106,17 @@ int main(void) {
         pthread_create(&th[i], NULL, pool_worker, NULL);
 
     static rvcl_ischeduler_t pool_sched = {
-        .parallel_for = pool_parallel_for,
-        .num_threads = POOL_THREADS,
-        .name = "example-pool-4",
+            .parallel_for = pool_parallel_for,
+            .num_threads = POOL_THREADS,
+            .name = "example-pool-4",
     };
     rvcl_status_t st = rvcl_scheduler_set(&pool_sched);
     printf("scheduler injected: %s (num_threads=%u)\n", pool_sched.name,
             pool_sched.num_threads);
     if (st != RVCL_SUCCESS) {
-        fprintf(stderr, "scheduler_set failed: %d "
-                        "(a scheduler was already installed)\n",
+        fprintf(stderr,
+                "scheduler_set failed: %d "
+                "(a scheduler was already installed)\n",
                 (int)st);
         return 1;
     }
@@ -130,11 +131,14 @@ int main(void) {
     /* 2. Matmul through the injected scheduler. */
     enum { M = 97, N = 65, K = 33 }; /* ragged: exercises slicing edges */
     float *a = (float *)malloc(M * K * 4), *b = (float *)malloc(K * N * 4),
-            *c = (float *)malloc(M * N * 4);
+          *c = (float *)malloc(M * N * 4);
     float *bias = (float *)malloc(N * 4), *golden = (float *)malloc(M * N * 4);
-    for (int i = 0; i < M * K; i++) a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
-    for (int i = 0; i < K * N; i++) b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
-    for (int j = 0; j < N; j++) bias[j] = 0.25f;
+    for (int i = 0; i < M * K; i++)
+        a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
+    for (int i = 0; i < K * N; i++)
+        b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
+    for (int j = 0; j < N; j++)
+        bias[j] = 0.25f;
 
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++) {
@@ -145,13 +149,15 @@ int main(void) {
         }
 
     rvcl_matmul_desc_t d = {
-        .m = M, .n = N, .k = K,
-        .dtype_a = RVCL_DTYPE_FP32,
-        .dtype_b = RVCL_DTYPE_FP32,
-        .dtype_acc = RVCL_DTYPE_AUTO,
-        .dtype_c = RVCL_DTYPE_FP32,
-        .dtype_bias = RVCL_DTYPE_FP32,
-        .quant = {},
+            .m = M,
+            .n = N,
+            .k = K,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {},
     };
     st = rvcl_matmul(&d, a, b, bias, c);
     if (st != RVCL_SUCCESS) {
@@ -166,15 +172,19 @@ int main(void) {
         fprintf(stderr, "%d mismatched outputs\n", bad);
         return 1;
     }
-    printf("matmul via injected scheduler: OK (%d x %d x %d, bit-exact)\n",
-            M, N, K);
+    printf("matmul via injected scheduler: OK (%d x %d x %d, bit-exact)\n", M,
+            N, K);
 
     /* 3. Set-once demonstration: a second injection is rejected. */
     st = rvcl_scheduler_set(rvcl_serial_scheduler());
     printf("second scheduler_set rejected: %s\n",
             st == RVCL_ERROR_ALREADY_INITIALIZED ? "yes" : "NO (BUG)");
 
-    free(a); free(b); free(c); free(bias); free(golden);
+    free(a);
+    free(b);
+    free(c);
+    free(bias);
+    free(golden);
     printf("OK — custom scheduler drove the computation\n");
     return 0;
 }

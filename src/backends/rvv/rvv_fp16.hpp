@@ -33,7 +33,8 @@ static inline float rvv_f16_to_f32(uint16_t h) {
                 m <<= 1;
                 e++;
             } while (!(m & 0x400u));
-            bits = sign | ((uint32_t)(127 - 15 - e) << 23) | ((m & 0x3ffu) << 13);
+            bits = sign | ((uint32_t)(127 - 15 - e) << 23)
+                    | ((m & 0x3ffu) << 13);
         }
     } else if (exp == 0x1f) { /* inf / nan */
         bits = sign | 0x7f800000u | (man << 13);

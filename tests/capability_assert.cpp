@@ -32,17 +32,17 @@
 
 static const char *feature_name(rvcl_feature_id_t id) {
     switch (id) {
-    case RVCL_FEATURE_RV64: return "rv64";
-    case RVCL_FEATURE_RVV: return "rvv";
-    case RVCL_FEATURE_IME: return "ime";
-    case RVCL_FEATURE_VME: return "vme";
-    case RVCL_FEATURE_AME: return "ame";
-    case RVCL_FEATURE_FP32: return "fp32";
-    case RVCL_FEATURE_FP16: return "fp16";
-    case RVCL_FEATURE_BF16: return "bf16";
-    case RVCL_FEATURE_INT8: return "int8";
-    case RVCL_FEATURE_INT4: return "int4";
-    default: return "unknown";
+        case RVCL_FEATURE_RV64: return "rv64";
+        case RVCL_FEATURE_RVV: return "rvv";
+        case RVCL_FEATURE_IME: return "ime";
+        case RVCL_FEATURE_VME: return "vme";
+        case RVCL_FEATURE_AME: return "ame";
+        case RVCL_FEATURE_FP32: return "fp32";
+        case RVCL_FEATURE_FP16: return "fp16";
+        case RVCL_FEATURE_BF16: return "bf16";
+        case RVCL_FEATURE_INT8: return "int8";
+        case RVCL_FEATURE_INT4: return "int4";
+        default: return "unknown";
     }
 }
 
@@ -53,11 +53,16 @@ static int name_to_id(const char *name, rvcl_feature_id_t *id) {
         const char *name;
         rvcl_feature_id_t id;
     } table[] = {
-        {"rv64", RVCL_FEATURE_RV64}, {"rvv", RVCL_FEATURE_RVV},
-        {"ime", RVCL_FEATURE_IME},   {"vme", RVCL_FEATURE_VME},
-        {"ame", RVCL_FEATURE_AME},   {"fp32", RVCL_FEATURE_FP32},
-        {"fp16", RVCL_FEATURE_FP16}, {"bf16", RVCL_FEATURE_BF16},
-        {"int8", RVCL_FEATURE_INT8}, {"int4", RVCL_FEATURE_INT4},
+            {"rv64", RVCL_FEATURE_RV64},
+            {"rvv", RVCL_FEATURE_RVV},
+            {"ime", RVCL_FEATURE_IME},
+            {"vme", RVCL_FEATURE_VME},
+            {"ame", RVCL_FEATURE_AME},
+            {"fp32", RVCL_FEATURE_FP32},
+            {"fp16", RVCL_FEATURE_FP16},
+            {"bf16", RVCL_FEATURE_BF16},
+            {"int8", RVCL_FEATURE_INT8},
+            {"int4", RVCL_FEATURE_INT4},
     };
     for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
         if (strcmp(table[i].name, name) == 0) {

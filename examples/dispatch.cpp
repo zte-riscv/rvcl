@@ -27,13 +27,15 @@ int main(void) {
     enum { M = 64, N = 64, K = 64, BATCHES = 3 };
     float a[M * K], b[K * N], bias[N], c[M * N];
     rvcl_matmul_desc_t d = {
-        .m = M, .n = N, .k = K,
-        .dtype_a = RVCL_DTYPE_FP32,
-        .dtype_b = RVCL_DTYPE_FP32,
-        .dtype_acc = RVCL_DTYPE_AUTO,
-        .dtype_c = RVCL_DTYPE_FP32,
-        .dtype_bias = RVCL_DTYPE_FP32,
-        .quant = {},
+            .m = M,
+            .n = N,
+            .k = K,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {},
     };
 
     /* 1. Dispatch once (populates the cache). */
@@ -53,18 +55,18 @@ int main(void) {
     printf("workspace: %d request(s)\n", num_ws);
     for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
-        if (posix_memalign(&ws_buf[i], align,
-                    (size_t)(ws[i].size + align)) != 0) {
+        if (posix_memalign(&ws_buf[i], align, (size_t)(ws[i].size + align))
+                != 0) {
             fprintf(stderr, "workspace alloc failed\n");
             return 1;
         }
         rvcl_tensor_desc_t wd = {.ndims = 1,
-            .dims = {ws[i].size + 1},
-            .strides = {1},
-            .dtype = RVCL_DTYPE_UINT8};
+                .dims = {ws[i].size + 1},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_UINT8};
         rvcl_tensor_init(&ws_t[i], &wd, ws_buf[i]);
-        printf("  slot %d: %ld bytes, align %ld\n", i,
-                (long)ws[i].size, (long)ws[i].alignment);
+        printf("  slot %d: %ld bytes, align %ld\n", i, (long)ws[i].size,
+                (long)ws[i].alignment);
     }
 
     /* 3. Run many: fresh data per batch, same configured kernel. */
@@ -73,13 +75,14 @@ int main(void) {
             a[i] = (float)((i + batch * 7) % 11) / 11.0f;
         for (int i = 0; i < K * N; i++)
             b[i] = (float)((i + batch * 5) % 13) / 13.0f;
-        for (int j = 0; j < N; j++) bias[j] = (float)batch * 0.1f;
+        for (int j = 0; j < N; j++)
+            bias[j] = (float)batch * 0.1f;
         memset(c, 0, sizeof(c));
 
         rvcl_tensor_desc_t td = {.ndims = 2,
-            .dims = {M, K},
-            .strides = {K, 1},
-            .dtype = RVCL_DTYPE_FP32};
+                .dims = {M, K},
+                .strides = {K, 1},
+                .dtype = RVCL_DTYPE_FP32};
         rvcl_tensor_t ta, tb, tc, tbias;
         rvcl_tensor_init(&ta, &td, a);
         td.dims[0] = K;
@@ -90,9 +93,9 @@ int main(void) {
         td.strides[0] = N;
         rvcl_tensor_init(&tc, &td, c);
         rvcl_tensor_desc_t bd = {.ndims = 1,
-            .dims = {N},
-            .strides = {1},
-            .dtype = RVCL_DTYPE_FP32};
+                .dims = {N},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_FP32};
         rvcl_tensor_init(&tbias, &bd, bias);
 
         rvcl_tensor_pack_t pack;
@@ -133,7 +136,8 @@ int main(void) {
     /* r2 == r (cache-owned single object): release once. */
     rvcl_dispatch_release(r);
 
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++) free(ws_buf[i]);
+    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
+        free(ws_buf[i]);
     printf("OK — dispatch once, ran %d batches\n", BATCHES);
     return 0;
 }

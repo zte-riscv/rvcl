@@ -20,9 +20,9 @@
 
 /* ------------------------------------------------------ C-portable kernel */
 
-__attribute__((visibility("default"))) void rvv_gemm_f16_c(const void *a_in, const void *b_packed, const void *bias_in,
-        void *c_in, int64_t m, int64_t n, int64_t k_dim,
-        const rvcl_work_range_t *r) {
+__attribute__((visibility("default"))) void rvv_gemm_f16_c(const void *a_in,
+        const void *b_packed, const void *bias_in, void *c_in, int64_t m,
+        int64_t n, int64_t k_dim, const rvcl_work_range_t *r) {
     const uint16_t *a = (const uint16_t *)a_in;
     const uint16_t *bp = (const uint16_t *)b_packed;
     const float *bias = (const float *)bias_in;
@@ -96,10 +96,8 @@ void rvv_gemm_f16_rvv(const void *a_in, const void *b_packed,
                 for (int64_t p = 0; p < k_dim; p++) {
                     const float av = rvv_f16_to_f32(a[i * k_dim + p]);
                     const vfloat16m1_t bh = __riscv_vle16_v_f16m1(
-                            (const _Float16 *)(bpanel + p * NC + off),
-                            len);
-                    const vfloat32m2_t bv = __riscv_vfwcvt_f_f_v_f32m2(
-                            bh, len);
+                            (const _Float16 *)(bpanel + p * NC + off), len);
+                    const vfloat32m2_t bv = __riscv_vfwcvt_f_f_v_f32m2(bh, len);
                     acc = __riscv_vfmacc_vf_f32m2(acc, av, bv, len);
                 }
 

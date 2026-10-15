@@ -44,7 +44,7 @@
 
 /* Workspace layout index for the packed-B buffer (slot AUX_0). */
 #define RVV_WS_PACKED_B 0
-#define RVV_WS_ACC      1
+#define RVV_WS_ACC 1
 
 /* bytes needed for the packed B panel buffer: k x n elements, panelized */
 static inline size_t rvv_packed_b_bytes(int64_t k, int64_t n, size_t elt) {
@@ -53,8 +53,8 @@ static inline size_t rvv_packed_b_bytes(int64_t k, int64_t n, size_t elt) {
 }
 
 /* destination element index (in elements) inside the packed buffer */
-static inline int64_t rvv_packed_b_index(int64_t k_dim, int64_t col,
-        int64_t row) {
+static inline int64_t rvv_packed_b_index(
+        int64_t k_dim, int64_t col, int64_t row) {
     int64_t panel = col / RVV_PACK_NC;
     int64_t in = col - panel * RVV_PACK_NC;
     return (panel * k_dim + row) * RVV_PACK_NC + in;

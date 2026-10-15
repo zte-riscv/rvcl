@@ -28,24 +28,22 @@ typedef struct {
     rvcl_kernel_t base; /* must be first */
     int64_t m, n, k;
     rvv_gemm_fn gemm; /* dtype-specific micro-kernel entry */
-    size_t elt;       /* element size of A/B */
+    size_t elt; /* element size of A/B */
 } rvv_matmul_t;
 
 /* ------------------------------------------------------------- lifecycle */
 
-static rvcl_status_t rvv_validate(const rvcl_op_desc_t *desc,
-        const rvcl_capability_t *cap) {
+static rvcl_status_t rvv_validate(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
     (void)cap;
     const rvcl_matmul_desc_t *d = &desc->matmul;
-    if (d->m <= 0 || d->n <= 0 || d->k <= 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (d->m <= 0 || d->n <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
     if (d->quant.enabled) return RVCL_UNSUPPORTED; /* quant lands v0.4 */
     return RVCL_SUCCESS;
 }
 
-static rvcl_status_t rvv_configure(rvcl_kernel_t *k,
-        const rvcl_op_desc_t *desc, rvcl_workspace_req_t *ws_req,
-        int *num_ws) {
+static rvcl_status_t rvv_configure(rvcl_kernel_t *k, const rvcl_op_desc_t *desc,
+        rvcl_workspace_req_t *ws_req, int *num_ws) {
     rvv_matmul_t *rk = (rvv_matmul_t *)k;
     const rvcl_matmul_desc_t *d = &desc->matmul;
     rk->m = d->m;
@@ -58,12 +56,12 @@ static rvcl_status_t rvv_configure(rvcl_kernel_t *k,
     size_t elt = rvcl_dtype_size(d->dtype_a);
     size_t bytes = rvv_packed_b_bytes(d->k, d->n, elt);
     if (ws_req) {
-        ws_req[RVV_WS_PACKED_B] = rvcl_workspace_req_t{
-            .size = (int64_t)bytes,
-            .alignment = 64,
-            .lifetime = RVCL_WS_LIFETIME_RUN,
+        ws_req[RVV_WS_PACKED_B] = rvcl_workspace_req_t {
+                .size = (int64_t)bytes,
+                .alignment = 64,
+                .lifetime = RVCL_WS_LIFETIME_RUN,
         };
-        ws_req[RVV_WS_ACC] = rvcl_workspace_req_t{};
+        ws_req[RVV_WS_ACC] = rvcl_workspace_req_t {};
     }
     if (num_ws) *num_ws = 1;
     return RVCL_SUCCESS;
@@ -76,18 +74,18 @@ static rvcl_status_t rvv_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     const rvcl_tensor_t *b = rvcl_tensor_pack_get(pack, RVCL_TENSOR_SRC_B);
     const rvcl_tensor_t *c = rvcl_tensor_pack_get(pack, RVCL_TENSOR_DST);
     const rvcl_tensor_t *bias = rvcl_tensor_pack_get(pack, RVCL_TENSOR_BIAS);
-    const rvcl_tensor_t *ws = rvcl_tensor_pack_get(pack,
-            (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + RVV_WS_PACKED_B));
+    const rvcl_tensor_t *ws = rvcl_tensor_pack_get(
+            pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + RVV_WS_PACKED_B));
     if (!a || !b || !c || !ws) return RVCL_ERROR_INVALID_ARGUMENT;
 
     /* Pack B into the workspace (dispatch-once-run-many callers may pre-pack
      * via pack_b and keep the buffer across runs). */
-    rvcl_status_t st = rvv_pack_b_panel(b, (rvcl_tensor_t *)ws,
-            rk->m, rk->n, rk->k, rk->elt);
+    rvcl_status_t st = rvv_pack_b_panel(
+            b, (rvcl_tensor_t *)ws, rk->m, rk->n, rk->k, rk->elt);
     if (st != RVCL_SUCCESS) return st;
 
-    rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data,
-            rk->m, rk->n, rk->k, r);
+    rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data, rk->m, rk->n,
+            rk->k, r);
     return RVCL_SUCCESS;
 }
 
@@ -97,8 +95,8 @@ static void rvv_destroy(rvcl_kernel_t *k) {
 
 /* pack_a: A consumed unpacked in v0.1 — metadata pass-through (the vtable
  * slot stays NULL; this function exists for future panel-A kernels). */
-static rvcl_status_t rvv_pack_a(rvcl_kernel_t *k, const rvcl_tensor_t *src,
-        rvcl_tensor_t *dst) {
+static rvcl_status_t rvv_pack_a(
+        rvcl_kernel_t *k, const rvcl_tensor_t *src, rvcl_tensor_t *dst) {
     (void)k;
     if (!src || !dst) return RVCL_ERROR_INVALID_ARGUMENT;
     *dst = *src;
@@ -106,12 +104,13 @@ static rvcl_status_t rvv_pack_a(rvcl_kernel_t *k, const rvcl_tensor_t *src,
 }
 
 static const rvcl_kernel_vtable_t g_rvv_vtable = {
-    .validate = rvv_validate,
-    .configure = rvv_configure,
-    .pack_a = rvv_pack_a,
-    .pack_b = NULL, /* bound per-dtype in create (panel packing differs by elt) */
-    .run = rvv_run,
-    .destroy = rvv_destroy,
+        .validate = rvv_validate,
+        .configure = rvv_configure,
+        .pack_a = rvv_pack_a,
+        .pack_b
+        = NULL, /* bound per-dtype in create (panel packing differs by elt) */
+        .run = rvv_run,
+        .destroy = rvv_destroy,
 };
 
 /* ---------------------------------------------- micro-kernel selection */
@@ -150,13 +149,13 @@ static rvcl_status_t make_rvv_kernel(rvcl_kernel_t **out,
     return RVCL_SUCCESS;
 }
 
-static rvcl_status_t create_f32(rvcl_kernel_t **out,
-        const rvcl_kernel_desc_t *desc) {
+static rvcl_status_t create_f32(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
     return make_rvv_kernel(out, desc, rvv_pick_gemm_f32(), sizeof(float));
 }
 
-static rvcl_status_t create_f16(rvcl_kernel_t **out,
-        const rvcl_kernel_desc_t *desc) {
+static rvcl_status_t create_f16(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
     return make_rvv_kernel(out, desc, rvv_pick_gemm_f16(), 2);
 }
 
@@ -188,15 +187,13 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
 
 RVCL_API rvcl_status_t rvcl_rvv_register(void) {
     /* f32: RVV only */
-    rvcl_status_t st = register_one("rvcl_matmul_f32_rvv",
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
-            RVCL_DTYPE_FP32, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
-            create_f32);
+    rvcl_status_t st = register_one("rvcl_matmul_f32_rvv", RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_FEATURE_RVV,
+            RVCL_FEATURE_NONE, create_f32);
     if (st != RVCL_SUCCESS) return st;
 
     /* f16: RVV + Zvfh (habit rule: storage f16, accumulate fp32) */
-    return register_one("rvcl_matmul_f16_rvv",
-            RVCL_DTYPE_FP16, RVCL_DTYPE_FP16, RVCL_DTYPE_FP32,
-            RVCL_DTYPE_FP32, RVCL_FEATURE_RVV, RVCL_FEATURE_FP16,
-            create_f16);
+    return register_one("rvcl_matmul_f16_rvv", RVCL_DTYPE_FP16, RVCL_DTYPE_FP16,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_FEATURE_RVV,
+            RVCL_FEATURE_FP16, create_f16);
 }

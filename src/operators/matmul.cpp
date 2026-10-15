@@ -23,8 +23,8 @@ typedef struct {
     rvcl_tensor_pack_t *pack;
 } run_task_ctx_t;
 
-static void run_task(rvcl_ischeduler_t *s, const rvcl_work_range_t *slice,
-        void *user_ctx) {
+static void run_task(
+        rvcl_ischeduler_t *s, const rvcl_work_range_t *slice, void *user_ctx) {
     (void)s;
     run_task_ctx_t *ctx = (run_task_ctx_t *)user_ctx;
     rvcl_kernel_run(ctx->kernel, ctx->pack, slice);
@@ -41,9 +41,9 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
 
     /* 2. Import host memory zero-copy (PLAN §4.10). */
     rvcl_tensor_desc_t td2 = {.ndims = 2,
-        .dims = {desc->m, desc->k},
-        .strides = {desc->k, 1},
-        .dtype = desc->dtype_a};
+            .dims = {desc->m, desc->k},
+            .strides = {desc->k, 1},
+            .dtype = desc->dtype_a};
     rvcl_tensor_t ta, tb, tc, tbias;
     rvcl_tensor_init(&ta, &td2, (void *)a);
 
@@ -66,9 +66,9 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
     rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
     if (bias) {
         rvcl_tensor_desc_t bd = {.ndims = 1,
-            .dims = {desc->n},
-            .strides = {1},
-            .dtype = desc->dtype_bias};
+                .dims = {desc->n},
+                .strides = {1},
+                .dtype = desc->dtype_bias};
         rvcl_tensor_init(&tbias, &bd, (void *)bias);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
     }
@@ -86,18 +86,18 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
     rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
     for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
-        if (posix_memalign(&ws_buf[i], align,
-                    (size_t)(ws[i].size + align)) != 0) {
+        if (posix_memalign(&ws_buf[i], align, (size_t)(ws[i].size + align))
+                != 0) {
             st = RVCL_ERROR_OUT_OF_MEMORY;
             goto out;
         }
         rvcl_tensor_desc_t wd = {.ndims = 1,
-            .dims = {(int64_t)ws[i].size},
-            .strides = {1},
-            .dtype = RVCL_DTYPE_UINT8};
+                .dims = {(int64_t)ws[i].size},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_UINT8};
         rvcl_tensor_init(&ws_t[i], &wd, ws_buf[i]);
-        rvcl_tensor_pack_add(&pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i),
-                &ws_t[i]);
+        rvcl_tensor_pack_add(
+                &pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
     }
 
     /* 4. Run through the current scheduler over the full range. */

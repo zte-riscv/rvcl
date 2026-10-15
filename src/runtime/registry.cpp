@@ -30,8 +30,8 @@ static int find_index_locked(const char *name) {
     return -1;
 }
 
-rvcl_status_t rvcl_register_kernel(const rvcl_kernel_desc_t *desc,
-        rvcl_kernel_create_fn create) {
+rvcl_status_t rvcl_register_kernel(
+        const rvcl_kernel_desc_t *desc, rvcl_kernel_create_fn create) {
     if (!desc || !create || desc->name[0] == '\0')
         return RVCL_ERROR_INVALID_ARGUMENT;
 

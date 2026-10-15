@@ -23,8 +23,11 @@ size_t rvcl_dtype_size(rvcl_dtype_t dt) {
 }
 
 rvcl_work_range_t rvcl_work_range_full(int64_t m, int64_t n, int64_t k) {
-    rvcl_work_range_t r
-            = {.m_begin = 0, .m_end = m, .n_begin = 0, .n_end = n,
-                    .k_begin = 0, .k_end = k};
+    rvcl_work_range_t r = {.m_begin = 0,
+            .m_end = m,
+            .n_begin = 0,
+            .n_end = n,
+            .k_begin = 0,
+            .k_end = k};
     return r;
 }

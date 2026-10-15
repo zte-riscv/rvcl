@@ -21,9 +21,9 @@
 
 /* ------------------------------------------------------ C-portable kernel */
 
-__attribute__((visibility("default"))) void rvv_gemm_f32_c(const void *a_in, const void *b_packed, const void *bias_in,
-        void *c_in, int64_t m, int64_t n, int64_t k_dim,
-        const rvcl_work_range_t *r) {
+__attribute__((visibility("default"))) void rvv_gemm_f32_c(const void *a_in,
+        const void *b_packed, const void *bias_in, void *c_in, int64_t m,
+        int64_t n, int64_t k_dim, const rvcl_work_range_t *r) {
     const float *a = (const float *)a_in;
     const float *bp = (const float *)b_packed;
     const float *bias = (const float *)bias_in;
@@ -98,16 +98,16 @@ void rvv_gemm_f32_rvv(const void *a_in, const void *b_packed,
                         : __riscv_vfmv_v_f_f32m1(0.0f, vl);
 
                 for (int64_t p = 0; p < k_dim; p++) {
-                    const vfloat32m1_t bv = __riscv_vle32_v_f32m1(
-                            bpanel + p * NC + off, len);
+                    const vfloat32m1_t bv
+                            = __riscv_vle32_v_f32m1(bpanel + p * NC + off, len);
                     acc = __riscv_vfmacc_vf_f32m1(acc, arow[p], bv, len);
                 }
 
                 for (long e = 0; e < len; e++) {
                     const int64_t j = j0 + off + e;
                     if (j < r->n_begin || j >= r->n_end) continue;
-                    const vfloat32m1_t s = __riscv_vslidedown_vx_f32m1(
-                            acc, e, len);
+                    const vfloat32m1_t s
+                            = __riscv_vslidedown_vx_f32m1(acc, e, len);
                     c[i * n + j] = __riscv_vfmv_f_s_f32m1_f32(s);
                 }
             }
