@@ -69,6 +69,27 @@ The one-time reformat commit that introduced the style is listed in
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+## Commit message conventions
+
+Commits follow **Conventional Commits** and CI enforces it
+(`.github/automation/commit-msg-check.py` on `ci-lint`). A subject is:
+
+```
+<type>(<scope>)?(!)?: <description>
+```
+
+- `<type>` is one of `feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert`;
+- `<scope>` is optional and lower-case `[a-z0-9_-]` (e.g. `ci(riscv):`);
+- `!` marks a breaking change;
+- `<description>` is a short, imperative summary under **72 characters**,
+  starting with a non-space character.
+
+RVCL merges with **squash merge**: the PR title becomes the mainline commit
+subject, so the title must satisfy the same rule and the history stays
+linear — every mainline entry is one Conventional Commit. Intermediate
+commits inside a PR are not separately gated, but keeping them in the same
+style makes the squashed subject easy to write.
+
 ## Workflow
 
 1. Fork / branch, develop against the smallest reviewable unit.

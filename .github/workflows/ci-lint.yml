@@ -97,11 +97,46 @@ jobs:
           config: ".github/.licenserc.yml"
           mode: "check"
 
+  # Enforce Conventional Commits on every commit in the PR (base..head) and,
+  # on a main push, on the single squash commit that just landed. The PR
+  # subject itself is also checked because squash merge makes it the mainline
+  # history entry. The script and the rules it applies are documented in
+  # CONTRIBUTING.md ("Commit message conventions").
+  commit-msg:
+    name: commit-msg
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check commit messages
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${GITHUB_BASE_REF}"
+            if [ -z "${BASE}" ]; then
+              echo "::error::pull_request without base ref" && exit 1
+            fi
+            # Squash merge turns the PR title into the mainline subject, so it
+            # must satisfy the same rule as a commit subject.
+            python3 .github/automation/commit-msg-check.py \
+                HEAD "origin/${BASE}" --pr-title "${PR_TITLE}"
+          else
+            # On a main push only the latest (squash) commit is new; origin/main
+            # is the previous state and acts as the base.
+            python3 .github/automation/commit-msg-check.py \
+                HEAD origin/main
+          fi
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+
   # This job adds a check named "ci-lint" that represents overall workflow
   # status and can be used in branch rulesets. Later lint jobs (license
   # header, commit message, clang-tidy) join its needs list.
   status:
-    needs: [clang-format, license-header]
+    needs: [clang-format, license-header, commit-msg]
     runs-on: ubuntu-24.04
     name: "ci-lint"
     steps:
