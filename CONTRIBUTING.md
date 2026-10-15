@@ -53,6 +53,27 @@ Good first tasks:
 - `src/backends/<name>/` backend skeletons;
 - tests that pin down contract behavior (error codes, work ranges).
 
+## Code formatting
+
+The authoritative formatter is **clang-format 18** (`.clang-format`, derived
+from oneDNN). CI enforces it on the C/C++ files touched by a PR diff, so a
+merge requires `clang-format-18 --dry-run --Werror <files>` to pass.
+
+Format changed files before committing:
+
+```bash
+clang-format-18 -i <your .c/.h/.cpp/.hpp files>
+```
+
+Version matters: use 18.x (e.g. `pip install clang-format==18.1.*` or the
+system `clang-format-18`); an older formatter can produce different output.
+The one-time reformat commit that introduced the style is listed in
+`.git-blame-ignore-revs` — enable it once so `git blame` skips that commit:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
 ## Workflow
 
 1. Fork / branch, develop against the smallest reviewable unit.
