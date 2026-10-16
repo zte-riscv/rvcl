@@ -150,15 +150,10 @@ static int filter_datatype(
     /* acc=AUTO resolves via habit rules (PLAN §4.5.1). */
     rvcl_dtype_t acc = d->dtype_acc;
     if (acc == RVCL_DTYPE_AUTO) {
-        if (d->dtype_a == RVCL_DTYPE_FP32)
-            acc = RVCL_DTYPE_FP32;
-        else if (d->dtype_a == RVCL_DTYPE_BF16)
-            acc = RVCL_DTYPE_FP32;
-        else if (d->dtype_a == RVCL_DTYPE_INT8
-                || d->dtype_a == RVCL_DTYPE_UINT8)
+        if (d->dtype_a == RVCL_DTYPE_INT8 || d->dtype_a == RVCL_DTYPE_UINT8)
             acc = RVCL_DTYPE_INT32;
         else
-            acc = RVCL_DTYPE_FP32; /* conservative default */
+            acc = RVCL_DTYPE_FP32; /* FP32/FP16/BF16 habit default */
     }
     return kd->dtype_a == d->dtype_a && kd->dtype_b == d->dtype_b
             && kd->dtype_acc == acc && kd->dtype_c == d->dtype_c;

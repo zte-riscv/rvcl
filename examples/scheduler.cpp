@@ -143,9 +143,11 @@ int main(void) {
 
     /* 2. Matmul through the injected scheduler. */
     enum { M = 97, N = 65, K = 33 }; /* ragged: exercises slicing edges */
-    float *a = (float *)malloc(M * K * 4), *b = (float *)malloc(K * N * 4),
-          *c = (float *)malloc(M * N * 4);
-    float *bias = (float *)malloc(N * 4), *golden = (float *)malloc(M * N * 4);
+    float *a = (float *)malloc((size_t)M * K * 4),
+          *b = (float *)malloc((size_t)K * N * 4),
+          *c = (float *)malloc((size_t)M * N * 4);
+    float *bias = (float *)malloc((size_t)N * 4),
+          *golden = (float *)malloc((size_t)M * N * 4);
     for (int i = 0; i < M * K; i++)
         a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
     for (int i = 0; i < K * N; i++)

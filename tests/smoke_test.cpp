@@ -98,7 +98,8 @@ int main(void) {
     rvcl_tensor_t t;
     CHECK(rvcl_tensor_init(&t, &td, buf) == RVCL_SUCCESS, "tensor import ok");
     CHECK(t.data == (void *)buf, "zero-copy: pointer passed through");
-    CHECK(rvcl_tensor_bytes(&t) == 16 * 4, "tensor byte size computed");
+    CHECK(rvcl_tensor_bytes(&t) == (int64_t)16 * 4,
+            "tensor byte size computed");
 
     rvcl_tensor_desc_t bad_td = td;
     bad_td.strides[1] = 2; /* innermost stride != 1: non-plain layout */

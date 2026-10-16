@@ -65,7 +65,7 @@
 static double now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+    return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
 }
 
 /* P mode: warmup once, best-of over reps (micro-benchmark standard) */
@@ -112,10 +112,15 @@ static const char *const g_bench_header_keys[] = {"--mode", "--dt", NULL};
 static void bcorpus_fatal(const char *file, int line, const char *fmt, ...)
         __attribute__((noreturn, format(printf, 3, 4)));
 
+/* printf-style fatal helper; the C varargs are the point of this function.
+ * NOLINTNEXTLINE(cert-dcl50-cpp) */
 static void bcorpus_fatal(const char *file, int line, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     fprintf(stderr, "error: %s:%d: ", file, line);
+    /* va_list is started above; clang-analyzer cannot track it across the
+     * intervening fprintf and reports a false positive.
+     * NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized) */
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fputc('\n', stderr);
@@ -136,12 +141,13 @@ static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
             bcorpus_fatal(file, line, "duplicate label n\"%s\"", label);
     if (c->count == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 64;
-        c->cases = (bcase_t *)realloc(
+        bcase_t *narr = (bcase_t *)realloc(
                 c->cases, (size_t)c->cap * sizeof(*c->cases));
-        if (!c->cases) {
+        if (!narr) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
         }
+        c->cases = narr;
     }
     bcase_t *bc = &c->cases[c->count++];
     bc->m = m;
@@ -261,6 +267,9 @@ static void bparse_case(bcorpus_t *c, char *text, const char *file, int line) {
     if (!close || close == name)
         bcorpus_fatal(file, line, "unterminated or empty label in '%s'", text);
     for (const char *q = name; q < close; q++)
+        /* Whitelist check reads clearer as "NOT one of the valid chars"
+         * than the DeMorgan-expanded conjunction.
+         * NOLINTNEXTLINE(readability-simplify-boolean-expr) */
         if (!((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z')
                     || (*q >= '0' && *q <= '9') || *q == '_' || *q == '.'
                     || *q == '*' || *q == '-'))
@@ -583,10 +592,14 @@ int main(int argc, char **argv) {
         bparse_corpus(batch, &corpus);
         op_from_batch_path(batch, op, sizeof(op));
         /* file header --mode is the default; an explicit CLI --mode wins */
-        if (!mode_given && corpus.file_mode)
-            mode = corpus.file_mode == 'C'    ? MODE_C
-                    : corpus.file_mode == 'S' ? MODE_S
-                                              : MODE_P;
+        if (!mode_given && corpus.file_mode) {
+            if (corpus.file_mode == 'C')
+                mode = MODE_C;
+            else if (corpus.file_mode == 'S')
+                mode = MODE_S;
+            else
+                mode = MODE_P;
+        }
     } else if (num_shapes == 0) {
         num_shapes = (int)(sizeof(defaults) / sizeof(defaults[0]));
         for (int i = 0; i < num_shapes; i++)
@@ -599,7 +612,13 @@ int main(int argc, char **argv) {
     if (rvcl_init() != RVCL_SUCCESS) return 1;
 
     const int total = batch ? corpus.count : num_shapes;
-    const char mode_ch = mode == MODE_C ? 'C' : mode == MODE_S ? 'S' : 'P';
+    char mode_ch;
+    if (mode == MODE_C)
+        mode_ch = 'C';
+    else if (mode == MODE_S)
+        mode_ch = 'S';
+    else
+        mode_ch = 'P';
     if (json) {
         printf("{\"_meta\":{\"schema\":1,\"rvcl\":\"%s\","
                "\"capability\":\"%s\",\"mode\":\"%c\",\"reps\":%d,"
@@ -652,7 +671,8 @@ int main(int argc, char **argv) {
                     .quant = {},
             };
             fill_case(&cs, dt, mode);
-            const double flops = 2.0 * cs.m * cs.n * cs.k;
+            const double flops
+                    = 2.0 * (double)cs.m * (double)cs.n * (double)cs.k;
             dispatch_rig_t rig;
 
             if (mode == MODE_C) {
@@ -735,6 +755,7 @@ int main(int argc, char **argv) {
             size_t pbytes = rvv_packed_b_bytes(cs.k, cs.n, elt);
             if (posix_memalign(&packed, 64, pbytes) != 0) {
                 fprintf(stderr, "error: packed-B buffer allocation failed\n");
+                free_case(&cs); /* do not leak this case's buffers */
                 return 1;
             }
             rvcl_tensor_t b_src, b_dst;
@@ -756,8 +777,10 @@ int main(int argc, char **argv) {
             konly_ctx_t kc = {.cs = &cs, .packed = packed, .gemm = NULL};
             /* kernel-only goes through the same selector the backend
              * binds (rvv_pick_*); --path=c forces the C micro-kernel */
-            kc.gemm = path_c ? (dt ? rvv_gemm_f16_c : rvv_gemm_f32_c)
-                             : (dt ? rvv_pick_gemm_f16() : rvv_pick_gemm_f32());
+            if (path_c)
+                kc.gemm = dt ? rvv_gemm_f16_c : rvv_gemm_f32_c;
+            else
+                kc.gemm = dt ? rvv_pick_gemm_f16() : rvv_pick_gemm_f32();
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)
                     : time_best_of(bench_kernel_only, &kc, reps);

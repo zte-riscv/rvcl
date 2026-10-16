@@ -69,6 +69,29 @@ The one-time reformat commit that introduced the style is listed in
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+## Static analysis (clang-tidy)
+
+CI runs **clang-tidy 18** (`clang-tidy-18`) on the C/C++ files touched by a
+PR diff with zero-warning tolerance — a merge requires the same check to be
+clean locally. The check set and exclusions live in `.clang-tidy`
+(`bugprone-*`, `cert-*`, `readability-*`, minus the rules that are style
+noise for this C-ABI library). Analysis needs the compile database:
+
+```bash
+cmake -B build -G Ninja \
+    -DCMAKE_CXX_COMPILER=clang++-18 \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    -DRVCL_TEST_SET=ci
+clang-tidy-18 -p build <your changed .c/.h/.cpp/.hpp files>
+```
+
+Use clang-tidy-18.x to match CI. If a check fires on code that is intentional
+(e.g. a `printf`-style varargs helper, or an allocator that is required to
+return a `const`-qualified pointer), silence it with a `// NOLINT(<check>)`
+on the same line or `// NOLINTNEXTLINE(<check>)` above it, and leave a
+comment explaining why the suppression is justified — blanket suppressions
+without an explanation are rejected in review.
+
 ## Commit message conventions
 
 Commits follow **Conventional Commits** and CI enforces it

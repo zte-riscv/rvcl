@@ -214,10 +214,15 @@ static const char *const g_corpus_header_keys[] = {"--mode", "--dt", NULL};
 static void corpus_fatal(const char *file, int line, const char *fmt, ...)
         __attribute__((noreturn, format(printf, 3, 4)));
 
+/* printf-style fatal helper; the C varargs are the point of this function.
+ * NOLINTNEXTLINE(cert-dcl50-cpp) */
 static void corpus_fatal(const char *file, int line, const char *fmt, ...) {
     va_list ap;
     fprintf(stderr, "error: %s:%d: ", file, line);
     va_start(ap, fmt);
+    /* va_list is started on the line above; clang-analyzer cannot track it
+     * across the preceding fprintf and reports a false positive.
+     * NOLINTNEXTLINE(clang-analyzer-valist.Uninitialized) */
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     fputc('\n', stderr);
@@ -265,12 +270,13 @@ static void corpus_add(corpus_t *c, int64_t m, int64_t n, int64_t k,
             corpus_fatal(file, line, "duplicate label n\"%s\"", label);
     if (c->count == c->cap) {
         c->cap = c->cap ? c->cap * 2 : 64;
-        c->cases = (corpus_case_t *)realloc(
+        corpus_case_t *narr = (corpus_case_t *)realloc(
                 c->cases, (size_t)c->cap * sizeof(*c->cases));
-        if (!c->cases) {
+        if (!narr) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
         }
+        c->cases = narr;
     }
     c->cases[c->count++] = corpus_case_t {m, n, k, label};
 }
@@ -293,7 +299,8 @@ static void parse_header(
     const char *val = eq + 1;
 
     if (!strcmp(key, "--mode")) {
-        if (strcmp(val, "C") && strcmp(val, "P") && strcmp(val, "S"))
+        if (strcmp(val, "C") != 0 && strcmp(val, "P") != 0
+                && strcmp(val, "S") != 0)
             corpus_fatal(file, line,
                     "bad value for --mode: '%s' (want C, P or S)", val);
         /* differential is inherently mode C: the value is validated and
@@ -366,6 +373,9 @@ static void parse_case(corpus_t *c, char *text, const char *file, int line) {
     char *close = strchr(name, '"');
     if (!close) corpus_fatal(file, line, "unterminated label in '%s'", text);
     for (const char *q = name; q < close; q++)
+        /* Whitelist check reads clearer as "NOT one of the valid chars"
+         * than the DeMorgan-expanded conjunction.
+         * NOLINTNEXTLINE(readability-simplify-boolean-expr) */
         if (!((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z')
                     || (*q >= '0' && *q <= '9') || *q == '_' || *q == '.'
                     || *q == '*' || *q == '-'))
@@ -612,11 +622,12 @@ int main(int argc, char **argv) {
 
     /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
     enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
-    float *a = (float *)malloc(M * K * 4), *b = (float *)malloc(K * N * 4);
-    float *bias = (float *)malloc(N * 4);
-    float *c_ref = (float *)malloc(M * N * 4),
-          *c_rvv = (float *)malloc(M * N * 4);
-    float *golden = (float *)malloc(M * N * 4);
+    float *a = (float *)malloc((size_t)M * K * 4),
+          *b = (float *)malloc((size_t)K * N * 4);
+    float *bias = (float *)malloc((size_t)N * 4);
+    float *c_ref = (float *)malloc((size_t)M * N * 4),
+          *c_rvv = (float *)malloc((size_t)M * N * 4);
+    float *golden = (float *)malloc((size_t)M * N * 4);
     for (int i = 0; i < M * K; i++)
         a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
     for (int i = 0; i < K * N; i++)
@@ -670,8 +681,8 @@ int main(int argc, char **argv) {
     CHECK(bad_nobias == 0, "rvv f32 no-bias matches naive golden (bit-exact)");
 
     /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
-    uint16_t *ah = (uint16_t *)malloc(M * K * 2),
-             *bh = (uint16_t *)malloc(K * N * 2);
+    uint16_t *ah = (uint16_t *)malloc((size_t)M * K * 2),
+             *bh = (uint16_t *)malloc((size_t)K * N * 2);
     for (int i = 0; i < M * K; i++)
         ah[i] = rvv_f32_to_f16((float)((i * 11) % 23) / 23.0f - 0.5f);
     for (int i = 0; i < K * N; i++)
@@ -744,7 +755,7 @@ int main(int argc, char **argv) {
     {
         /* run_named_kernel uses the full range; exercise a sub-range by
          * driving the kernel lifecycle directly with a custom range. */
-        memset(c_rvv, 0, M * N * 4);
+        memset(c_rvv, 0, (size_t)M * N * 4);
         rvcl_status_t st = run_named_kernel_range("rvcl_matmul_f32_rvv", &d32,
                 a, b, bias, c_rvv, 4, 9 /* rows [4,9) only */);
         CHECK(st == RVCL_SUCCESS, "rvv f32 runs on sub-range");
@@ -821,7 +832,9 @@ int main(int argc, char **argv) {
         for (int i = 0; i < corpus.count; i++)
             free(corpus.cases[i].label);
         free(corpus.cases);
-        free(failed_labels);
+        /* free() of a calloc'd const char** array; the multi-level -> void*
+         * conversion is inherent to free() and cannot be avoided. */
+        free(failed_labels); // NOLINT(bugprone-multi-level-implicit-pointer-conversion)
     }
 
     printf(g_failures || batch_fail ? "DIFFERENTIAL: %d failure(s)\n"

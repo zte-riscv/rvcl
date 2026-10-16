@@ -31,10 +31,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* run()-side panel packer implemented in rvv_pack.cpp. */
-rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
-        int64_t m, int64_t n, int64_t k_dim, size_t elt);
-
 /* ------------------------------------------------------- instance state */
 
 typedef struct {

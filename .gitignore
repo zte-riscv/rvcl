@@ -64,6 +64,10 @@ vcpkg_installed/
 # debug information files
 *.dwo
 
+# Python (CI automation scripts)
+__pycache__/
+*.pyc
+
 # test output & cache
 Testing/
 .cache/
