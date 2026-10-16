@@ -2,28 +2,15 @@ name: ci-lint
 
 # Formatting and (later) license-header / commit-msg / clang-tidy checks.
 # Each lint check runs on the PR diff only; the format job checks the whole
-# tree on main pushes so a stray unformatted file never lands.
+# tree on main pushes so a stray unformatted file never lands. The commit-msg
+# job validates every commit regardless of which files changed, so this
+# workflow deliberately carries no `paths` filter — a docs-only PR must still
+# pass the Conventional Commits gate.
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/**"
-      - "cmake/**"
-      - "include/**"
-      - "src/**"
-      - "tests/**"
-      - "examples/**"
-      - "CMakeLists.txt"
   pull_request:
     branches: [main]
-    paths:
-      - ".github/**"
-      - "cmake/**"
-      - "include/**"
-      - "src/**"
-      - "tests/**"
-      - "examples/**"
-      - "CMakeLists.txt"
   workflow_dispatch:
 
 # Stop stale runs when a PR is updated; never cancel main's own runs.
@@ -111,6 +98,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          # On a PR, actions/checkout defaults to the synthetic merge ref
+          # (refs/pull/N/merge), which makes HEAD a merge commit and would trip
+          # the anti-squash-bypass check below. Pin to the real PR head SHA;
+          # on push/workflow_dispatch this expression is empty and checkout
+          # falls back to the default ref.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Check commit messages
         run: |

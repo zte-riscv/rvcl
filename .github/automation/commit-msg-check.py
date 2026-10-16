@@ -47,8 +47,8 @@ def check_subject(subject):
             print(f"{status} FAILED: subject must not start with whitespace")
         else:
             print(
-                f"{status} FAILED: expected '<type>(<scope>)?(!)?: <description>' "
-                f"with type in "
+                f"{status} FAILED: '{subject}' does not match "
+                f"'<type>(<scope>)?(!)?: <description>' with type in "
                 "feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
             )
         return False
