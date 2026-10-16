@@ -1,6 +1,6 @@
 # clang-tidy-18 configuration for rvcl.
 #
-# Baseline (clang++-18 compile database, 2026-11): a full bugprone-/cert-/
+# Baseline (clang++-18 compile database, 2026-10): a full bugprone-/cert-/
 # readability- sweep yields ~591 findings, of which ~500 are pervasive style
 # noise in this C-ABI runtime library. We keep the high-signal checks and
 # exclude the categories below, each with its reason:
