@@ -15,6 +15,18 @@ option(RVCL_BUILD_EXAMPLES "Build examples"          ON)
 option(RVCL_BUILD_BENCH  "Build benchmark harness"   ON)
 option(RVCL_ENABLE_WERROR "Treat compiler warnings as errors" OFF)
 
+# Comma-separated sanitizer list, e.g. "address,undefined". Adds the
+# corresponding -fsanitize flags for both compile and link so every target
+# (library, tests, examples, bench) is instrumented. -fno-omit-frame-pointer
+# keeps ASan stack traces usable. Off by default: sanitizers slow the build
+# and are reserved for the dedicated CI job and local debugging.
+set(RVCL_SANITIZER "" CACHE STRING
+    "Sanitizers to enable (comma list, e.g. address,undefined)")
+if(RVCL_SANITIZER)
+    add_compile_options(-fsanitize=${RVCL_SANITIZER} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${RVCL_SANITIZER})
+endif()
+
 # The rvcl target always carries -Wall -Wextra; this gate extends the same
 # bar to tests/examples/bench and makes any warning fatal.
 if(RVCL_ENABLE_WERROR)

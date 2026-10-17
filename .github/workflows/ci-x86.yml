@@ -57,3 +57,38 @@ jobs:
       # test step already runs them.
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  # ASan + UBSan build on the x86 CI. This is the recurring evidence for the
+  # attack surface SECURITY.md self-describes: stride/dims validation, integer
+  # overflow in size/stride math (rvcl_tensor_bytes, workspace sizing) and
+  # out-of-bounds access inside run(). UBSan catches the overflow/UB, ASan the
+  # OOB reads/writes; ASan's leak checker also backstops the kernel run path's
+  # zero-allocation contract (a malloc inside kernel run would be reported).
+  # Run in Debug so the compiler does not elide the instrumentation.
+  sanitize:
+    name: ASan+UBSan / Debug
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DRVCL_SANITIZER=address,undefined \
+            -DRVCL_TEST_SET=ci -DRVCL_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # ASan aborts on the first reported error by default; a failure here is
+      # a real memory-safety regression. ctest prints the sanitizer report.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
