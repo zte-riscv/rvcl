@@ -3,7 +3,7 @@
 [![CI x86](https://github.com/zte-riscv/rvcl/actions/workflows/ci-x86.yml/badge.svg?branch=main)](https://github.com/zte-riscv/rvcl/actions/workflows/ci-x86.yml)
 [![CI riscv64](https://github.com/zte-riscv/rvcl/actions/workflows/ci-riscv.yml/badge.svg?branch=main)](https://github.com/zte-riscv/rvcl/actions/workflows/ci-riscv.yml)
 
-**A unified compute kernel abstraction and dispatch runtime for RISC-V vector and matrix architectures — covering RVV, IME, VME, AME and vendor extensions, with capability detection, kernel registry, and framework integration (oneDNN).**
+**AB unified compute kernel abstraction and dispatch runtime for RISC-V vector and matrix architectures — covering RVV, IME, VME, AME and vendor extensions, with capability detection, kernel registry, and framework integration (oneDNN).**
 
 RVCL is a unified kernel abstraction and dispatch runtime for RISC-V vector and matrix architectures: **Capability** (what the hardware can do) → **Registry** (which kernel implementations exist) → **Dispatch** (which kernel should run) → **Kernel** (do the actual computation), with an injectable **Scheduler** and a zero-copy **Memory** contract crossing all layers. The goal: one operator API that automatically selects the best kernel for the current hardware across RVV / IME / VME / AME / vendor extensions, and integrates upward with oneDNN (and through it, frameworks such as PyTorch).
 
@@ -13,14 +13,16 @@ RVCL is a unified kernel abstraction and dispatch runtime for RISC-V vector and 
 
 ## Table of Contents
 
-- [Why RVCL](#why-rvcl)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Usage Examples](#usage-examples)
-- [Project Layout](#project-layout)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+- [RVCL — RISC-V Compute Library](#rvcl--risc-v-compute-library)
+  - [Table of Contents](#table-of-contents)
+  - [Why RVCL](#why-rvcl)
+  - [Architecture](#architecture)
+  - [Quick Start](#quick-start)
+  - [Usage Examples](#usage-examples)
+  - [Project Layout](#project-layout)
+  - [Roadmap](#roadmap)
+  - [Contributing](#contributing)
+  - [License](#license)
 
 ## Why RVCL
 
