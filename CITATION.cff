@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: RVCL (RISC-V Compute Library)
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+type: software
+authors:
+  - name: RVCL Contributors
+    website: 'https://github.com/zte-riscv/rvcl'
+repository-code: 'https://github.com/zte-riscv/rvcl'
+abstract: >-
+  RVCL is a unified compute kernel abstraction and dispatch runtime for
+  RISC-V vector and matrix architectures (RVV, IME, VME, AME and vendor
+  extensions), providing capability detection, kernel registry, dispatch,
+  and oneDNN integration.
+license: Apache-2.0
+version: 0.1.0

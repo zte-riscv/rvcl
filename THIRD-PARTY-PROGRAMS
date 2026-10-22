@@ -1,0 +1,21 @@
+RVCL (RISC-V Compute Library) Third Party Programs File
+
+This file contains the list of third party software ("third party programs")
+contained in the RVCL software and their required notices and/or license
+terms. This third party software, even if included with the distribution of
+the RVCL software, may be governed by separate license terms, including
+without limitation, third party license terms, other ZTE software license
+terms, and open source software license terms. These separate license terms
+govern your use of the third party programs as set forth in the
+"THIRD-PARTY-PROGRAMS" file.
+
+Third party programs and their corresponding required notices and/or license
+terms are listed below.
+
+--------------------------------------------------------------------------------
+
+The current RVCL distribution does not contain any third party programs.
+
+The first third party component is planned to be the vendored xbyak_riscv
+run-time code generator (3-Clause BSD); when it is added, its copyright
+notice and license terms will be listed below.
