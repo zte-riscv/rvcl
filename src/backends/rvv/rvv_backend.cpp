@@ -179,7 +179,7 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16_by_name(
     }
     fprintf(stderr,
             "rvcl: f16 kernel path '%s' is unavailable "
-            "(want auto, c, jit or intrinsics)\n",
+            "(want auto, c or intrinsics)\n",
             name);
     return NULL;
 }
