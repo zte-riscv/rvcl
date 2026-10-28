@@ -39,8 +39,13 @@ examples. The boundary:
 - Implementation, tests and examples are C++17 (`.cpp` / internal `.hpp`).
   Existing designated initializers rely on GNU extensions (`-std=gnu++17`),
   so MSVC is not a supported host compiler.
-- The upcoming JIT layer (vendored xbyak_riscv, pure C++) links into the
-  same single-language build — that is why the tree is not bilingual.
+- The JIT layer (vendored xbyak_riscv, pure C++) links into the same
+  single-language build — that is why the tree is not bilingual.
+- Vendored third-party code lives under `third_party/` as unmodified copies
+  of pinned upstream releases (provenance and licenses in
+  `THIRD-PARTY-PROGRAMS`). It is excluded from the license-header and
+  formatting checks; patching a vendored copy requires separate review and
+  must be recorded there.
 
 Good first tasks:
 

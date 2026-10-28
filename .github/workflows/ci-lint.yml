@@ -44,8 +44,13 @@ jobs:
             if [ -z "${BASE}" ]; then
               echo "::error::pull_request without base ref" && exit 1
             fi
+            # The exclude pathspec keeps vendored third-party code out of
+            # the list: upstream files under third_party/ keep their own
+            # style and license headers, so they are never reformatted or
+            # analyzed here (see THIRD-PARTY-PROGRAMS).
             git diff --name-only "origin/${BASE}"...HEAD \
-                -- '*.c' '*.h' '*.cpp' '*.hpp' > files.txt
+                -- '*.c' '*.h' '*.cpp' '*.hpp' ':(exclude)third_party' \
+                > files.txt
           else
             find src include tests examples -type f \
                 \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) > files.txt
@@ -160,8 +165,13 @@ jobs:
             if [ -z "${BASE}" ]; then
               echo "::error::pull_request without base ref" && exit 1
             fi
+            # The exclude pathspec keeps vendored third-party code out of
+            # the list: upstream files under third_party/ keep their own
+            # style and license headers, so they are never reformatted or
+            # analyzed here (see THIRD-PARTY-PROGRAMS).
             git diff --name-only "origin/${BASE}"...HEAD \
-                -- '*.c' '*.h' '*.cpp' '*.hpp' > files.txt
+                -- '*.c' '*.h' '*.cpp' '*.hpp' ':(exclude)third_party' \
+                > files.txt
           else
             find src include tests examples -type f \
                 \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) > files.txt

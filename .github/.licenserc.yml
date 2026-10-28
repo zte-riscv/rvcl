@@ -29,4 +29,9 @@ header:
     - "**/*.h"
     - "**/*.hpp"
 
+  # Vendored third-party code keeps its upstream license headers (BSD-3,
+  # not the Apache pattern above) — never reheader inside third_party/.
+  paths-ignore:
+    - "third_party/**"
+
   license-location-threshold: 30

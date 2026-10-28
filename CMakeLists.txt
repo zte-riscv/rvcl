@@ -72,6 +72,16 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_f32.cpp
         src/backends/rvv/rvv_gemm_f16.cpp
     )
+    # The JIT micro-kernel compiles on RISC-V hosts only, always at the
+    # baseline -march and never under the RVCL_RVV_MARCH override below:
+    # the JIT path exists to keep a single rv64gc binary that probes the
+    # vector extension at run time, so its translation unit must not see
+    # __riscv_vector at compile time. Non-RISC-V hosts do not build it at
+    # all (see the rvcl_jit_probe target below for analysis coverage).
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+        list(APPEND RVCL_RUNTIME_SOURCES
+            src/backends/rvv/jit/rvv_gemm_f32_jit.cpp)
+    endif()
 endif()
 
 add_library(rvcl SHARED ${RVCL_RUNTIME_SOURCES})
@@ -110,7 +120,36 @@ endif()
 # fallback and the intrinsics path is unreachable. capability.cpp MUST
 # be in the list too: the compile-time detection layer only reports RVV
 # / FP16 features when the __riscv_* macros are visible there.
+if(RVCL_ENABLE_RVV)
+    # The vendored xbyak_riscv headers stay off the global include path:
+    # only the JIT translation unit resolves includes against them — both
+    # when it compiles on RISC-V hosts and in its compile-database entry
+    # elsewhere.
+    set_source_files_properties(src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+        PROPERTIES INCLUDE_DIRECTORIES
+                    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbyak_riscv")
+endif()
+
+# clang-tidy analysis (CI and CONTRIBUTING) runs against the compile
+# database on any host and covers every C/C++ file in a PR diff — including
+# a JIT translation unit that only builds on RISC-V hosts. This target is
+# never built (EXCLUDE_FROM_ALL) and exists only so the database exports
+# that TU's compile command on the other hosts; the vendored include path
+# rides on the source-file property above.
+if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+    add_library(rvcl_jit_probe EXCLUDE_FROM_ALL
+        src/backends/rvv/jit/rvv_gemm_f32_jit.cpp)
+    set_target_properties(rvcl_jit_probe PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES)
+endif()
+
 if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+    # RVCL_HAVE_JIT marks that the JIT translation unit is compiled in
+    # (non-RISC-V hosts build none of it); call sites and tests guard the
+    # host-side entry points with #if defined(RVCL_HAVE_JIT).
+    target_compile_definitions(rvcl PRIVATE RVCL_HAVE_JIT)
+
     set(RVCL_RVV_MARCH "" CACHE STRING "Extra -march vector flags for RVV files")
     if(RVCL_RVV_MARCH)
         set_source_files_properties(
