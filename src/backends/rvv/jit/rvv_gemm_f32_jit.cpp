@@ -67,6 +67,14 @@ namespace {
 
 using namespace Xbyak_riscv;
 
+/* Every NC-derived mask, shift and byte stride below is traced back to
+ * RVV_PACK_NC instead of hard-coded literals, so a panel-width change
+ * cannot leave stale constants in the emitted code. The mask/shift forms
+ * additionally require a power-of-two width. */
+static_assert((RVV_PACK_NC & (RVV_PACK_NC - 1)) == 0,
+        "RVV_PACK_NC must be a power of two (NC-derived shifts)");
+constexpr int nc_log2 = __builtin_ctz(RVV_PACK_NC);
+
 /*
  * Row x panel strip kernel, ABI-mapped to rvv_gemm_fn:
  *
@@ -127,7 +135,7 @@ private:
         blt(av, tp, avl_nc);
         mv(av, tp);
         L(avl_nc);
-        andi(tp, j0, 7);
+        andi(tp, j0, RVV_PACK_NC - 1);
         li(p, RVV_PACK_NC);
         sub(tp, p, tp); /* NC - (j0 % NC): lanes left in this panel row */
         blt(av, tp, avl_panel);
@@ -150,11 +158,11 @@ private:
         mul(tp, i, k);
         slli(tp, tp, 2);
         add(acur, a, tp); /* &A[i, 0] */
-        srai(tp, j0, 3); /* panel = j0 / NC */
+        srai(tp, j0, nc_log2); /* panel = j0 / NC */
         mul(tp, tp, k);
-        slli(tp, tp, 5); /* panel stride: K rows x NC lanes x 4 bytes */
+        slli(tp, tp, nc_log2 + 2); /* panel stride: NC lanes x 4 bytes */
         add(bcur, bp, tp);
-        andi(tp, j0, 7);
+        andi(tp, j0, RVV_PACK_NC - 1);
         slli(tp, tp, 2);
         add(bcur, bcur, tp); /* &B[panel][0][j0 % NC] */
         li(p, 0);
@@ -164,7 +172,7 @@ private:
         vle32_v(vb, bcur); /* B[p, j0 .. j0+vl) */
         vfmacc_vf(vacc, fa, vb); /* acc += A[i,p] * B[p, j0..j0+vl) */
         addi(acur, acur, 4);
-        addi(bcur, bcur, 32); /* next k row of the panel: NC x 4 bytes */
+        addi(bcur, bcur, RVV_PACK_NC * 4); /* next k row: NC x 4 bytes */
         addi(p, p, 1);
         j_(kloop);
         L(store);
