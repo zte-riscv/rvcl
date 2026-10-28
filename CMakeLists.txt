@@ -142,6 +142,11 @@ if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
     set_target_properties(rvcl_jit_probe PROPERTIES
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED YES)
+    # The probe never builds; its compile-database entry must still
+    # resolve the public headers the JIT TU includes alongside the
+    # vendored generator path from the source-file property.
+    target_include_directories(rvcl_jit_probe PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
 endif()
 
 if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")

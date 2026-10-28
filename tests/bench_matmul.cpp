@@ -21,8 +21,9 @@
  *   kernel-only  — micro-kernel on pre-packed data (panelized B); goes
  *                  through rvv_pick_gemm_* — the same selector the
  *                  backend create binds, so it always measures what
- *                  dispatch runs (--path=c forces the C micro-kernel
- *                  as the comparison baseline arm)
+ *                  dispatch runs (--path=NAME forces a specific
+ *                  micro-kernel through the shared by-name resolver,
+ *                  the same one behind RVCL_RVV_KERNEL)
  *   pack-only    — the packing transform alone
  *   pack+kernel  — run() as the framework delivers it (pack inside)
  *   end-to-end   — rvcl_matmul() including dispatch + cache
@@ -32,8 +33,9 @@
  *   P  performance (default): warmup once + best-of-N (--reps, default 5)
  *   S  survival (QEMU/TCG): single pass, no warmup, direct fills, reps 1
  *
- * Usage: rvcl_bench [--json] [--reps N] [--mode=C|P|S] [--path=c]
- *                   [--batch=FILE] [MxNxK ...]
+ * Usage: rvcl_bench [--json] [--reps N] [--mode=C|P|S]
+ *                   [--path={auto,c,jit,intrinsics}] [--batch=FILE]
+ *                   [MxNxK ...]
  *   shape syntax: MxNxK, or the benchdnn-compatible MxK:KxN in corpora.
  *   --batch and CLI shapes are mutually exclusive; with neither, the
  *   default sweep below runs.
@@ -528,7 +530,8 @@ static void rig_release(dispatch_rig_t *g) {
 }
 
 int main(int argc, char **argv) {
-    int json = 0, reps = 5, path_c = 0, mode_given = 0;
+    int json = 0, reps = 5, mode_given = 0;
+    const char *path = NULL; /* NULL = backend auto selection */
     bench_mode_t mode = MODE_P;
     const char *batch = NULL;
     static const int64_t defaults[][3]
@@ -554,8 +557,8 @@ int main(int argc, char **argv) {
                 return 2;
             }
             mode_given = 1;
-        } else if (!strcmp(argv[i], "--path=c"))
-            path_c = 1;
+        } else if (!strncmp(argv[i], "--path=", 7) && argv[i][7])
+            path = argv[i] + 7;
         else if (!strncmp(argv[i], "--batch=", 8) && argv[i][8])
             batch = argv[i] + 8;
         else if (num_shapes < 16) {
@@ -570,7 +573,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr,
                         "error: bad argument '%s'\n"
                         "usage: %s [--json] [--reps N] [--mode=C|P|S] "
-                        "[--path=c] [--batch=FILE] [MxNxK ...]\n",
+                        "[--path={auto,c,jit,intrinsics}] [--batch=FILE] "
+                        "[MxNxK ...]\n",
                         argv[i], argv[0]);
                 return 2;
             }
@@ -776,11 +780,21 @@ int main(int argc, char **argv) {
 
             konly_ctx_t kc = {.cs = &cs, .packed = packed, .gemm = NULL};
             /* kernel-only goes through the same selector the backend
-             * binds (rvv_pick_*); --path=c forces the C micro-kernel */
-            if (path_c)
-                kc.gemm = dt ? rvv_gemm_f16_c : rvv_gemm_f32_c;
-            else
+             * binds (rvv_pick_*); --path=NAME forces a specific
+             * micro-kernel through the shared by-name resolver */
+            if (path) {
+                kc.gemm = dt ? rvv_pick_gemm_f16_by_name(path)
+                             : rvv_pick_gemm_f32_by_name(path);
+                if (!kc.gemm) {
+                    fprintf(stderr, "error: --path=%s is unavailable for %s\n",
+                            path, dtstr);
+                    free(packed);
+                    free_case(&cs);
+                    return 2;
+                }
+            } else {
                 kc.gemm = dt ? rvv_pick_gemm_f16() : rvv_pick_gemm_f32();
+            }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)
                     : time_best_of(bench_kernel_only, &kc, reps);

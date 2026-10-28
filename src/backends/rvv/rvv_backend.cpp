@@ -29,6 +29,7 @@
 #include "rvv_internal.hpp"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------- instance state */
@@ -124,25 +125,96 @@ static const rvcl_kernel_vtable_t g_rvv_vtable = {
 
 /* ---------------------------------------------- micro-kernel selection */
 
-/* Single source of truth for the live micro-kernel per dtype (see
- * rvv_internal.hpp): the intrinsics kernels only exist under
- * __riscv_vector in this translation unit; otherwise the C-portable
- * fallback runs. Bench kernel-only timing calls the same selectors, so
- * it always measures what dispatch actually bound. */
-__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f32(void) {
+/* RVCL_RVV_KERNEL knob, read once per process (the C++11 static guard
+ * makes concurrent first calls safe). Values: auto | jit | c. */
+static const char *rvv_kernel_knob(void) {
+    static const char *knob = getenv("RVCL_RVV_KERNEL");
+    return knob;
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f32_by_name(
+        const char *name) {
+    if (!strcmp(name, "c")) return rvv_gemm_f32_c;
 #if defined(__riscv_vector)
-    return rvv_gemm_f32_rvv;
-#else
-    return rvv_gemm_f32_c;
+    if (!strcmp(name, "intrinsics")) return rvv_gemm_f32_rvv;
 #endif
+#if defined(RVCL_HAVE_JIT)
+    if (!strcmp(name, "auto") || !strcmp(name, "jit")) {
+        const int forced = strcmp(name, "jit") == 0;
+        if (rvv_gemm_f32_jit_available()) {
+            rvv_gemm_fn jit = rvv_gemm_f32_jit_entry();
+            if (jit) return jit;
+            /* generation failed and already warned; the forced request
+             * has no fallback, auto degrades to the C kernel below */
+            if (forced) return NULL;
+        } else if (forced) {
+            fprintf(stderr,
+                    "rvcl: forced JIT f32 path requires the vector "
+                    "extension\n");
+            return NULL;
+        }
+    }
+#endif
+    if (!strcmp(name, "auto")) return rvv_gemm_f32_c;
+    fprintf(stderr,
+            "rvcl: f32 kernel path '%s' is unavailable "
+            "(want auto, c, jit or intrinsics)\n",
+            name);
+    return NULL;
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16_by_name(
+        const char *name) {
+    if (!strcmp(name, "c")) return rvv_gemm_f16_c;
+#if defined(__riscv_vector)
+    if (!strcmp(name, "intrinsics") || !strcmp(name, "auto"))
+        return rvv_gemm_f16_rvv;
+#else
+    if (!strcmp(name, "auto")) return rvv_gemm_f16_c;
+#endif
+    if (!strcmp(name, "jit")) {
+        fprintf(stderr,
+                "rvcl: f16 has no JIT path (want auto, c or intrinsics)\n");
+        return NULL;
+    }
+    fprintf(stderr,
+            "rvcl: f16 kernel path '%s' is unavailable "
+            "(want auto, c, jit or intrinsics)\n",
+            name);
+    return NULL;
+}
+
+/* Single source of truth for the live micro-kernel per dtype (see
+ * rvv_internal.hpp): knob-free auto selection is JIT-when-RVV-else-C;
+ * the intrinsics kernels stay reachable only through the by-name
+ * resolver. Bench kernel-only timing calls the same selectors, so it
+ * always measures what dispatch actually bound. */
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f32(void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) {
+        if (!strcmp(knob, "intrinsics")) {
+            fprintf(stderr,
+                    "rvcl: RVCL_RVV_KERNEL=intrinsics is invalid "
+                    "(want auto, jit or c)\n");
+            return NULL;
+        }
+        return rvv_pick_gemm_f32_by_name(knob);
+    }
+    return rvv_pick_gemm_f32_by_name("auto");
 }
 
 __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16(void) {
-#if defined(__riscv_vector)
-    return rvv_gemm_f16_rvv;
-#else
-    return rvv_gemm_f16_c;
-#endif
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) {
+        if (!strcmp(knob, "intrinsics")) {
+            fprintf(stderr,
+                    "rvcl: RVCL_RVV_KERNEL=intrinsics is invalid "
+                    "(want auto, jit or c)\n");
+            return NULL;
+        }
+        return rvv_pick_gemm_f16_by_name(knob);
+    }
+    return rvv_pick_gemm_f16_by_name("auto");
 }
 
 /* --------------------------------------------------- per-dtype factories */
@@ -160,12 +232,18 @@ static rvcl_status_t make_rvv_kernel(rvcl_kernel_t **out,
 
 static rvcl_status_t create_f32(
         rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
-    return make_rvv_kernel(out, desc, rvv_pick_gemm_f32(), sizeof(float));
+    /* a NULL pick (invalid knob or a forced-but-unavailable path) must
+     * fail creation loudly, never bind a NULL micro-kernel */
+    rvv_gemm_fn gemm = rvv_pick_gemm_f32();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel(out, desc, gemm, sizeof(float));
 }
 
 static rvcl_status_t create_f16(
         rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
-    return make_rvv_kernel(out, desc, rvv_pick_gemm_f16(), 2);
+    rvv_gemm_fn gemm = rvv_pick_gemm_f16();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel(out, desc, gemm, 2);
 }
 
 /* pack entry used by run(): dispatch to the shared panel packer */

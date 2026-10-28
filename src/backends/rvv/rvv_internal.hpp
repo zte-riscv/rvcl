@@ -108,13 +108,35 @@ typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,
         const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
+/* JIT host-side entries (rvv_gemm_f32_jit.cpp): only present when the
+ * JIT translation unit is compiled in, which callers detect through
+ * RVCL_HAVE_JIT (a private definition of the library target). Library
+ * internal; not exported. */
+#if defined(RVCL_HAVE_JIT)
+int rvv_gemm_f32_jit_available(void);
+rvv_gemm_fn rvv_gemm_f32_jit_entry(void);
+#endif
+
 /* Micro-kernel selection — single source of truth for "which kernel is
  * live" per dtype: the backend create_f32/f16 binding and the bench
  * kernel-only metric both call these, so what dispatch runs and what
- * the bench measures can never drift apart. v0.1 T5 inserts the JIT
- * option here (three-path selection). Internal to the backend/tests;
- * not public API. */
+ * the bench measures can never drift apart.
+ *
+ * rvv_pick_gemm_* resolves the RVCL_RVV_KERNEL knob (auto | jit | c;
+ * any other value fails loudly with a NULL return) and defaults to the
+ * auto policy: the JIT kernel when the run-time capability probe
+ * confirms RVV, the C kernel otherwise. The intrinsics kernels left the
+ * auto chain and stay reachable only through the explicit by-name
+ * resolvers below. Internal to the backend/tests; not public API. */
 rvv_gemm_fn rvv_pick_gemm_f32(void);
 rvv_gemm_fn rvv_pick_gemm_f16(void);
+
+/* Explicit path resolution: name is "auto", "c", "jit" or "intrinsics".
+ * The bench --path knob and RVCL_RVV_KERNEL resolve through the same
+ * functions, so there is a single set of path semantics. Returns NULL
+ * (with a stderr reason) for unknown names and for paths this build or
+ * run cannot serve. */
+rvv_gemm_fn rvv_pick_gemm_f32_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_f16_by_name(const char *name);
 
 #endif /* RVCL_RVV_INTERNAL_H */
