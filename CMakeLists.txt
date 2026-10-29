@@ -221,6 +221,30 @@ if(RVCL_BUILD_TESTS)
                         --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/${op}/${file})
             set_tests_properties(test_${op}_modeC_${set}
                 PROPERTIES LABELS "corpus;${set}")
+
+            # Forced micro-kernel-path variants of the same corpus: the
+            # RVCL_RVV_KERNEL environment pin drives the f32 selection off
+            # auto so every path keeps its own regression surface (auto
+            # binds JIT-when-RVV, c is the portable oracle, intrinsics
+            # exist only under the RVCL_RVV_MARCH vector override). The
+            # variants run f32-only (--dt): f16 has no JIT path and keeps
+            # its auto chain, which the plain target above already covers.
+            # RISC-V hosts only — the x86 build stays host-agnostic.
+            if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+                set(rvcl_forced_paths jit c)
+                if(RVCL_RVV_MARCH)
+                    list(APPEND rvcl_forced_paths intrinsics)
+                endif()
+                foreach(path IN LISTS rvcl_forced_paths)
+                    add_test(NAME test_${op}_modeC_${set}_${path}
+                        COMMAND rvcl_differential
+                                --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/${op}/${file}
+                                --dt=f32)
+                    set_tests_properties(test_${op}_modeC_${set}_${path}
+                        PROPERTIES LABELS "corpus;${set}"
+                        ENVIRONMENT "RVCL_RVV_KERNEL=${path}")
+                endforeach()
+            endif()
         endif()
     endfunction()
 

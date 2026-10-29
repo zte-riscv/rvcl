@@ -2,7 +2,8 @@ name: ci-riscv
 
 # Cross-compile on x86, execute under QEMU linux-user (the oneDNN
 # ci-riscv pattern). Two build tiers x a vlen matrix:
-#   baseline (rv64gc)  C-fallback kernels + runtime hwprobe upgrade
+#   baseline (rv64gc)  JIT micro-kernel via the runtime hwprobe upgrade
+#                      (C fallback where the probe finds no vector unit)
 #   vector (rv64gcv_zvfh)  intrinsics kernels, compile-time capability
 on:
   push:
@@ -98,9 +99,12 @@ jobs:
           # capability expectations per tier: the vector tier gets RVV+FP16
           # from compile-time macros; the baseline tier must upgrade to RVV
           # through the runtime hwprobe path (also validates that path).
-          # vlen only matters for the intrinsics tier (panel=8 tail paths:
-          # two strips at vlen=128, one at vlen=256), so the baseline
-          # binary runs on a single vlen.
+          # Both micro-kernel flavors are vlen-sensitive — the JIT kernel
+          # adapts its AVL at run time and the intrinsics kernel
+          # strip-mines the panel=8 columns into two strips at vlen=128,
+          # one at 256 — so the vector tier runs both vlens; the baseline
+          # tier bounds emulator time by exercising the JIT kernel at a
+          # single vlen.
           - name: baseline-vlen128
             tier: baseline
             vlen: 128

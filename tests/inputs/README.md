@@ -56,6 +56,7 @@ lines unmodified).
 | --- | --- |
 | header options | whole-file defaults; bench CLI `--mode` overrides the file header; differential ignores `--mode` (it is inherently correctness) |
 | `--dt` default | no header = run f32 **and** f16; explicit = run only that dtype and **assert** it is served (see exit codes) |
+| `--dt` CLI | differential `--dt=f32\|f16` restricts the whole run — fixed contract sections and corpus cases alike — to one dtype and overrides the file header; the forced-path ctest targets use it |
 | label | unique per file (duplicate = parse error); a case without a label gets the normalized `MxNxK` string as its label |
 | double triple | the two K values must be equal, else parse error; normalized to MxNxK |
 | bounds | any dimension outside 1..4096 = parse error (foot-guard against runaway shapes on QEMU) |
@@ -86,6 +87,11 @@ One line in `CMakeLists.txt` per corpus file:
 ```cmake
 rvcl_add_corpus(matmul ci test_matmul_ci)   # -> ctest target test_matmul_modeC_ci
 ```
+
+On RISC-V hosts the same line also registers forced f32 micro-kernel-path
+variants of each target (`_jit`, `_c`, plus `_intrinsics` under the vector
+`-march` override), driven through the `RVCL_RVV_KERNEL` environment pin
+and the differential `--dt=f32` restriction.
 
 `RVCL_TEST_SET` (`smoke` < `ci` < `all`, default `smoke`) selects at
 configure time which tiers become ctest targets; CI raises it explicitly.

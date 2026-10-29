@@ -39,6 +39,11 @@
  * numerics, and stay out of the batch loop by design. With no arguments
  * the behavior is byte-for-byte the Phase 0 run.
  *
+ * `--dt=f32|f16` restricts the whole run — fixed sections and corpus
+ * cases alike — to one dtype. The forced-path ctest targets use it: a
+ * jit-forced f32 run must fail loudly on f16's lack of a JIT path only
+ * when f16 is actually in scope, not because the fixed sections ran it.
+ *
  * This file holds one of the two independent corpus parsers (bench has
  * the other): both follow the spec's error table, and ctest runs the
  * same corpus through both — cross-validation is the feature.
@@ -602,11 +607,33 @@ static void recording_parallel_for(rvcl_ischeduler_t *s,
 
 int main(int argc, char **argv) {
     const char *batch = NULL;
+    const char *dt_arg = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "--batch=", 8) && argv[i][8])
             batch = argv[i] + 8;
+        else if (!strncmp(argv[i], "--dt=", 5) && argv[i][5])
+            dt_arg = argv[i] + 5;
         else {
-            fprintf(stderr, "usage: %s [--batch=<corpus-file>]\n", argv[0]);
+            fprintf(stderr,
+                    "usage: %s [--batch=<corpus-file>] [--dt=f32|f16]\n",
+                    argv[0]);
+            return 2;
+        }
+    }
+
+    /* --dt overrides a --dt header in the corpus file (the bench --mode
+     * override rule) so a forced-path run can pin the dtype from ctest
+     * regardless of what the corpus file declares. */
+    int dt_only_f32 = 0, dt_only_f16 = 0;
+    if (dt_arg) {
+        if (!strcmp(dt_arg, "f32"))
+            dt_only_f32 = 1;
+        else if (!strcmp(dt_arg, "f16"))
+            dt_only_f16 = 1;
+        else {
+            fprintf(stderr,
+                    "error: bad value for --dt: '%s' (want f32 or f16)\n",
+                    dt_arg);
             return 2;
         }
     }
@@ -622,16 +649,19 @@ int main(int argc, char **argv) {
 
     /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
     enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
-    float *a = (float *)malloc((size_t)M * K * 4),
-          *b = (float *)malloc((size_t)K * N * 4);
+    float *a = NULL, *b = NULL;
     float *bias = (float *)malloc((size_t)N * 4);
     float *c_ref = (float *)malloc((size_t)M * N * 4),
           *c_rvv = (float *)malloc((size_t)M * N * 4);
     float *golden = (float *)malloc((size_t)M * N * 4);
-    for (int i = 0; i < M * K; i++)
-        a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
-    for (int i = 0; i < K * N; i++)
-        b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
+    if (!dt_only_f16) {
+        a = (float *)malloc((size_t)M * K * 4);
+        b = (float *)malloc((size_t)K * N * 4);
+        for (int i = 0; i < M * K; i++)
+            a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
+        for (int i = 0; i < K * N; i++)
+            b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
+    }
     for (int j = 0; j < N; j++)
         bias[j] = 0.25f;
 
@@ -647,67 +677,75 @@ int main(int argc, char **argv) {
             .quant = {},
     };
 
-    golden_f32(a, b, bias, golden, M, N, K);
+    if (!dt_only_f16) {
+        golden_f32(a, b, bias, golden, M, N, K);
 
-    CHECK(run_named_kernel("rvcl_matmul_f32_reference", &d32, a, b, bias, c_ref)
-                    == RVCL_SUCCESS,
-            "reference f32 runs");
-    CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, bias, c_rvv)
-                    == RVCL_SUCCESS,
-            "rvv f32 runs (packed path)");
+        CHECK(run_named_kernel(
+                      "rvcl_matmul_f32_reference", &d32, a, b, bias, c_ref)
+                        == RVCL_SUCCESS,
+                "reference f32 runs");
+        CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, bias, c_rvv)
+                        == RVCL_SUCCESS,
+                "rvv f32 runs (packed path)");
 
-    int bad_ref = 0, bad_rvv = 0;
-    for (int i = 0; i < M * N; i++) {
-        if (c_ref[i] != golden[i]) bad_ref++;
-        if (c_rvv[i] != golden[i]) bad_rvv++;
+        int bad_ref = 0, bad_rvv = 0;
+        for (int i = 0; i < M * N; i++) {
+            if (c_ref[i] != golden[i]) bad_ref++;
+            if (c_rvv[i] != golden[i]) bad_rvv++;
+        }
+        CHECK(bad_ref == 0, "reference matches naive golden (bit-exact)");
+        CHECK(bad_rvv == 0,
+                "rvv f32 (packed) matches naive golden (bit-exact)");
+
+        /* fp32 must be identical between backends too */
+        int diff_backends = 0;
+        for (int i = 0; i < M * N; i++)
+            if (c_ref[i] != c_rvv[i]) diff_backends++;
+        CHECK(diff_backends == 0, "reference and rvv f32 outputs identical");
+
+        /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
+        golden_f32(a, b, NULL, golden, M, N, K);
+        CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, NULL, c_rvv)
+                        == RVCL_SUCCESS,
+                "rvv f32 runs without bias");
+        int bad_nobias = 0;
+        for (int i = 0; i < M * N; i++)
+            if (c_rvv[i] != golden[i]) bad_nobias++;
+        CHECK(bad_nobias == 0,
+                "rvv f32 no-bias matches naive golden (bit-exact)");
     }
-    CHECK(bad_ref == 0, "reference matches naive golden (bit-exact)");
-    CHECK(bad_rvv == 0, "rvv f32 (packed) matches naive golden (bit-exact)");
-
-    /* fp32 must be identical between backends too */
-    int diff_backends = 0;
-    for (int i = 0; i < M * N; i++)
-        if (c_ref[i] != c_rvv[i]) diff_backends++;
-    CHECK(diff_backends == 0, "reference and rvv f32 outputs identical");
-
-    /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
-    golden_f32(a, b, NULL, golden, M, N, K);
-    CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, NULL, c_rvv)
-                    == RVCL_SUCCESS,
-            "rvv f32 runs without bias");
-    int bad_nobias = 0;
-    for (int i = 0; i < M * N; i++)
-        if (c_rvv[i] != golden[i]) bad_nobias++;
-    CHECK(bad_nobias == 0, "rvv f32 no-bias matches naive golden (bit-exact)");
 
     /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
-    uint16_t *ah = (uint16_t *)malloc((size_t)M * K * 2),
-             *bh = (uint16_t *)malloc((size_t)K * N * 2);
-    for (int i = 0; i < M * K; i++)
-        ah[i] = rvv_f32_to_f16((float)((i * 11) % 23) / 23.0f - 0.5f);
-    for (int i = 0; i < K * N; i++)
-        bh[i] = rvv_f32_to_f16((float)((i * 5) % 29) / 29.0f - 0.5f);
+    uint16_t *ah = NULL, *bh = NULL;
+    if (!dt_only_f32) {
+        ah = (uint16_t *)malloc((size_t)M * K * 2);
+        bh = (uint16_t *)malloc((size_t)K * N * 2);
+        for (int i = 0; i < M * K; i++)
+            ah[i] = rvv_f32_to_f16((float)((i * 11) % 23) / 23.0f - 0.5f);
+        for (int i = 0; i < K * N; i++)
+            bh[i] = rvv_f32_to_f16((float)((i * 5) % 29) / 29.0f - 0.5f);
 
-    rvcl_matmul_desc_t d16 = {
-            .m = M,
-            .n = N,
-            .k = K,
-            .dtype_a = RVCL_DTYPE_FP16,
-            .dtype_b = RVCL_DTYPE_FP16,
-            .dtype_acc = RVCL_DTYPE_AUTO,
-            .dtype_c = RVCL_DTYPE_FP32,
-            .dtype_bias = RVCL_DTYPE_FP32,
-            .quant = {},
-    };
-    golden_f16(ah, bh, bias, golden, M, N, K);
-    CHECK(run_named_kernel("rvcl_matmul_f16_rvv", &d16, ah, bh, bias, c_rvv)
-                    == RVCL_SUCCESS,
-            "rvv f16 runs (packed path)");
-    int bad16 = 0;
-    for (int i = 0; i < M * N; i++)
-        if (fabsf(c_rvv[i] - golden[i]) > 1e-3f * (1.0f + fabsf(golden[i])))
-            bad16++;
-    CHECK(bad16 == 0, "rvv f16 (packed) matches soft-converted golden");
+        rvcl_matmul_desc_t d16 = {
+                .m = M,
+                .n = N,
+                .k = K,
+                .dtype_a = RVCL_DTYPE_FP16,
+                .dtype_b = RVCL_DTYPE_FP16,
+                .dtype_acc = RVCL_DTYPE_AUTO,
+                .dtype_c = RVCL_DTYPE_FP32,
+                .dtype_bias = RVCL_DTYPE_FP32,
+                .quant = {},
+        };
+        golden_f16(ah, bh, bias, golden, M, N, K);
+        CHECK(run_named_kernel("rvcl_matmul_f16_rvv", &d16, ah, bh, bias, c_rvv)
+                        == RVCL_SUCCESS,
+                "rvv f16 runs (packed path)");
+        int bad16 = 0;
+        for (int i = 0; i < M * N; i++)
+            if (fabsf(c_rvv[i] - golden[i]) > 1e-3f * (1.0f + fabsf(golden[i])))
+                bad16++;
+        CHECK(bad16 == 0, "rvv f16 (packed) matches soft-converted golden");
+    }
 
     /* ---- dispatch selection prefers rvv over reference (priority) ---- */
     {
@@ -752,7 +790,7 @@ int main(int argc, char **argv) {
     }
 
     /* ---- work-range honoring inside a kernel ---- */
-    {
+    if (!dt_only_f16) {
         /* run_named_kernel uses the full range; exercise a sub-range by
          * driving the kernel lifecycle directly with a custom range. */
         memset(c_rvv, 0, (size_t)M * N * 4);
@@ -802,6 +840,10 @@ int main(int argc, char **argv) {
     if (batch) {
         corpus_t corpus;
         parse_corpus(batch, &corpus);
+        if (dt_arg) {
+            corpus.dt_explicit = 1;
+            corpus.dt = dt_only_f32 ? RVCL_DTYPE_FP32 : RVCL_DTYPE_FP16;
+        }
 
         int ok = 0, fail = 0, skip = 0, fi = 0;
         const rvcl_dtype_t dts[2] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16};

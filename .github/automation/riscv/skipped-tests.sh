@@ -7,20 +7,21 @@
 #
 # Emulated wall clock runs 20-100x native, so the skip list is tier-aware
 # from day one: corpus growth lands here, not in ad-hoc workflow edits.
-#   baseline — the C-fallback numerics are covered by the fixed
-#              differential sections plus the smoke corpus; the full ci
-#              corpus under emulation is reserved for the vector tier,
-#              where it exercises the intrinsics tail paths (panel=8
-#              two-strip at vlen=128, single-strip at vlen=256).
-#   vector   — nothing skipped today. Performance-class targets (bench
-#              P mode) get excluded here when they land in ctest.
+#   baseline — nothing skipped today. Auto selection binds the JIT
+#              micro-kernel through the runtime hwprobe upgrade, so the
+#              full ci corpus runs here: this tier is the vlen=128
+#              bit-exactness evidence for the JIT path, on top of its
+#              forced jit/c ctest variants.
+#   vector   — nothing skipped today. Auto runs the ci corpus through
+#              the JIT f32 kernel (and the intrinsics f16 kernel); the
+#              forced c and intrinsics variants keep both legacy
+#              regression surfaces covered on this tier.
+#   Performance-class targets (bench P mode) get excluded here when
+#   they land in ctest.
 # *******************************************************************************
 
 set -eo pipefail
 
 SKIPPED_TESTS=""
-if [[ "${RVCL_CI_TIER}" == "baseline" ]]; then
-    SKIPPED_TESTS="test_matmul_modeC_ci"
-fi
 
 echo "${SKIPPED_TESTS}"

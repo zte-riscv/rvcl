@@ -27,10 +27,11 @@ RVCL_TEST_SET=${RVCL_TEST_SET:-"ci"}
 if [[ "$RVCL_ACTION" == "configure" ]]; then
     # Build tiers (test report §3.3 Step 2):
     #   baseline — no -march override: the cross gcc default (rv64gc)
-    #              compiles the RVV sources to the C-portable fallback.
-    #              Runtime hwprobe still upgrades capability to RVV, so
-    #              this tier validates dispatch selection and the
-    #              C-fallback numerics.
+    #              compiles the RVV sources to the C-portable fallback
+    #              and the JIT TU at the baseline march. Runtime hwprobe
+    #              upgrades capability to RVV so auto selection binds the
+    #              JIT micro-kernel: this tier is the single
+    #              baseline-binary dispatch story.
     #   vector   — the RVV sources compile with the vector ISA: intrinsics
     #              micro-kernels live and capability reports RVV/FP16
     #              from the compile-time macros. Main tier.

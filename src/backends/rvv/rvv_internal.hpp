@@ -122,12 +122,13 @@ rvv_gemm_fn rvv_gemm_f32_jit_entry(void);
  * kernel-only metric both call these, so what dispatch runs and what
  * the bench measures can never drift apart.
  *
- * rvv_pick_gemm_* resolves the RVCL_RVV_KERNEL knob (auto | jit | c;
- * any other value fails loudly with a NULL return) and defaults to the
- * auto policy: the JIT kernel when the run-time capability probe
- * confirms RVV, the C kernel otherwise. The intrinsics kernels left the
- * auto chain and stay reachable only through the explicit by-name
- * resolvers below. Internal to the backend/tests; not public API. */
+ * rvv_pick_gemm_* resolves the RVCL_RVV_KERNEL knob (auto | jit | c |
+ * intrinsics; any other value fails loudly with a NULL return) and
+ * defaults to the auto policy: the JIT kernel when the run-time
+ * capability probe confirms RVV, the C kernel otherwise. The intrinsics
+ * kernels left the auto chain and stay reachable only through the
+ * explicit by-name resolvers below. Internal to the backend/tests; not
+ * public API. */
 rvv_gemm_fn rvv_pick_gemm_f32(void);
 rvv_gemm_fn rvv_pick_gemm_f16(void);
 

@@ -126,7 +126,10 @@ static const rvcl_kernel_vtable_t g_rvv_vtable = {
 /* ---------------------------------------------- micro-kernel selection */
 
 /* RVCL_RVV_KERNEL knob, read once per process (the C++11 static guard
- * makes concurrent first calls safe). Values: auto | jit | c. */
+ * makes concurrent first calls safe). Values: auto | jit | c |
+ * intrinsics. intrinsics forces the legacy intrinsics kernels for
+ * regression runs and only resolves where they are compiled in (the
+ * vector -march override); elsewhere the by-name resolver fails loudly. */
 static const char *rvv_kernel_knob(void) {
     static const char *knob = getenv("RVCL_RVV_KERNEL");
     return knob;
@@ -191,29 +194,13 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16_by_name(
  * always measures what dispatch actually bound. */
 __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f32(void) {
     const char *knob = rvv_kernel_knob();
-    if (knob && *knob) {
-        if (!strcmp(knob, "intrinsics")) {
-            fprintf(stderr,
-                    "rvcl: RVCL_RVV_KERNEL=intrinsics is invalid "
-                    "(want auto, jit or c)\n");
-            return NULL;
-        }
-        return rvv_pick_gemm_f32_by_name(knob);
-    }
+    if (knob && *knob) return rvv_pick_gemm_f32_by_name(knob);
     return rvv_pick_gemm_f32_by_name("auto");
 }
 
 __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16(void) {
     const char *knob = rvv_kernel_knob();
-    if (knob && *knob) {
-        if (!strcmp(knob, "intrinsics")) {
-            fprintf(stderr,
-                    "rvcl: RVCL_RVV_KERNEL=intrinsics is invalid "
-                    "(want auto, jit or c)\n");
-            return NULL;
-        }
-        return rvv_pick_gemm_f16_by_name(knob);
-    }
+    if (knob && *knob) return rvv_pick_gemm_f16_by_name(knob);
     return rvv_pick_gemm_f16_by_name("auto");
 }
 
