@@ -94,11 +94,11 @@ jobs:
           config: ".github/.licenserc.yml"
           mode: "check"
 
-  # Enforce Conventional Commits on the newest commit in each push. PR
-  # branches may contain historical commits created before this gate existed,
-  # so only the latest commit is checked while the branch is being updated.
-  # The script and the rules it applies are documented in CONTRIBUTING.md
-  # ("Commit message conventions").
+  # Enforce Conventional Commits on every commit in the PR (base..head) and,
+  # on a main push, on the single squash commit that just landed. The PR
+  # subject itself is also checked because squash merge makes it the mainline
+  # history entry. The script and the rules it applies are documented in
+  # CONTRIBUTING.md ("Commit message conventions").
   commit-msg:
     name: commit-msg
     runs-on: ubuntu-24.04
@@ -117,10 +117,25 @@ jobs:
 
       - name: Check commit messages
         run: |
-          # Validate only the newest commit (HEAD~1..HEAD). This works for both
-          # pull_request and push events and avoids PR-history churn from
-          # pre-existing non-conforming commits.
-          python3 .github/automation/commit-msg-check.py HEAD HEAD~1
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="${GITHUB_BASE_REF}"
+            if [ -z "${BASE}" ]; then
+              echo "::error::pull_request without base ref" && exit 1
+            fi
+            # Squash merge turns the PR title into the mainline subject, so it
+            # must satisfy the same rule as a commit subject.
+            python3 .github/automation/commit-msg-check.py \
+                HEAD "origin/${BASE}" --pr-title "${PR_TITLE}"
+          else
+            # On a main push only the latest (squash) commit is new, so
+            # validate just that commit via HEAD~1..HEAD. origin/main cannot
+            # serve as the base: checkout fetches the ref being built, so
+            # origin/main is already updated to HEAD and the range would be
+            # empty, silently skipping the check.
+            python3 .github/automation/commit-msg-check.py HEAD HEAD~1
+          fi
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
 
   # Static analysis with clang-tidy-18. The check set is defined in
   # .clang-tidy (bugprone-*, cert-*, readability-* minus the exclusions that

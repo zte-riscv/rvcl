@@ -732,13 +732,8 @@ static void *t13_unregister(void *p) {
                     break;
                 }
                 if (g_t13_a_done.load(std::memory_order_acquire)
-                        == T13_THREADS_A) {
-                    /* Close the race where the previous attempt observed
-                     * NOT_FOUND just before the final A registration lands. */
-                    if (rvcl_unregister_kernel(name) == RVCL_SUCCESS)
-                        arg->unreg_ok++;
+                        == T13_THREADS_A)
                     break;
-                }
                 sched_yield();
             }
         }
