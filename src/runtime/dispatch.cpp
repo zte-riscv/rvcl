@@ -35,6 +35,7 @@
 #include "rvcl/dispatch.h"
 
 #include "rvcl/capability.h"
+#include "rvcl/init.h"
 #include "rvcl/registry.h"
 
 #include <pthread.h>
@@ -204,6 +205,14 @@ rvcl_status_t rvcl_dispatch_matmul(
         const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result) {
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     *result = NULL;
+
+    /* Lazy init (RFC-0002 FR1.3): a first computation without an explicit
+     * rvcl_init() still dispatches over the full built-in registry. The
+     * init fast path is an atomic load, so this stays cheap afterwards.
+     * A failed init must not be papered over: selection over a partial
+     * registry would silently miss installed backends. */
+    const rvcl_status_t init_st = rvcl_init();
+    if (init_st != RVCL_SUCCESS) return init_st;
 
     if (desc->m <= 0 || desc->n <= 0 || desc->k <= 0)
         return RVCL_ERROR_INVALID_ARGUMENT;

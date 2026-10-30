@@ -113,6 +113,11 @@ static rvcl_status_t ref_create(
 
 /* ------------------------------------------------------- registration */
 
+/*
+ * The reference kernel is the f32 tuple's unbounded fallback: no feature
+ * requirement, no shape limit, registered after the vectorized variants
+ * so it only wins when nothing else survives filtering (RFC-0002 FR1.5).
+ */
 RVCL_API rvcl_status_t rvcl_reference_register(void) {
     rvcl_kernel_desc_t d;
     memset(&d, 0, sizeof(d));
@@ -127,6 +132,8 @@ RVCL_API rvcl_status_t rvcl_reference_register(void) {
     d.required_features[0] = RVCL_FEATURE_NONE; /* runs anywhere */
     d.num_required_features = 0;
     d.alignment_a = d.alignment_b = d.alignment_c = 1;
+    d.vlen_tier = RVCL_VLEN_TIER_ANY; /* memset zero, kept explicit */
+    d.cost_fn = rvcl_kernel_cost_zero;
 
     return rvcl_register_kernel(&d, ref_create);
 }

@@ -101,7 +101,22 @@ void rvv_gemm_f16_rvv(const void *a, const void *b_packed, const void *bias,
 
 /* ------------------------------------------------------- backend registration */
 
+/*
+ * One registry entry per variant (RFC-0002 FR1.2): on vector builds this
+ * registers the per-tier dedicated variants (RVCL_RVV_TIERS_<T> build
+ * macros decide which tiers are enabled, registered high -> low) plus the
+ * generic entry; on non-vector builds it is a no-op and
+ * rvcl_rvv_register_portable() registers the scalar C entries instead.
+ * Every variant's factory routes through the knob-aware selector below,
+ * so the RVCL_RVV_KERNEL forcing and the auto JIT-when-RVV policy stay
+ * uniform across all entries; per-tier tuning later specializes the
+ * per-variant factory bindings, invisible to the registry and dispatch.
+ */
 RVCL_API rvcl_status_t rvcl_rvv_register(void);
+
+/* Portable (scalar C) entries for builds without vector compilation;
+ * no-op on vector builds. */
+RVCL_API rvcl_status_t rvcl_rvv_register_portable(void);
 
 /* Micro-kernel function type (backend adapter holds one per dtype). */
 typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,

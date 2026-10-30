@@ -17,9 +17,21 @@
  *
  * rvv_backend.cpp — RVV backend framework adapter: validate/configure/run
  *
- * One kernel descriptor family per dtype (PLAN §6.2 item 7):
- *   rvcl_matmul_f32_rvv   (f32,f32,f32,f32)     requires RVCL_FEATURE_RVV
- *   rvcl_matmul_f16_rvv   (f16,f16,f32,f32)     requires RVV + FP16 (Zvfh)
+ * One registry entry per variant (RFC-0002 FR1.2), grouped by dtype tuple
+ * and registered in the order dispatch relies on for cost ties:
+ *   vector builds:
+ *     rvcl_matmul_f32_rvv_<tier>  (f32,f32,f32,f32)   requires RVV, per
+ *         VLEN tier high -> low (RVCL_RVV_TIERS_<T> decides what compiles)
+ *     rvcl_matmul_f32_rvv         (f32,f32,f32,f32)   generic, requires RVV
+ *     rvcl_matmul_f16_rvv_<tier>  (f16,f16,f32,f32)   requires RVV + FP16
+ *     rvcl_matmul_f16_rvv         (f16,f16,f32,f32)   generic
+ *   non-vector builds (portable scalar C entries):
+ *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c, no feature requirement
+ *
+ * Every variant's factory routes through the knob-aware micro-kernel
+ * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
+ * path semantics stay uniform across all entries; per-tier tuning later
+ * only specializes the factory bindings below.
  *
  * run() contract (PLAN §4.3): consumes only pack memory; workspace is the
  * packed-B panel buffer (AUX_0) reported by configure(); never mallocs,
@@ -204,7 +216,14 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16(void) {
     return rvv_pick_gemm_f16_by_name("auto");
 }
 
-/* --------------------------------------------------- per-dtype factories */
+/* --------------------------------------------------- per-variant factories
+ *
+ * Variant identity lives in the descriptor (name, tier, features); one
+ * selector-routed factory per dtype serves every variant — dedicated
+ * tiers, generic and portable alike — so the RVCL_RVV_KERNEL forcing
+ * and the auto JIT-when-RVV policy stay uniform across all entries. A
+ * NULL pick (invalid knob or a forced-but-unavailable path) fails
+ * creation loudly, never binds a NULL micro-kernel. */
 
 static rvcl_status_t make_rvv_kernel(rvcl_kernel_t **out,
         const rvcl_kernel_desc_t *desc, rvv_gemm_fn gemm, size_t elt) {
@@ -219,8 +238,6 @@ static rvcl_status_t make_rvv_kernel(rvcl_kernel_t **out,
 
 static rvcl_status_t create_f32(
         rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
-    /* a NULL pick (invalid knob or a forced-but-unavailable path) must
-     * fail creation loudly, never bind a NULL micro-kernel */
     rvv_gemm_fn gemm = rvv_pick_gemm_f32();
     if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
     return make_rvv_kernel(out, desc, gemm, sizeof(float));
@@ -233,13 +250,11 @@ static rvcl_status_t create_f16(
     return make_rvv_kernel(out, desc, gemm, 2);
 }
 
-/* pack entry used by run(): dispatch to the shared panel packer */
-
 /* ------------------------------------------------------- registration */
 
 static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
         rvcl_dtype_t db, rvcl_dtype_t dacc, rvcl_dtype_t dc,
-        rvcl_feature_id_t f0, rvcl_feature_id_t f1,
+        rvcl_vlen_tier_t tier, rvcl_feature_id_t f0, rvcl_feature_id_t f1,
         rvcl_kernel_create_fn create) {
     rvcl_kernel_desc_t d;
     memset(&d, 0, sizeof(d));
@@ -253,21 +268,95 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
     d.quant_support = RVCL_QUANT_NONE;
     d.required_features[0] = f0;
     d.required_features[1] = f1;
-    d.num_required_features = f1 ? 2 : 1;
+    d.num_required_features
+            = (f0 == RVCL_FEATURE_NONE) ? 0 : (f1 == RVCL_FEATURE_NONE ? 1 : 2);
     d.alignment_a = d.alignment_b = d.alignment_c = 4;
+    d.vlen_tier = tier;
+    d.cost_fn = rvcl_kernel_cost_zero;
 
     return rvcl_register_kernel(&d, create);
 }
 
+#if defined(__riscv_vector)
+
+#define RVCL_REG_F32_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_f32_rvv_" #tier, RVCL_DTYPE_FP32, \
+                RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, \
+                RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, \
+                create_f32); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
+#define RVCL_REG_F16_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_f16_rvv_" #tier, RVCL_DTYPE_FP16, \
+                RVCL_DTYPE_FP16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, \
+                RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, RVCL_FEATURE_FP16, \
+                create_f16); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
+/* Dedicated variants high -> low, grouped by dtype tuple, then the
+ * generic entry (order = dispatch cost-tie tie-break). */
 RVCL_API rvcl_status_t rvcl_rvv_register(void) {
-    /* f32: RVV only */
-    rvcl_status_t st = register_one("rvcl_matmul_f32_rvv", RVCL_DTYPE_FP32,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_FEATURE_RVV,
-            RVCL_FEATURE_NONE, create_f32);
+    rvcl_status_t st = RVCL_SUCCESS;
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_F32_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_F32_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_F32_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_F32_TIER(128);
+#endif
+    st = register_one("rvcl_matmul_f32_rvv", RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
+            RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, create_f32);
     if (st != RVCL_SUCCESS) return st;
 
-    /* f16: RVV + Zvfh (habit rule: storage f16, accumulate fp32) */
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_F16_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_F16_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_F16_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_F16_TIER(128);
+#endif
     return register_one("rvcl_matmul_f16_rvv", RVCL_DTYPE_FP16, RVCL_DTYPE_FP16,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_FEATURE_RVV,
-            RVCL_FEATURE_FP16, create_f16);
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
+            RVCL_FEATURE_RVV, RVCL_FEATURE_FP16, create_f16);
 }
+
+RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
+    return RVCL_SUCCESS; /* vector build: portable entries stay out */
+}
+
+#else /* !__riscv_vector */
+
+RVCL_API rvcl_status_t rvcl_rvv_register(void) {
+    return RVCL_SUCCESS; /* non-vector build: dedicated/generic stay out */
+}
+
+/* Portable scalar entries: no feature requirement (serve any host), the
+ * f16 tuple's only entries on non-vector builds, unbounded fallbacks. */
+RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
+    rvcl_status_t st = register_one("rvcl_matmul_f32_rvv_c", RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_f32);
+    if (st != RVCL_SUCCESS) return st;
+    return register_one("rvcl_matmul_f16_rvv_c", RVCL_DTYPE_FP16,
+            RVCL_DTYPE_FP16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_f16);
+}
+
+#endif /* __riscv_vector */

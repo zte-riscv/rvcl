@@ -36,20 +36,40 @@ extern "C" {
 
 /*
  * Registers a kernel descriptor + factory. The descriptor is copied.
- * Fails with RVCL_ERROR_ALREADY_REGISTERED on a duplicate name.
- * Thread-safe. Registration is expected at library init / backend
- * registration time, not on hot paths.
+ * Fails with RVCL_ERROR_ALREADY_REGISTERED on a duplicate name and
+ * RVCL_ERROR_INVALID_ARGUMENT on any malformed field (empty or
+ * non-NUL-terminated name, out-of-range operation/dtype/quant/feature/
+ * tier, min > max bounds, NULL cost_fn); a rejected registration never
+ * changes registry state. Thread-safe. Registration is expected at
+ * library init / backend registration time, not on hot paths.
+ *
+ * Order contract: iteration follows registration order, and dispatch
+ * uses that order as the deterministic tie-break between equal-cost
+ * candidates. Built-in backends register dedicated (high VLEN tier to
+ * low), then generic, then unbounded fallbacks last.
  */
 RVCL_API rvcl_status_t rvcl_register_kernel(
         const rvcl_kernel_desc_t *desc, rvcl_kernel_create_fn create);
 
-/* Removes a kernel by name (mainly for tests). */
+/*
+ * Removes a kernel by name. RVCL_ERROR_NOT_FOUND when the name is
+ * unknown. Removing the last unbounded kernel of a datatype tuple that
+ * still has other entries is rejected with RVCL_ERROR_REGISTRY_INVARIANT
+ * (every live tuple keeps a fallback). A successful removal invalidates
+ * the dispatch cache.
+ */
 RVCL_API rvcl_status_t rvcl_unregister_kernel(const char *name);
 
 /* Number of registered kernels. */
 RVCL_API int rvcl_registry_count(void);
 
-/* Iteration for dispatch: returns NULL when index out of range. */
+/*
+ * Iteration in registration order: returns NULL when index out of range.
+ * The returned pointer is valid only while the kernel it refers to is
+ * registered. Unregistration never moves descriptor storage, but the
+ * freed slot may be reused by a later registration, so a pointer must
+ * not be dereferenced after its kernel has been unregistered.
+ */
 RVCL_API const rvcl_kernel_desc_t *rvcl_registry_get(int index);
 
 /* Factory lookup by name; NULL when unknown. */

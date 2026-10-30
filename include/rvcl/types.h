@@ -59,6 +59,9 @@ typedef enum {
     RVCL_ERROR_ALREADY_REGISTERED = 12,
     RVCL_ERROR_NOT_FOUND = 13,
     RVCL_ERROR_ALREADY_INITIALIZED = 14,
+    /* Unregistering would break the per-tuple fallback invariant
+     * (every live datatype tuple keeps at least one unbounded kernel). */
+    RVCL_ERROR_REGISTRY_INVARIANT = 15,
 } rvcl_status_t;
 
 /* ------------------------------------------------------------- data types */
@@ -124,6 +127,19 @@ typedef struct {
      * rvcl_capability_has(), never inferred from this field. */
     uint32_t value;
 } rvcl_feature_t;
+
+/* VLEN tier vocabulary for kernel descriptors (RFC-0002 dispatch). The
+ * enum value IS the tier width in bits, so validation and comparison are
+ * direct numeric checks. Kernels compiled for a specific VLEN declare that
+ * tier; dispatch excludes a kernel when the host tier is lower. The host
+ * tier itself is an internal dispatch input, not part of the public API. */
+typedef enum {
+    RVCL_VLEN_TIER_ANY = 0, /* no VLEN requirement */
+    RVCL_VLEN_TIER_128 = 128,
+    RVCL_VLEN_TIER_256 = 256,
+    RVCL_VLEN_TIER_512 = 512,
+    RVCL_VLEN_TIER_1024 = 1024,
+} rvcl_vlen_tier_t;
 
 /* ------------------------------------------------------------ work ranges */
 /*

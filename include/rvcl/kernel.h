@@ -42,6 +42,33 @@ extern "C" {
 
 #define RVCL_KERNEL_NAME_MAX 64
 
+/* Operation descriptor (completed below); forward-declared so the cost
+ * callback type can name it before its full definition. */
+typedef union rvcl_op_desc rvcl_op_desc_t;
+
+/* ------------------------------------------------------------ cost model */
+
+/*
+ * Cost estimation callback (RFC-0002 cost). Contract:
+ *   - input: the operation description and the capability snapshot;
+ *   - output: non-negative integer (estimated cycles), smaller = better;
+ *     0 means "no cost information";
+ *   - side-effect-free and thread-safe (dispatch may call concurrently);
+ *   - the value only orders candidates — it never affects correctness.
+ * The registry stores the pointer but never calls it; dispatch calls it
+ * once per surviving candidate and compares with plain unsigned `<`.
+ */
+typedef uint64_t (*rvcl_kernel_cost_fn)(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
+ * Canonical zero-cost implementation: "no cost information" (RFC-0002
+ * FR4.2). Kernels without a real cost model must bind this so descriptor
+ * iteration never sees a NULL callback.
+ */
+RVCL_API uint64_t rvcl_kernel_cost_zero(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
 typedef enum {
     RVCL_QUANT_NONE = 0,
     RVCL_QUANT_PER_TENSOR,
@@ -71,6 +98,15 @@ typedef struct {
 
     /* Alignment requirements in bytes (1 = none). */
     int64_t alignment_a, alignment_b, alignment_c;
+
+    /* Required VLEN tier (types.h): RVCL_VLEN_TIER_ANY = no requirement;
+     * otherwise the kernel is excluded when the host tier is lower. Lets
+     * dispatch filter VLEN-specific variants without ISA-specific code. */
+    rvcl_vlen_tier_t vlen_tier;
+
+    /* Cost estimation callback; non-NULL is enforced at registration.
+     * Bind rvcl_kernel_cost_zero() when the kernel has no cost model. */
+    rvcl_kernel_cost_fn cost_fn;
 } rvcl_kernel_desc_t;
 
 /* ------------------------------------------------------- operation descs */
@@ -89,7 +125,7 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_matmul_desc_t;
 
-typedef union {
+typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
 } rvcl_op_desc_t;
 

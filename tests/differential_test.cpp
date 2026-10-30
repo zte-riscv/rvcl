@@ -441,6 +441,8 @@ static void parse_corpus(const char *path, corpus_t *c) {
  * 0 = ok, 1 = failure, -1 = skip (no legal kernel, dtype defaulted).
  */
 
+/* Covers every kernel legal for one dtype with headroom; growth beyond
+ * this fails loudly instead of silently dropping corpus coverage. */
 #define CORPUS_MAX_KERNELS 8
 
 static int legal_kernels_for(
@@ -454,7 +456,18 @@ static int legal_kernels_for(
         int legal = 1;
         for (int f = 0; f < kd->num_required_features; f++)
             if (!rvcl_capability_has(cap, kd->required_features[f])) legal = 0;
-        if (legal && nk < CORPUS_MAX_KERNELS) names[nk++] = kd->name;
+        if (!legal) continue;
+        /* Fail loudly instead of silently dropping kernels: a growing
+         * registry must not shrink corpus coverage unnoticed. */
+        if (nk == CORPUS_MAX_KERNELS) {
+            fprintf(stderr,
+                    "corpus: more than %d legal kernels for the dtype, "
+                    "raise CORPUS_MAX_KERNELS\n",
+                    CORPUS_MAX_KERNELS);
+            /* exit(2) = corpus/usage error, as used by the parser paths. */
+            exit(2);
+        }
+        names[nk++] = kd->name;
     }
     return nk;
 }
@@ -605,6 +618,16 @@ static void recording_parallel_for(rvcl_ischeduler_t *s,
 
 /* --------------------------------------------------------------- main */
 
+/*
+ * The generic rvv names exist only on vector builds; non-vector builds
+ * register the portable _rvv_c entries instead. Exactly one of the two
+ * exists per dtype in any build, so resolve the target at runtime instead
+ * of hard-coding build-dependent names.
+ */
+static const char *probe_rvv_name(const char *generic, const char *portable) {
+    return rvcl_registry_find_factory(generic) ? generic : portable;
+}
+
 int main(int argc, char **argv) {
     const char *batch = NULL;
     const char *dt_arg = NULL;
@@ -640,12 +663,17 @@ int main(int argc, char **argv) {
 
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
 
+    const char *f32_rvv_name
+            = probe_rvv_name("rvcl_matmul_f32_rvv", "rvcl_matmul_f32_rvv_c");
+    const char *f16_rvv_name
+            = probe_rvv_name("rvcl_matmul_f16_rvv", "rvcl_matmul_f16_rvv_c");
+
     CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_reference") != NULL,
             "reference f32 kernel present");
-    CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_rvv") != NULL,
-            "rvv f32 kernel present");
-    CHECK(rvcl_registry_find_factory("rvcl_matmul_f16_rvv") != NULL,
-            "rvv f16 kernel present");
+    CHECK(rvcl_registry_find_factory(f32_rvv_name) != NULL,
+            "rvv f32 kernel present (generic or portable)");
+    CHECK(rvcl_registry_find_factory(f16_rvv_name) != NULL,
+            "rvv f16 kernel present (generic or portable)");
 
     /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
     enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
@@ -684,7 +712,7 @@ int main(int argc, char **argv) {
                       "rvcl_matmul_f32_reference", &d32, a, b, bias, c_ref)
                         == RVCL_SUCCESS,
                 "reference f32 runs");
-        CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, bias, c_rvv)
+        CHECK(run_named_kernel(f32_rvv_name, &d32, a, b, bias, c_rvv)
                         == RVCL_SUCCESS,
                 "rvv f32 runs (packed path)");
 
@@ -705,7 +733,7 @@ int main(int argc, char **argv) {
 
         /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
         golden_f32(a, b, NULL, golden, M, N, K);
-        CHECK(run_named_kernel("rvcl_matmul_f32_rvv", &d32, a, b, NULL, c_rvv)
+        CHECK(run_named_kernel(f32_rvv_name, &d32, a, b, NULL, c_rvv)
                         == RVCL_SUCCESS,
                 "rvv f32 runs without bias");
         int bad_nobias = 0;
@@ -737,7 +765,7 @@ int main(int argc, char **argv) {
                 .quant = {},
         };
         golden_f16(ah, bh, bias, golden, M, N, K);
-        CHECK(run_named_kernel("rvcl_matmul_f16_rvv", &d16, ah, bh, bias, c_rvv)
+        CHECK(run_named_kernel(f16_rvv_name, &d16, ah, bh, bias, c_rvv)
                         == RVCL_SUCCESS,
                 "rvv f16 runs (packed path)");
         int bad16 = 0;
@@ -794,8 +822,8 @@ int main(int argc, char **argv) {
         /* run_named_kernel uses the full range; exercise a sub-range by
          * driving the kernel lifecycle directly with a custom range. */
         memset(c_rvv, 0, (size_t)M * N * 4);
-        rvcl_status_t st = run_named_kernel_range("rvcl_matmul_f32_rvv", &d32,
-                a, b, bias, c_rvv, 4, 9 /* rows [4,9) only */);
+        rvcl_status_t st = run_named_kernel_range(f32_rvv_name, &d32, a, b,
+                bias, c_rvv, 4, 9 /* rows [4,9) only */);
         CHECK(st == RVCL_SUCCESS, "rvv f32 runs on sub-range");
         int bad_full = 0, untouched_ok = 1;
         golden_f32(a, b, bias, golden, M, N, K);
