@@ -308,6 +308,22 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME unit_registry_preinit_lone_bounded
         COMMAND rvcl_unit_registry --preinit-lone-bounded)
 
+    # Capability unit tests (always registered, independent of
+    # RVCL_TEST_SET): detection output, snapshot caching and concurrent
+    # first-call consistency, summary contract, VLEN-tier conversion.
+    # Host-dependent expectations branch on the running snapshot, so the
+    # binary is runnable on any host.
+    add_executable(rvcl_unit_capability tests/unit_capability.cpp)
+    target_link_libraries(rvcl_unit_capability PRIVATE rvcl rvcl_test_golden)
+    add_test(NAME unit_capability COMMAND rvcl_unit_capability)
+
+    # Snapshot-override subset of the same binary: mutates process-global
+    # capability state, so it runs as its own fresh-process invocation
+    # (the override facility lives in the non-installed internal header
+    # src/runtime/capability_internal.h).
+    add_test(NAME unit_capability_inject
+        COMMAND rvcl_unit_capability --inject)
+
     # Corpus registration: one line per corpus file -> one modeC ctest
     # target running the differential (the assertion engine) over it.
     # RVCL_TEST_SET picks the tier at configure time (smoke < ci < all,
