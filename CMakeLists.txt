@@ -317,6 +317,14 @@ if(RVCL_BUILD_EXAMPLES)
     add_executable(example_scheduler examples/scheduler.cpp)
     target_link_libraries(example_scheduler PRIVATE rvcl)
     add_test(NAME example_scheduler COMMAND example_scheduler)
+
+    add_executable(example_multicore examples/matmul_multicore.cpp)
+    target_link_libraries(example_multicore PRIVATE rvcl)
+    # ctest runs correctness only (no timing) on a small shape with up to
+    # 8 threads; the scaling table is captured on the host via
+    # RVCL_MULTICORE_BENCH=1.
+    add_test(NAME example_multicore
+        COMMAND example_multicore pool 8 128 128 128)
 endif()
 
 # -------------------------------------------------------------------- bench
