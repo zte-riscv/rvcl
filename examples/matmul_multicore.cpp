@@ -76,7 +76,6 @@ struct pool_t {
     void *ctx;
     pthread_mutex_t mu;
     pthread_cond_t cv_work, cv_done;
-    std::vector<pthread_t> workers; /* max_threads - 1 resident workers */
     int max_threads;
 };
 
@@ -172,7 +171,7 @@ static void pool_start(int max_threads) {
     for (int i = 0; i < g_pool.max_threads - 1; i++) {
         pthread_t th;
         if (pthread_create(&th, NULL, pool_worker, (void *)(intptr_t)i) == 0)
-            g_pool.workers.push_back(th);
+            pthread_detach(th);
     }
 }
 
@@ -272,10 +271,11 @@ static int verify_correctness(const shape_t &primary, const shape_t *ragged,
                     printf("  primary matches T=1 result\n");
                 }
             }
-        }
-        if (!have_t1) {
-            t1_primary = std::move(pc);
-            have_t1 = true;
+            if (!have_t1) {
+                /* capture the first successful run as the T=1 reference */
+                t1_primary = std::move(pc);
+                have_t1 = true;
+            }
         }
 
         for (size_t ri = 0; ri < n_ragged; ri++) {
