@@ -231,12 +231,30 @@ static int64_t check_shape(
     return bad;
 }
 
-/* Triple bit-exact check across the T scan: vs golden, vs T=1, ragged. */
+/* Bit-exact check: vs golden and vs T=1 across the T scan; the ragged
+ * panel-boundary shapes are T-independent, so they are checked once. */
 static int verify_correctness(const shape_t &primary, const shape_t *ragged,
         size_t n_ragged, const int *scan, int n_scan, int max_threads) {
     int ok = 1;
     std::vector<float> t1_primary;
     bool have_t1 = false;
+
+    printf("ragged\n");
+    for (size_t ri = 0; ri < n_ragged; ri++) {
+        const shape_t &s = ragged[ri];
+        int64_t rb = check_shape(s.m, s.n, s.k, NULL);
+        if (rb < 0) {
+            fprintf(stderr, "  ragged %lldx%lldx%lld run failed\n",
+                    (long long)s.m, (long long)s.n, (long long)s.k);
+            ok = 0;
+        } else if (rb) {
+            fprintf(stderr, "  ragged %lldx%lldx%lld: %lld mismatches\n",
+                    (long long)s.m, (long long)s.n, (long long)s.k,
+                    (long long)rb);
+            ok = 0;
+        }
+    }
+
     for (int si = 0; si < n_scan; si++) {
         const int t = scan[si];
         if (t > max_threads) continue;
@@ -271,25 +289,10 @@ static int verify_correctness(const shape_t &primary, const shape_t *ragged,
                     printf("  primary matches T=1 result\n");
                 }
             }
-            if (!have_t1) {
-                /* capture the first successful run as the T=1 reference */
+            if (!have_t1 && bad == 0) {
+                /* capture the first bit-exact run as the T=1 reference */
                 t1_primary = std::move(pc);
                 have_t1 = true;
-            }
-        }
-
-        for (size_t ri = 0; ri < n_ragged; ri++) {
-            const shape_t &s = ragged[ri];
-            int64_t rb = check_shape(s.m, s.n, s.k, NULL);
-            if (rb < 0) {
-                fprintf(stderr, "  ragged %lldx%lldx%lld run failed\n",
-                        (long long)s.m, (long long)s.n, (long long)s.k);
-                ok = 0;
-            } else if (rb) {
-                fprintf(stderr, "  ragged %lldx%lldx%lld: %lld mismatches\n",
-                        (long long)s.m, (long long)s.n, (long long)s.k,
-                        (long long)rb);
-                ok = 0;
             }
         }
     }
@@ -324,14 +327,28 @@ static void bench_scan(const shape_t *shapes, size_t n_shapes, const int *scan,
             const int t = scan[si];
             if (t > max_threads) continue;
             pool_set_threads(t);
-            rvcl_matmul(
+            rvcl_status_t st = rvcl_matmul(
                     &d, a.data(), b.data(), bias.data(), c.data()); /* warmup */
+            if (st != RVCL_SUCCESS) {
+                fprintf(stderr, "bench %lldx%lldx%lld T=%d warmup failed: %d\n",
+                        (long long)M, (long long)N, (long long)K, t, (int)st);
+                continue;
+            }
             double best = 1e30;
-            for (int r = 0; r < 5; r++) {
+            bool failed = false;
+            for (int r = 0; r < 5 && !failed; r++) {
                 double t0 = now_sec();
-                rvcl_matmul(&d, a.data(), b.data(), bias.data(), c.data());
+                st = rvcl_matmul(&d, a.data(), b.data(), bias.data(), c.data());
                 double dt = now_sec() - t0;
-                if (dt < best) best = dt;
+                if (st != RVCL_SUCCESS)
+                    failed = true;
+                else if (dt < best)
+                    best = dt;
+            }
+            if (failed) {
+                fprintf(stderr, "bench %lldx%lldx%lld T=%d run failed: %d\n",
+                        (long long)M, (long long)N, (long long)K, t, (int)st);
+                continue;
             }
             if (t == 1) t1 = best;
             const double speedup = t1 > 0.0 ? t1 / best : 0.0;
