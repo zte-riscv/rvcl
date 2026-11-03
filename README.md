@@ -90,6 +90,24 @@ Backend switches (all OFF by default, enabled per the release roadmap):
 cmake -B build -S . -DRVCL_ENABLE_RVV=ON   # likewise IME / VME / AME
 ```
 
+**Built-in OpenMP scheduler** (`-DRVCL_ENABLE_OMP=ON`, default OFF): the
+standalone product shape gets zero-injection parallel matmul out of the box.
+The two build tiers differ as follows:
+
+- **OFF (default)** — no libgomp dependency: the OpenMP translation unit,
+  its compile macro and the OpenMP link are all absent, and the built-in
+  scheduler defaults to the single-threaded serial backend.
+- **ON** — links libgomp and compiles the `omp` scheduler backend. Without
+  any explicit scheduler injection the lazy default is the `omp` scheduler;
+  an explicit `rvcl_scheduler_set()` still wins (last write wins). Thread
+  count follows OpenMP's usual controls: `OMP_NUM_THREADS` or
+  `omp_set_num_threads()`.
+
+```bash
+cmake -B build -S . -DRVCL_ENABLE_OMP=ON
+OMP_NUM_THREADS=4 ./build/example_matmul
+```
+
 **Cross-build for rv64 and run under QEMU** (what the riscv64 CI does — see `.github/workflows/ci-riscv.yml` and `.github/automation/riscv/`):
 
 ```bash

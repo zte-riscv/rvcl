@@ -46,6 +46,14 @@ rvcl_ischeduler_t *rvcl_serial_scheduler(void) {
     return &g_serial;
 }
 
+/* Non-OpenMP stub: returns NULL so the lazy default resolves to the serial
+ * scheduler (the real OpenMP backend is compiled only in OpenMP builds). */
+#if !defined(RVCL_HAVE_OMP)
+rvcl_ischeduler_t *rvcl_omp_scheduler(void) {
+    return NULL;
+}
+#endif
+
 /* ----------------------------------------------------------------- set-once */
 
 static rvcl_ischeduler_t *g_scheduler; /* NULL until set */
@@ -65,7 +73,12 @@ rvcl_status_t rvcl_scheduler_set(rvcl_ischeduler_t *scheduler) {
 }
 
 rvcl_ischeduler_t *rvcl_scheduler_get(void) {
-    return g_scheduler ? g_scheduler : rvcl_serial_scheduler();
+    if (g_scheduler) return g_scheduler;
+    /* Lazy default resolves the built-in backend without touching set-once:
+     * OpenMP scheduler when compiled in, serial scheduler otherwise (PLAN
+     * §4.9 guarantee 3 — a later explicit rvcl_scheduler_set still wins). */
+    rvcl_ischeduler_t *d = rvcl_omp_scheduler();
+    return d ? d : rvcl_serial_scheduler();
 }
 
 void rvcl_parallel_for(const rvcl_work_range_t *total,

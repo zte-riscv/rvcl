@@ -10,6 +10,7 @@ option(RVCL_ENABLE_RVV   "Enable RVV backend"        ON)  # v0.1
 option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.2
 option(RVCL_ENABLE_VME   "Enable VME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_AME   "Enable AME backend"        OFF) # lands in v0.3
+option(RVCL_ENABLE_OMP   "Built-in OpenMP scheduler backend" OFF) # PR-3
 option(RVCL_BUILD_TESTS  "Build tests"               ON)
 option(RVCL_BUILD_EXAMPLES "Build examples"          ON)
 option(RVCL_BUILD_BENCH  "Build benchmark harness"   ON)
@@ -132,6 +133,17 @@ if(RVCL_ENABLE_RVV)
     endif()
 endif()
 
+# OpenMP scheduler backend (PR-3 §5.3.1): zero-injection default parallelism
+# for the standalone product shape. OFF by default so the default build
+# carries no libgomp dependency and the source list stays OMP-free (guarantee
+# 2). The omp_scheduler TU is appended before add_library; the RVCL_HAVE_OMP
+# macro and the OpenMP link are applied to the target below.
+if(RVCL_ENABLE_OMP)
+    find_package(OpenMP REQUIRED)
+    list(APPEND RVCL_RUNTIME_SOURCES
+        src/runtime/scheduler/omp_scheduler.cpp)
+endif()
+
 add_library(rvcl SHARED ${RVCL_RUNTIME_SOURCES})
 
 set_target_properties(rvcl PROPERTIES
@@ -162,6 +174,13 @@ if(RVCL_ENABLE_RVV)
     # One dedicated descriptor per enabled tier; the intrinsics
     # implementation is shared across tiers for now (A-07).
     target_compile_definitions(rvcl PRIVATE ${_rvcl_tier_defs})
+endif()
+
+# RVCL_HAVE_OMP marks the omp_scheduler TU compiled in; scheduler.cpp's
+# non-OpenMP stub is excluded and the lazy default resolves to it.
+if(RVCL_ENABLE_OMP)
+    target_compile_definitions(rvcl PRIVATE RVCL_HAVE_OMP)
+    target_link_libraries(rvcl PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 # On real RVV targets ensure the vector extension is enabled in -march.
@@ -258,6 +277,16 @@ if(RVCL_BUILD_TESTS)
     add_executable(rvcl_concurrent tests/concurrent_test.cpp)
     target_link_libraries(rvcl_concurrent PRIVATE rvcl rvcl_test_golden)
     add_test(NAME concurrent COMMAND rvcl_concurrent)
+
+    # OpenMP scheduler backend tests: only in OpenMP builds, as an
+    # independent process (its own ctest) so the lazy-default and nested-guard
+    # assertions run before any set-once injection (guarantee 3).
+    if(RVCL_ENABLE_OMP)
+        add_executable(rvcl_scheduler_omp tests/scheduler_omp_test.cpp)
+        target_link_libraries(
+            rvcl_scheduler_omp PRIVATE rvcl rvcl_test_golden OpenMP::OpenMP_CXX)
+        add_test(NAME scheduler_omp COMMAND rvcl_scheduler_omp)
+    endif()
 
     # Registry unit tests (always registered, independent of RVCL_TEST_SET):
     # registration/unregistration contracts, validation, fallback
