@@ -34,8 +34,11 @@
  * only specializes the factory bindings below.
  *
  * run() contract (PLAN §4.3): consumes only pack memory; workspace is the
- * packed-B panel buffer (AUX_0) reported by configure(); never mallocs,
- * never creates threads. The work range is honored exactly.
+ * packed-B panel buffer (AUX_0) reported by configure(); when the host
+ * endorses pack->src_b_packed the panels were packed once via
+ * rvcl_kernel_pack_b() and run() only reads them, otherwise run() packs
+ * B itself; never mallocs, never creates threads. The work range is
+ * honored exactly.
  ******************************************************************************/
 
 #include "rvv_internal.hpp"
@@ -72,8 +75,10 @@ static rvcl_status_t rvv_configure(rvcl_kernel_t *k, const rvcl_op_desc_t *desc,
     rk->n = d->n;
     rk->k = d->k;
 
-    /* Workspace slot 0: packed-B panel buffer (lifetime RUN: rebuilt or
-     * reused per run; the host decides reuse across runs of identical B).
+    /* Workspace slot 0: packed-B panel buffer. Lifetime KERNEL: the
+     * host may pack once via rvcl_kernel_pack_b() (pack->src_b_packed)
+     * and hold the buffer across runs of the same B; keeping B
+     * unchanged for that span is the host's explicit responsibility.
      * Slot 1 (reserved for split-K accumulation) is inactive in v0.1. */
     size_t elt = rvcl_dtype_size(d->dtype_a);
     size_t bytes = rvv_packed_b_bytes(d->k, d->n, elt);
@@ -81,7 +86,7 @@ static rvcl_status_t rvv_configure(rvcl_kernel_t *k, const rvcl_op_desc_t *desc,
         ws_req[RVV_WS_PACKED_B] = rvcl_workspace_req_t {
                 .size = (int64_t)bytes,
                 .alignment = 64,
-                .lifetime = RVCL_WS_LIFETIME_RUN,
+                .lifetime = RVCL_WS_LIFETIME_KERNEL,
         };
         ws_req[RVV_WS_ACC] = rvcl_workspace_req_t {};
     }
@@ -98,13 +103,20 @@ static rvcl_status_t rvv_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     const rvcl_tensor_t *bias = rvcl_tensor_pack_get(pack, RVCL_TENSOR_BIAS);
     const rvcl_tensor_t *ws = rvcl_tensor_pack_get(
             pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + RVV_WS_PACKED_B));
+    /* ws is required either way: the in-run packing target, or the
+     * endorsed pre-packed buffer (flag set but no workspace is a broken
+     * host pack — fail loudly, never read a missing buffer). */
     if (!a || !b || !c || !ws) return RVCL_ERROR_INVALID_ARGUMENT;
 
-    /* Pack B into the workspace (dispatch-once-run-many callers may pre-pack
-     * via pack_b and keep the buffer across runs). */
-    rvcl_status_t st = rvv_pack_b_panel(
-            b, (rvcl_tensor_t *)ws, rk->m, rk->n, rk->k, rk->elt);
-    if (st != RVCL_SUCCESS) return st;
+    /* Pre-packed B (pack->src_b_packed, memory.h): the workspace already
+     * holds the panels — consume read-only and skip the in-run packing,
+     * which keeps concurrent work slices free of cross-slice writes
+     * into the shared buffer. */
+    if (!pack->src_b_packed) {
+        rvcl_status_t st = rvv_pack_b_panel(
+                b, (rvcl_tensor_t *)ws, rk->m, rk->n, rk->k, rk->elt);
+        if (st != RVCL_SUCCESS) return st;
+    }
 
     rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data, rk->m, rk->n,
             rk->k, r);
@@ -125,12 +137,21 @@ static rvcl_status_t rvv_pack_a(
     return RVCL_SUCCESS;
 }
 
+/* pack_b: pre-packs the B panels for rvcl_kernel_pack_b(); the instance
+ * carries the configured shape and element size, so one binding serves
+ * both dtypes (the panel layout depends only on the shapes). */
+static rvcl_status_t rvv_pack_b(
+        rvcl_kernel_t *k, const rvcl_tensor_t *src, rvcl_tensor_t *dst) {
+    rvv_matmul_t *rk = (rvv_matmul_t *)k;
+    if (!rk || rk->m <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    return rvv_pack_b_panel(src, dst, rk->m, rk->n, rk->k, rk->elt);
+}
+
 static const rvcl_kernel_vtable_t g_rvv_vtable = {
         .validate = rvv_validate,
         .configure = rvv_configure,
         .pack_a = rvv_pack_a,
-        .pack_b
-        = NULL, /* bound per-dtype in create (panel packing differs by elt) */
+        .pack_b = rvv_pack_b,
         .run = rvv_run,
         .destroy = rvv_destroy,
 };
@@ -268,8 +289,12 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
     d.quant_support = RVCL_QUANT_NONE;
     d.required_features[0] = f0;
     d.required_features[1] = f1;
-    d.num_required_features
-            = (f0 == RVCL_FEATURE_NONE) ? 0 : (f1 == RVCL_FEATURE_NONE ? 1 : 2);
+    int nfeat = 0;
+    if (f0 != RVCL_FEATURE_NONE) {
+        nfeat = 1;
+        if (f1 != RVCL_FEATURE_NONE) nfeat = 2;
+    }
+    d.num_required_features = nfeat;
     d.alignment_a = d.alignment_b = d.alignment_c = 4;
     d.vlen_tier = tier;
     d.cost_fn = rvcl_kernel_cost_zero;

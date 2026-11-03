@@ -22,8 +22,10 @@
  * C loop below is portable and correct on every host, which is what the
  * x86 CI differential tests exercise (PLAN §6.2 item 11).
  *
- * This is the run()-side packer used through rvcl_kernel_pack_b(). The
- * same routine serves f32 and f16 kernels: layout depends only on shapes.
+ * Both packing routes converge here: run()'s in-run fallback and the
+ * host-facing pre-pack path rvcl_kernel_pack_b() through the rvv pack_b
+ * vtable slot. The same routine serves f32 and f16 kernels: layout
+ * depends only on shapes.
  ******************************************************************************/
 
 #include "rvv_internal.hpp"

@@ -24,16 +24,17 @@
  *
  * The kernel is fetched through the registry by name (factory bypass,
  * like differential_test), configured manually with a self-allocated
- * workspace; T pthreads then each run() one exclusive M slice with no
- * pre-packing, so every run packs B into the shared workspace itself —
- * the in-run packing path as it stands.
+ * workspace; B is pre-packed once via rvcl_kernel_pack_b() and endorsed
+ * with pack.src_b_packed before any thread starts, then T pthreads each
+ * run() one exclusive M slice — every run consumes the packed panels
+ * read-only (the pack-once contract; the serial in-run packing path
+ * stays covered by differential_test).
  *
- * Functional contract: slices own disjoint C rows and all threads pack
- * the same B values, so without a race detector the output must stay
- * bit-exact vs the golden on every host. Under ThreadSanitizer those
- * same-value packed-B writes and the pack/gemm interleavings on the
- * shared workspace are data races by definition — reporting them is the
- * point of this driver; the remedy is packing B once outside run().
+ * Functional contract: slices own disjoint C rows and the packed
+ * workspace is only read after the pre-pack, so the output must stay
+ * bit-exact vs the golden on every host, and ThreadSanitizer must
+ * report nothing: concurrent run() holds no cross-slice writes into
+ * the shared buffer.
  ******************************************************************************/
 
 #include <pthread.h>
@@ -250,6 +251,15 @@ int main(void) {
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
         rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_AUX_0, &tws);
+
+        /* Pre-pack B once (pack-once): fill the shared packing workspace
+         * before any thread exists and endorse it via src_b_packed —
+         * every concurrent run() then reads the panels instead of
+         * writing the shared buffer. */
+        const rvcl_status_t pack_st = rvcl_kernel_pack_b(k, &tb, &tws);
+        CHECK(pack_st == RVCL_SUCCESS, "rvcl_kernel_pack_b pre-packs B");
+        if (pack_st != RVCL_SUCCESS) goto out;
+        pack.src_b_packed = 1;
 
         /* Concurrent rounds: line the threads up, then everyone runs its
          * own exclusive M slice on the shared kernel + pack together. */

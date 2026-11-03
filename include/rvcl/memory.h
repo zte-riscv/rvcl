@@ -82,6 +82,15 @@ typedef struct {
     const rvcl_tensor_t *slots[RVCL_TENSOR_SLOT_COUNT];
     /* const tensors (inputs / workspace) vs mutable ones (dst). */
     int is_const[RVCL_TENSOR_SLOT_COUNT];
+    /* Host endorsement: SRC_B is already packed into the kernel-declared
+     * packing workspace (the first workspace configure() reported, fed
+     * back as AUX_0) via rvcl_kernel_pack_b(); run() then consumes the
+     * packed panels read-only and skips its in-run packing. Setting the
+     * flag is a host guarantee that B does not change while the buffer
+     * is held across runs (LIFETIME_KERNEL). Zero-initialized packs mean
+     * "not pre-packed": every run packs B itself, as before — existing
+     * hosts are unaffected. */
+    int src_b_packed;
 } rvcl_tensor_pack_t;
 
 /* Resets a pack to empty (all slots NULL). */

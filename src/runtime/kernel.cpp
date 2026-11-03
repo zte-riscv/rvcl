@@ -49,6 +49,15 @@ rvcl_status_t rvcl_kernel_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     return k->vt->run(k, pack, range);
 }
 
+rvcl_status_t rvcl_kernel_pack_b(
+        rvcl_kernel_t *k, const rvcl_tensor_t *src_b, rvcl_tensor_t *dst_ws) {
+    if (!k || !src_b || !dst_ws || !k->vt) return RVCL_ERROR_INVALID_ARGUMENT;
+    /* No packing step (reference-class kernels): nothing to fill, the
+     * caller keeps pack->src_b_packed at 0 (kernel.h contract). */
+    if (!k->vt->pack_b) return RVCL_SUCCESS;
+    return k->vt->pack_b(k, src_b, dst_ws);
+}
+
 void rvcl_kernel_destroy(rvcl_kernel_t *k) {
     if (!k) return;
     if (k->vt && k->vt->destroy) k->vt->destroy(k);
