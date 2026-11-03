@@ -92,3 +92,42 @@ jobs:
       # a real memory-safety regression. ctest prints the sanitizer report.
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  # TSan build on the x86 CI. concurrent_test drives one kernel instance +
+  # one tensor pack (shared packed-B workspace included) through T pthreads
+  # with exclusive M slices — the host-parallel run() contract — and
+  # example_multicore drives the same contract through an injected worker
+  # pool on a small shape; any unsynchronized access on that path fails
+  # this job. The smoke target keeps a serial baseline green in the same
+  # instrumented build, so a red concurrent target cannot be blamed on the
+  # TSan configuration itself. Non-OpenMP build: TSan is reserved for the
+  # kernel/scheduler contract, not the OpenMP runtime. Debug build so the
+  # compiler does not elide the instrumentation.
+  sanitize-tsan:
+    name: TSan / Debug
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DRVCL_SANITIZER=thread -DRVCL_ENABLE_WERROR=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # The anchored regex picks exactly the concurrent driver, the
+      # multicore example (small shape) and the serial smoke baseline.
+      - name: Test
+        run: |
+          ctest --test-dir build --output-on-failure \
+            -R "^(concurrent|smoke|example_multicore)$"

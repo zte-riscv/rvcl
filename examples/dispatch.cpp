@@ -20,7 +20,9 @@
  * The hot-path usage pattern (PLAN §4.7): dispatch once per problem
  * shape, configure reports workspace, run many times with different
  * data. Demonstrates: kernel selection query, workspace allocation by
- * the caller, repeated runs, dispatch cache hit/miss counters.
+ * the caller, repeated runs, pack B once and hold it across runs
+ * (LIFETIME_KERNEL, bit-exact vs in-run packing), dispatch cache
+ * hit/miss counters.
  ******************************************************************************/
 
 #include <stdio.h>
@@ -37,7 +39,7 @@ int main(void) {
     printf("RVCL %s — %s\n", rvcl_get_version(),
             rvcl_get_capability()->description);
 
-    enum { M = 64, N = 64, K = 64, BATCHES = 3 };
+    enum { M = 64, N = 64, K = 64, BATCHES = 3, PACK_RUNS = 3 };
     float a[M * K], b[K * N], bias[N], c[M * N];
     rvcl_matmul_desc_t d = {
             .m = M,
@@ -63,10 +65,10 @@ int main(void) {
     /* 2. Workspace: the caller is the allocator (PLAN §4.10). */
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
-    void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
-    rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
+    void *ws_buf[RVCL_TENSOR_AUX_COUNT] = {0};
+    rvcl_tensor_t ws_t[RVCL_TENSOR_AUX_COUNT];
     printf("workspace: %d request(s)\n", num_ws);
-    for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
+    for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
         if (posix_memalign(&ws_buf[i], align, (size_t)(ws[i].size + align))
                 != 0) {
@@ -117,7 +119,7 @@ int main(void) {
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_B, &tb);
         rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
-        for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
+        for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++)
             rvcl_tensor_pack_add(&pack,
                     (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
 
@@ -140,7 +142,108 @@ int main(void) {
         printf("batch %d: OK (spot check c[2,3]=%.4f)\n", batch, c[2 * N + 3]);
     }
 
-    /* 4. Cache observability: second dispatch with the same key hits. */
+    /* 4. Pack once, run many (LIFETIME_KERNEL): pre-pack B into the
+     * reported packing workspace via rvcl_kernel_pack_b(), endorse the
+     * buffer with pack.src_b_packed, and hold it across several runs
+     * whose A/bias vary while B stays fixed — every run() then consumes
+     * the packed panels read-only instead of packing per run. The
+     * semantic API does this internally per call; holding the buffer
+     * explicitly across runs is the adapter-layer pattern. Run 0 also
+     * executes the unflagged path on identical inputs: pre-packed and
+     * in-run packing must be bit-identical. */
+    if (rvcl_dispatch_kernel(r)->vt->pack_b && num_ws >= 1) {
+        float c_ref[M * N];
+        rvcl_tensor_desc_t td = {.ndims = 2,
+                .dims = {M, K},
+                .strides = {K, 1},
+                .dtype = RVCL_DTYPE_FP32};
+        rvcl_tensor_t ta, tb, tc, tbias;
+        rvcl_tensor_init(&ta, &td, a);
+        td.dims[0] = K;
+        td.dims[1] = N;
+        td.strides[0] = N;
+        rvcl_tensor_init(&tb, &td, b); /* B stays fixed from here on */
+        td.dims[0] = M;
+        td.strides[0] = N;
+        rvcl_tensor_init(&tc, &td, c);
+        rvcl_tensor_desc_t bd = {.ndims = 1,
+                .dims = {N},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_FP32};
+        rvcl_tensor_init(&tbias, &bd, bias);
+
+        st = rvcl_kernel_pack_b(rvcl_dispatch_kernel(r), &tb, &ws_t[0]);
+        if (st != RVCL_SUCCESS) {
+            fprintf(stderr, "pack_b failed: %d\n", (int)st);
+            return 1;
+        }
+
+        rvcl_tensor_pack_t pack;
+        rvcl_tensor_pack_init(&pack);
+        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_A, &ta);
+        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_B, &tb);
+        rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
+        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
+        for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++)
+            rvcl_tensor_pack_add(&pack,
+                    (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
+        rvcl_work_range_t full = rvcl_work_range_full(M, N, K);
+
+        for (int run = 0; run < PACK_RUNS; run++) {
+            for (int i = 0; i < M * K; i++)
+                a[i] = (float)((i + run * 3) % 17) / 17.0f;
+            for (int j = 0; j < N; j++)
+                bias[j] = 0.05f * (float)(run + 1);
+            memset(c, 0, sizeof(c));
+
+            if (run == 0) {
+                /* unflagged reference: run() packs B itself */
+                pack.src_b_packed = 0;
+                st = rvcl_kernel_run(rvcl_dispatch_kernel(r), &pack, &full);
+                if (st != RVCL_SUCCESS) {
+                    fprintf(stderr, "unflagged run failed: %d\n", (int)st);
+                    return 1;
+                }
+                memcpy(c_ref, c, sizeof(c_ref));
+                memset(c, 0, sizeof(c));
+            }
+
+            pack.src_b_packed = 1;
+            st = rvcl_kernel_run(rvcl_dispatch_kernel(r), &pack, &full);
+            if (st != RVCL_SUCCESS) {
+                fprintf(stderr, "pack-once run %d failed: %d\n", run, (int)st);
+                return 1;
+            }
+            if (run == 0) {
+                /* identical inputs, identical computation order: the
+                 * pre-packed and in-run-packed results must match */
+                int diff = 0;
+                for (int i = 0; i < M * N; i++)
+                    if (c[i] != c_ref[i]) diff = 1;
+                if (diff) {
+                    fprintf(stderr,
+                            "pack-once run 0 differs from in-run packing\n");
+                    return 1;
+                }
+            }
+
+            float acc = bias[3];
+            for (int p = 0; p < K; p++)
+                acc += a[2 * K + p] * b[p * N + 3];
+            if (c[2 * N + 3] != acc) {
+                fprintf(stderr, "pack-once run %d mismatch: got %f want %f\n",
+                        run, c[2 * N + 3], acc);
+                return 1;
+            }
+            printf("pack-once run %d: OK (spot check c[2,3]=%.4f)%s\n", run,
+                    c[2 * N + 3],
+                    run == 0 ? ", bit-exact vs in-run packing" : "");
+        }
+    } else {
+        printf("pack-once: selected kernel has no packing step\n");
+    }
+
+    /* 5. Cache observability: second dispatch with the same key hits. */
     rvcl_dispatch_result_t *r2 = NULL;
     st = rvcl_dispatch_matmul(&d, &r2);
     printf("dispatch cache: %d hit(s), %d miss(es)%s\n",
@@ -149,7 +252,7 @@ int main(void) {
     /* r2 == r (cache-owned single object): release once. */
     rvcl_dispatch_release(r);
 
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
+    for (int i = 0; i < RVCL_TENSOR_AUX_COUNT; i++)
         free(ws_buf[i]);
     printf("OK — dispatch once, ran %d batches\n", BATCHES);
     return 0;

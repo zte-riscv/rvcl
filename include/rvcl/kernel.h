@@ -150,14 +150,21 @@ typedef struct {
             int *num_ws /* out */);
 
     /* Packing (independent of run; see PLAN §4.6). Phase 0 kernels are
-     * unpacked, so these are optional (NULL = no packing needed). */
+     * unpacked, so these are optional (NULL = no packing needed).
+     * pack_b fills the packing workspace ahead of run(); implementations
+     * whose run() packs B itself must honor pack->src_b_packed (memory.h)
+     * by skipping that in-run packing. */
     rvcl_status_t (*pack_a)(rvcl_kernel_t *k, const rvcl_tensor_t *src,
             rvcl_tensor_t *dst_packed);
     rvcl_status_t (*pack_b)(rvcl_kernel_t *k, const rvcl_tensor_t *src,
             rvcl_tensor_t *dst_packed);
 
     /* Executes [range] of the configured work. Consumes only imported
-     * memory and workspace via the pack. Never mallocs, never threads. */
+     * memory and workspace via the pack. Never mallocs, never threads.
+     * Concurrent run() calls sharing one pack must pre-pack via
+     * rvcl_kernel_pack_b() and set pack->src_b_packed when the kernel has
+     * a pack_b step, otherwise the per-run packing writes race on the
+     * shared packing workspace. */
     rvcl_status_t (*run)(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
             const rvcl_work_range_t *range);
 
@@ -185,6 +192,22 @@ RVCL_API rvcl_status_t rvcl_kernel_configure(rvcl_kernel_t *k,
 RVCL_API rvcl_status_t rvcl_kernel_run(rvcl_kernel_t *k,
         const rvcl_tensor_pack_t *pack, const rvcl_work_range_t *range);
 RVCL_API void rvcl_kernel_destroy(rvcl_kernel_t *k);
+
+/*
+ * Packs SRC_B into the kernel's packing workspace ahead of run()
+ * (pack once, run many). dst_ws is the packing slot by convention: the
+ * FIRST workspace configure() reported, fed back through the pack as
+ * AUX_0. Returns RVCL_SUCCESS without touching anything when the kernel
+ * has no packing step (vtable pack_b NULL, e.g. the reference backend)
+ * — the caller must then leave pack->src_b_packed at 0 so run() keeps
+ * its unpacked-B behavior. After a successful pack the caller endorses
+ * the buffer by setting pack->src_b_packed = 1 (memory.h): while the
+ * LIFETIME_KERNEL buffer is held, the host guarantees B stays unchanged
+ * and every run() consumes the packed panels read-only instead of
+ * packing per run.
+ */
+RVCL_API rvcl_status_t rvcl_kernel_pack_b(
+        rvcl_kernel_t *k, const rvcl_tensor_t *src_b, rvcl_tensor_t *dst_ws);
 
 #ifdef __cplusplus
 } /* extern "C" */

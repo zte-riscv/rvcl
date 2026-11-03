@@ -78,10 +78,23 @@ typedef enum {
     RVCL_TENSOR_SLOT_COUNT,
 } rvcl_tensor_slot_t;
 
+/* AUX slots a pack can carry (AUX_0 .. AUX_3): the bound for mapping
+ * configure()-reported workspaces into the pack. */
+#define RVCL_TENSOR_AUX_COUNT (RVCL_TENSOR_SLOT_COUNT - RVCL_TENSOR_AUX_0)
+
 typedef struct {
     const rvcl_tensor_t *slots[RVCL_TENSOR_SLOT_COUNT];
     /* const tensors (inputs / workspace) vs mutable ones (dst). */
     int is_const[RVCL_TENSOR_SLOT_COUNT];
+    /* Host endorsement: SRC_B is already packed into the kernel-declared
+     * packing workspace (the first workspace configure() reported, fed
+     * back as AUX_0) via rvcl_kernel_pack_b(); run() then consumes the
+     * packed panels read-only and skips its in-run packing. Setting the
+     * flag is a host guarantee that B does not change while the buffer
+     * is held across runs (LIFETIME_KERNEL). Zero-initialized packs mean
+     * "not pre-packed": every run packs B itself, as before — existing
+     * hosts are unaffected. */
+    int src_b_packed;
 } rvcl_tensor_pack_t;
 
 /* Resets a pack to empty (all slots NULL). */
@@ -112,6 +125,9 @@ typedef struct {
     rvcl_ws_lifetime_t lifetime;
 } rvcl_workspace_req_t;
 
+/* Workspace requests a kernel may report via configure() (ws_req array
+ * capacity); only RVCL_TENSOR_AUX_COUNT of them can ride a pack as AUX
+ * slots, so dispatch rejects anything beyond that. */
 #define RVCL_MAX_WORKSPACES 8
 
 #ifdef __cplusplus

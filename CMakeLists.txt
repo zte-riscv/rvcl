@@ -47,13 +47,32 @@ endforeach()
 # Comma-separated sanitizer list, e.g. "address,undefined". Adds the
 # corresponding -fsanitize flags for both compile and link so every target
 # (library, tests, examples, bench) is instrumented. -fno-omit-frame-pointer
-# keeps ASan stack traces usable. Off by default: sanitizers slow the build
-# and are reserved for the dedicated CI job and local debugging.
+# keeps sanitizer stack traces usable. Off by default: sanitizers slow the
+# build and are reserved for the dedicated CI jobs and local debugging.
+# "thread" (TSan) must be configured alone: the TSan runtime cannot be
+# linked together with ASan/UBSan, so that combination fails the configure
+# step loudly instead of dying in the linker.
 set(RVCL_SANITIZER "" CACHE STRING
-    "Sanitizers to enable (comma list, e.g. address,undefined)")
+    "Sanitizers to enable (comma list, e.g. address,undefined; thread alone)")
 if(RVCL_SANITIZER)
-    add_compile_options(-fsanitize=${RVCL_SANITIZER} -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=${RVCL_SANITIZER})
+    # Normalize first (strip each item, drop empty ones) so a stray-space
+    # spelling like "address, thread" is judged and passed to the compiler
+    # as the canonical list, keeping every rejection at configure time.
+    string(REPLACE "," ";" _rvcl_san_list "${RVCL_SANITIZER}")
+    list(TRANSFORM _rvcl_san_list STRIP)
+    list(REMOVE_ITEM _rvcl_san_list "")
+    list(LENGTH _rvcl_san_list _rvcl_san_count)
+    if(_rvcl_san_count EQUAL 0)
+        message(FATAL_ERROR "RVCL_SANITIZER: no sanitizer named")
+    endif()
+    if("thread" IN_LIST _rvcl_san_list AND _rvcl_san_count GREATER 1)
+        message(FATAL_ERROR
+            "RVCL_SANITIZER: 'thread' must be used alone (the TSan runtime "
+            "cannot link with ASan/UBSan)")
+    endif()
+    list(JOIN _rvcl_san_list "," _rvcl_san_flags)
+    add_compile_options(-fsanitize=${_rvcl_san_flags} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${_rvcl_san_flags})
 endif()
 
 # The rvcl target always carries -Wall -Wextra; this gate extends the same
@@ -231,6 +250,14 @@ if(RVCL_BUILD_TESTS)
     add_executable(rvcl_differential tests/differential_test.cpp)
     target_link_libraries(rvcl_differential PRIVATE rvcl m rvcl_test_golden)
     add_test(NAME differential COMMAND rvcl_differential)
+
+    # Concurrent driver: T pthreads take exclusive M slices through one
+    # kernel instance + one tensor pack (the host-parallel contract).
+    # Registered unconditionally like the smoke suite — small fixed shape,
+    # seconds-fast, and the run target of the TSan CI profile.
+    add_executable(rvcl_concurrent tests/concurrent_test.cpp)
+    target_link_libraries(rvcl_concurrent PRIVATE rvcl rvcl_test_golden)
+    add_test(NAME concurrent COMMAND rvcl_concurrent)
 
     # Registry unit tests (always registered, independent of RVCL_TEST_SET):
     # registration/unregistration contracts, validation, fallback

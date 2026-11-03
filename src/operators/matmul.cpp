@@ -18,8 +18,9 @@
  * matmul.cpp — semantic MatMul API (Layer 1)
  *
  * One-shot path: dispatch → import tensors (zero-copy) → allocate the
- * reported workspace on the stack/heap of this call → run via the current
- * scheduler. "dispatch once, run many" users call dispatch.h directly.
+ * reported workspace on the stack/heap of this call → pack B once → run
+ * via the current scheduler. "dispatch once, run many" users call
+ * dispatch.h directly.
  ******************************************************************************/
 
 #include "rvcl/matmul.h"
@@ -95,9 +96,9 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
     rvcl_work_range_t full = rvcl_work_range_full(desc->m, desc->n, desc->k);
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
-    void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
-    rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
-    for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
+    void *ws_buf[RVCL_TENSOR_AUX_COUNT] = {0};
+    rvcl_tensor_t ws_t[RVCL_TENSOR_AUX_COUNT];
+    for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
         if (posix_memalign(&ws_buf[i], align, (size_t)(ws[i].size + align))
                 != 0) {
@@ -113,13 +114,26 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
                 &pack, (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
     }
 
-    /* 4. Run through the current scheduler over the full range. */
+    /* 4. Pack B once for the whole call (pack-once): when the selected
+     * kernel has a packing step, fill the reported packing workspace
+     * ahead of the slices and endorse it via pack.src_b_packed — every
+     * concurrent run() then reads the panels instead of repacking into
+     * the shared buffer (the in-run packing is a cross-slice write
+     * overlap under host parallelism). Kernels without pack_b (e.g. the
+     * reference backend) keep their per-run behavior and no flag. */
+    if (num_ws >= 1 && ctx.kernel->vt->pack_b) {
+        st = rvcl_kernel_pack_b(ctx.kernel, &tb, &ws_t[0]);
+        if (st != RVCL_SUCCESS) goto out;
+        pack.src_b_packed = 1;
+    }
+
+    /* 5. Run through the current scheduler over the full range. */
     rvcl_parallel_for(&full, run_task, &ctx);
 
     st = RVCL_SUCCESS;
 
 out:
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
+    for (int i = 0; i < RVCL_TENSOR_AUX_COUNT; i++)
         free(ws_buf[i]);
     rvcl_dispatch_release(r);
     return st;
