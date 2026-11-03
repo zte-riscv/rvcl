@@ -138,8 +138,8 @@ static void pool_parallel_for(rvcl_ischeduler_t *s,
     g_pool.fn = task;
     g_pool.sched = s;
     g_pool.ctx = user_ctx;
-    g_pool.next.store(0);
     g_pool.done.store(0);
+    g_pool.next.store(0);
     pthread_cond_broadcast(&g_pool.cv_work);
     pthread_mutex_unlock(&g_pool.mu);
 
@@ -156,6 +156,9 @@ static void pool_parallel_for(rvcl_ischeduler_t *s,
     pthread_mutex_lock(&g_pool.mu);
     while (g_pool.done.load() < parts)
         pthread_cond_wait(&g_pool.cv_done, &g_pool.mu);
+    /* clear the round marker so workers re-block on cv_work between rounds */
+    g_pool.num_tasks.store(0);
+    pthread_cond_broadcast(&g_pool.cv_work);
     pthread_mutex_unlock(&g_pool.mu);
 }
 
@@ -172,6 +175,8 @@ static void pool_start(int max_threads) {
         pthread_t th;
         if (pthread_create(&th, NULL, pool_worker, (void *)(intptr_t)i) == 0)
             pthread_detach(th);
+        else
+            fprintf(stderr, "worker %d create failed\n", i);
     }
 }
 
@@ -237,6 +242,7 @@ static int verify_correctness(const shape_t &primary, const shape_t *ragged,
         size_t n_ragged, const int *scan, int n_scan, int max_threads) {
     int ok = 1;
     std::vector<float> t1_primary;
+    int t1_t = 0;
     bool have_t1 = false;
 
     printf("ragged\n");
@@ -282,16 +288,21 @@ static int verify_correctness(const shape_t &primary, const shape_t *ragged,
                 for (size_t i = 0; i < pc.size(); i++)
                     if (pc[i] != t1_primary[i]) drift++;
                 if (drift) {
-                    fprintf(stderr, "  primary drifts from T=1: %lld\n",
-                            (long long)drift);
+                    fprintf(stderr,
+                            "  primary drifts from first bit-exact reference "
+                            "(T=%d): %lld\n",
+                            t1_t, (long long)drift);
                     ok = 0;
                 } else {
-                    printf("  primary matches T=1 result\n");
+                    printf("  primary matches first bit-exact reference "
+                           "(T=%d)\n",
+                            t1_t);
                 }
             }
             if (!have_t1 && bad == 0) {
-                /* capture the first bit-exact run as the T=1 reference */
+                /* capture the first bit-exact run as the reference */
                 t1_primary = std::move(pc);
+                t1_t = t;
                 have_t1 = true;
             }
         }
