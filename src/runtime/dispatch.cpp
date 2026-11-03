@@ -289,6 +289,15 @@ rvcl_status_t rvcl_dispatch_matmul(
         free(r);
         return st;
     }
+    /* A pack carries workspaces only through the AUX slots, so a kernel
+     * reporting more than RVCL_TENSOR_AUX_COUNT would have the extra
+     * requests silently dropped by the host mapping loops; fail loudly at
+     * dispatch time instead. */
+    if (r->num_ws > RVCL_TENSOR_AUX_COUNT) {
+        rvcl_kernel_destroy(k);
+        free(r);
+        return RVCL_UNSUPPORTED;
+    }
 
     /* Insert into the cache (evicts a conflicting slot), then hand out
      * the caller's own reference. */

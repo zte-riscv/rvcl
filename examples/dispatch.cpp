@@ -65,10 +65,10 @@ int main(void) {
     /* 2. Workspace: the caller is the allocator (PLAN §4.10). */
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
-    void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
-    rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
+    void *ws_buf[RVCL_TENSOR_AUX_COUNT] = {0};
+    rvcl_tensor_t ws_t[RVCL_TENSOR_AUX_COUNT];
     printf("workspace: %d request(s)\n", num_ws);
-    for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
+    for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++) {
         size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
         if (posix_memalign(&ws_buf[i], align, (size_t)(ws[i].size + align))
                 != 0) {
@@ -119,7 +119,7 @@ int main(void) {
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_B, &tb);
         rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
-        for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
+        for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++)
             rvcl_tensor_pack_add(&pack,
                     (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
 
@@ -184,7 +184,7 @@ int main(void) {
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_B, &tb);
         rvcl_tensor_pack_add_out(&pack, RVCL_TENSOR_DST, &tc);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
-        for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
+        for (int i = 0; i < num_ws && i < RVCL_TENSOR_AUX_COUNT; i++)
             rvcl_tensor_pack_add(&pack,
                     (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &ws_t[i]);
         rvcl_work_range_t full = rvcl_work_range_full(M, N, K);
@@ -252,7 +252,7 @@ int main(void) {
     /* r2 == r (cache-owned single object): release once. */
     rvcl_dispatch_release(r);
 
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
+    for (int i = 0; i < RVCL_TENSOR_AUX_COUNT; i++)
         free(ws_buf[i]);
     printf("OK — dispatch once, ran %d batches\n", BATCHES);
     return 0;

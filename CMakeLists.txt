@@ -55,15 +55,24 @@ endforeach()
 set(RVCL_SANITIZER "" CACHE STRING
     "Sanitizers to enable (comma list, e.g. address,undefined; thread alone)")
 if(RVCL_SANITIZER)
+    # Normalize first (strip each item, drop empty ones) so a stray-space
+    # spelling like "address, thread" is judged and passed to the compiler
+    # as the canonical list, keeping every rejection at configure time.
     string(REPLACE "," ";" _rvcl_san_list "${RVCL_SANITIZER}")
+    list(TRANSFORM _rvcl_san_list STRIP)
+    list(REMOVE_ITEM _rvcl_san_list "")
     list(LENGTH _rvcl_san_list _rvcl_san_count)
+    if(_rvcl_san_count EQUAL 0)
+        message(FATAL_ERROR "RVCL_SANITIZER: no sanitizer named")
+    endif()
     if("thread" IN_LIST _rvcl_san_list AND _rvcl_san_count GREATER 1)
         message(FATAL_ERROR
             "RVCL_SANITIZER: 'thread' must be used alone (the TSan runtime "
             "cannot link with ASan/UBSan)")
     endif()
-    add_compile_options(-fsanitize=${RVCL_SANITIZER} -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=${RVCL_SANITIZER})
+    list(JOIN _rvcl_san_list "," _rvcl_san_flags)
+    add_compile_options(-fsanitize=${_rvcl_san_flags} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${_rvcl_san_flags})
 endif()
 
 # The rvcl target always carries -Wall -Wextra; this gate extends the same

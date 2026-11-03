@@ -78,6 +78,10 @@ typedef enum {
     RVCL_TENSOR_SLOT_COUNT,
 } rvcl_tensor_slot_t;
 
+/* AUX slots a pack can carry (AUX_0 .. AUX_3): the bound for mapping
+ * configure()-reported workspaces into the pack. */
+#define RVCL_TENSOR_AUX_COUNT (RVCL_TENSOR_SLOT_COUNT - RVCL_TENSOR_AUX_0)
+
 typedef struct {
     const rvcl_tensor_t *slots[RVCL_TENSOR_SLOT_COUNT];
     /* const tensors (inputs / workspace) vs mutable ones (dst). */
@@ -121,6 +125,9 @@ typedef struct {
     rvcl_ws_lifetime_t lifetime;
 } rvcl_workspace_req_t;
 
+/* Workspace requests a kernel may report via configure() (ws_req array
+ * capacity); only RVCL_TENSOR_AUX_COUNT of them can ride a pack as AUX
+ * slots, so dispatch rejects anything beyond that. */
 #define RVCL_MAX_WORKSPACES 8
 
 #ifdef __cplusplus

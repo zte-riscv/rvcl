@@ -160,7 +160,11 @@ typedef struct {
             rvcl_tensor_t *dst_packed);
 
     /* Executes [range] of the configured work. Consumes only imported
-     * memory and workspace via the pack. Never mallocs, never threads. */
+     * memory and workspace via the pack. Never mallocs, never threads.
+     * Concurrent run() calls sharing one pack must pre-pack via
+     * rvcl_kernel_pack_b() and set pack->src_b_packed when the kernel has
+     * a pack_b step, otherwise the per-run packing writes race on the
+     * shared packing workspace. */
     rvcl_status_t (*run)(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
             const rvcl_work_range_t *range);
 
