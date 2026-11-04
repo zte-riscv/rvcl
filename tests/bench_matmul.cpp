@@ -44,9 +44,12 @@
  * (schema v1): a leading _meta object, then one object per case. The
  * `kernel` key attributes each case to the kernel dispatch actually
  * selected — the observability point for capability-tiered builds. The
- * `scheduler` key names the scheduler that handles the end-to-end metrics
+ * `scheduler` key is an additive, schema-stable attribution field: it
+ * names the scheduler that handles the end-to-end metrics
  * (rvcl_scheduler_get(): lazy default or an injected one), so multi-thread
- * timing is attributable (D-11).
+ * timing is attributable (D-11). Being additive, it does not advance the
+ * JSON schema — the schema stays at v1 and existing consumers reading
+ * schema v1 remain valid.
  *
  * This file holds corpus parser implementation #2 (differential has
  * #1): both follow the error table in tests/inputs/README.md, and the
@@ -623,8 +626,8 @@ int main(int argc, char **argv) {
      * naturally single-core; only rvcl_matmul() end-to-end goes through the
      * current scheduler (lazy default or an injected one). */
     rvcl_ischeduler_t *sched = rvcl_scheduler_get();
-    const char *sched_name = sched ? sched->name : "unknown";
-    const unsigned sched_num_threads = sched ? sched->num_threads : 0;
+    const char *sched_name = sched->name;
+    const unsigned sched_num_threads = sched->num_threads;
 
     const int total = batch ? corpus.count : num_shapes;
     char mode_ch;
