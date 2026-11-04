@@ -261,8 +261,10 @@ int main(void) {
                     == RVCL_ERROR_ALREADY_INITIALIZED,
             "second set rejected (set-once)");
 
-    printf(g_failures ? "SCHEDULER_OMP: %d failure(s)\n"
-                      : "SCHEDULER_OMP: all passed\n",
-            g_failures);
+    if (g_failures) {
+        printf("SCHEDULER_OMP: %d failure(s)\n", g_failures);
+    } else {
+        printf("SCHEDULER_OMP: all passed\n");
+    }
     return g_failures ? 1 : 0;
 }
