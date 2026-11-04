@@ -376,11 +376,23 @@ if(RVCL_BUILD_EXAMPLES)
 
     add_executable(example_multicore examples/matmul_multicore.cpp)
     target_link_libraries(example_multicore PRIVATE rvcl)
+    # RVCL_HAVE_OMP is a PRIVATE definition of the rvcl target and is not
+    # visible to example targets; inject the same macro separately on the
+    # example so its builtin mode compiles only in OpenMP builds (D-10).
+    if(RVCL_ENABLE_OMP)
+        target_compile_definitions(example_multicore PRIVATE RVCL_HAVE_OMP)
+        target_link_libraries(example_multicore PRIVATE OpenMP::OpenMP_CXX)
+    endif()
     # ctest runs correctness only (no timing) on a small shape with up to
     # 8 threads; the scaling table is captured on the host via
-    # RVCL_MULTICORE_BENCH=1.
+    # RVCL_MULTICORE_BENCH=1. The builtin (zero-injection) mode runs in
+    # OpenMP builds only.
     add_test(NAME example_multicore
         COMMAND example_multicore pool 8 128 128 128)
+    if(RVCL_ENABLE_OMP)
+        add_test(NAME example_multicore_builtin
+            COMMAND example_multicore builtin 8 128 128 128)
+    endif()
 endif()
 
 # -------------------------------------------------------------------- bench

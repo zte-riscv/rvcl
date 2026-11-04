@@ -58,6 +58,37 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # OpenMP tier on the x86 CI: enables RVCL_ENABLE_OMP and runs the built-in
+  # OpenMP scheduler backend. ctest covers the smoke + corpus suites, the
+  # standalone scheduler_omp_test, and every example — including the
+  # example_multicore builtin (zero-injection) small-shape mode, registered
+  # only in OpenMP builds. Runs in parallel with the non-OMP jobs.
+  x86-omp:
+    name: ubuntu-24.04 / gcc / ninja / OpenMP
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DRVCL_ENABLE_OMP=ON \
+          -DRVCL_ENABLE_WERROR=ON -DRVCL_TEST_SET=ci
+
+      - name: Build
+        run: cmake --build build
+
+      # Same ctest set as the non-OMP x86 job, plus scheduler_omp and
+      # example_multicore_builtin (both registered only in OpenMP builds).
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # ASan + UBSan build on the x86 CI. This is the recurring evidence for the
   # attack surface SECURITY.md self-describes: stride/dims validation, integer
   # overflow in size/stride math (rvcl_tensor_bytes, workspace sizing) and
