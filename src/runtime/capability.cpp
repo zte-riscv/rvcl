@@ -34,9 +34,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static rvcl_capability_t g_cap;
-static int g_cap_initialized;
-
 /* Compile-time knowledge of the build target. */
 static void detect_compiletime(rvcl_capability_t *cap) {
     int n = 0;
@@ -160,31 +157,37 @@ const rvcl_feature_t *rvcl_capability_get(
     return NULL;
 }
 
-const rvcl_capability_t *rvcl_get_capability(void) {
-    /* Simple once-guard. Concurrent first calls may both run detection;
-     * the result is identical, so the race is benign for Phase 0. A
-     * call_once port lands with the thread-safety hardening task. */
-    if (g_cap_initialized) return &g_cap;
-
-    memset(&g_cap, 0, sizeof(g_cap));
-    detect_compiletime(&g_cap);
-    detect_runtime(&g_cap);
+/* Detection + description assembly, run exactly once by the magic-static
+ * initializer in rvcl_get_capability(). A function-local static with a
+ * non-trivial initializer is thread-safe in C++11 [stmt.dcl]: the standard
+ * guarantees the initializer runs on exactly one thread and every other
+ * thread blocks until it completes, which converges concurrent first calls
+ * into a single detection pass. */
+static rvcl_capability_t build_capability(void) {
+    rvcl_capability_t cap;
+    memset(&cap, 0, sizeof(cap));
+    detect_compiletime(&cap);
+    detect_runtime(&cap);
 
     /* Human-readable summary; the RVV entry carries the VLEN when the
      * vlenb read succeeded (value > 1). */
-    const rvcl_feature_t *rvv = rvcl_capability_get(&g_cap, RVCL_FEATURE_RVV);
+    const rvcl_feature_t *rvv = rvcl_capability_get(&cap, RVCL_FEATURE_RVV);
     if (rvv && rvv->value > 1)
-        snprintf(g_cap.description, sizeof(g_cap.description),
+        snprintf(cap.description, sizeof(cap.description),
                 "rvcl-capability: %d feature(s) detected, rvv vlen=%u",
-                g_cap.num_features, rvv->value);
+                cap.num_features, rvv->value);
     else if (rvv)
-        snprintf(g_cap.description, sizeof(g_cap.description),
+        snprintf(cap.description, sizeof(cap.description),
                 "rvcl-capability: %d feature(s) detected, rvv vlen=unknown",
-                g_cap.num_features);
+                cap.num_features);
     else
-        snprintf(g_cap.description, sizeof(g_cap.description),
-                "rvcl-capability: %d feature(s) detected", g_cap.num_features);
+        snprintf(cap.description, sizeof(cap.description),
+                "rvcl-capability: %d feature(s) detected", cap.num_features);
 
-    g_cap_initialized = 1;
+    return cap;
+}
+
+const rvcl_capability_t *rvcl_get_capability(void) {
+    static rvcl_capability_t g_cap = build_capability();
     return &g_cap;
 }
