@@ -70,11 +70,16 @@ static void omp_parallel_for(rvcl_ischeduler_t *s,
         return;
     }
 
-    /* Single static region: thread t owns slice t, no dynamic scheduling. */
+    /* Single static region: thread t owns slice t, no dynamic scheduling.
+     * Slice over the actual team size (omp_get_num_threads), not the
+     * requested `parts`, so every M row is covered even when the runtime
+     * forms a smaller team (OMP_DYNAMIC / OMP_THREAD_LIMIT). */
 #pragma omp parallel num_threads(parts)
     {
         rvcl_work_range_t slice;
-        omp_slice(&slice, total, omp_get_thread_num(), parts);
+        const int n = omp_get_num_threads();
+        const int t = omp_get_thread_num();
+        omp_slice(&slice, total, t, n);
         task(s, &slice, user_ctx);
     }
 }
