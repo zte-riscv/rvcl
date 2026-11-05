@@ -26,7 +26,8 @@
  *
  * CLI: example_multicore [mode] [max_threads] [M] [N] [K]
  *   mode:  pool (default) — inject this example's worker pool
- *          builtin — reserved; needs an OpenMP build (PR-4)
+ *          builtin — zero-injection direct run on the built-in OpenMP
+ *                    scheduler; needs an OpenMP build (RVCL_ENABLE_OMP)
  *   default max_threads = nproc; default shape = 512x512x512.
  *   Timing is enabled with RVCL_MULTICORE_BENCH=1 (ctest never times).
  ******************************************************************************/
@@ -41,6 +42,10 @@
 
 #include <atomic>
 #include <vector>
+
+#if defined(RVCL_HAVE_OMP)
+#include <omp.h>
+#endif
 
 #include "rvcl/rvcl.h"
 
@@ -237,9 +242,12 @@ static int64_t check_shape(
 }
 
 /* Bit-exact check: vs golden and vs T=1 across the T scan; the ragged
- * panel-boundary shapes are T-independent, so they are checked once. */
+ * panel-boundary shapes are T-independent, so they are checked once.
+ * [set_threads] changes the active thread count for the current mode:
+ * pool_set_threads in pool mode, omp_set_num_threads in builtin mode. */
 static int verify_correctness(const shape_t &primary, const shape_t *ragged,
-        size_t n_ragged, const int *scan, int n_scan, int max_threads) {
+        size_t n_ragged, const int *scan, int n_scan, void (*set_threads)(int),
+        int max_threads) {
     int ok = 1;
     std::vector<float> t1_primary;
     int t1_t = 0;
@@ -264,7 +272,7 @@ static int verify_correctness(const shape_t &primary, const shape_t *ragged,
     for (int si = 0; si < n_scan; si++) {
         const int t = scan[si];
         if (t > max_threads) continue;
-        pool_set_threads(t);
+        set_threads(t);
         printf("T=%d\n", t);
 
         std::vector<float> pc;
@@ -318,9 +326,10 @@ static double now_sec(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
-/* Warmup + best-of-5 timing per shape per T; speedup/efficiency vs T=1. */
+/* Warmup + best-of-5 timing per shape per T; speedup/efficiency vs T=1.
+ * [set_threads] changes the active thread count for the current mode. */
 static void bench_scan(const shape_t *shapes, size_t n_shapes, const int *scan,
-        int n_scan, int max_threads) {
+        int n_scan, void (*set_threads)(int), int max_threads) {
     printf("threads\tshape\t\ttime_ms\tspeedup\tefficiency\n");
     for (size_t i = 0; i < n_shapes; i++) {
         const shape_t &s = shapes[i];
@@ -337,7 +346,7 @@ static void bench_scan(const shape_t *shapes, size_t n_shapes, const int *scan,
         for (int si = 0; si < n_scan; si++) {
             const int t = scan[si];
             if (t > max_threads) continue;
-            pool_set_threads(t);
+            set_threads(t);
             rvcl_status_t st = rvcl_matmul(
                     &d, a.data(), b.data(), bias.data(), c.data()); /* warmup */
             if (st != RVCL_SUCCESS) {
@@ -380,9 +389,55 @@ int main(int argc, char **argv) {
     int64_t K = argc > 5 ? atoll(argv[5]) : 512;
 
     if (strcmp(mode, "builtin") == 0) {
+#if defined(RVCL_HAVE_OMP)
+        /* Zero-injection direct run: no rvcl_scheduler_set — the lazy
+         * default resolves the built-in OpenMP scheduler. The T scan changes
+         * the thread count via omp_set_num_threads (never the scheduler, so
+         * no set-once involvement). */
+        if (max_threads <= 0) {
+            long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+            max_threads = (int)(ncpu > 0 ? ncpu : 4);
+        }
+        if (rvcl_init() != RVCL_SUCCESS) {
+            fprintf(stderr, "rvcl_init failed\n");
+            return 1;
+        }
+        printf("RVCL %s - %s\n", rvcl_get_version(),
+                rvcl_get_capability()->description);
+        printf("builtin: omp (lazy default), max_threads=%d\n", max_threads);
+
+        static const int scan[] = {1, 2, 4, 8};
+        const int n_scan = 4;
+
+        const shape_t primary = {M, N, K};
+        static const shape_t ragged[] = {{97, 65, 33}, {7, 7, 7}, {8, 8, 8},
+                {9, 9, 9}, {15, 15, 15}, {16, 16, 16}, {17, 17, 17},
+                {23, 23, 23}, {24, 24, 24}, {25, 25, 25}};
+
+        if (!verify_correctness(primary, ragged,
+                    sizeof(ragged) / sizeof(ragged[0]), scan, n_scan,
+                    omp_set_num_threads, max_threads)) {
+            fprintf(stderr, "correctness check FAILED\n");
+            return 1;
+        }
+        printf("correctness: bit-exact across T, vs golden, and ragged "
+               "shapes\n");
+
+        const char *bench = getenv("RVCL_MULTICORE_BENCH");
+        if (bench && bench[0]) {
+            static const shape_t shapes[] = {{256, 256, 256}, {512, 512, 512},
+                    {1024, 1024, 1024}, {512, 512, 2048}};
+            bench_scan(shapes, sizeof(shapes) / sizeof(shapes[0]), scan, n_scan,
+                    omp_set_num_threads, max_threads);
+        }
+
+        printf("OK\n");
+        return 0;
+#else
         fprintf(stderr,
                 "builtin mode needs an OpenMP build; use pool mode here\n");
         return 2;
+#endif
     }
     if (strcmp(mode, "pool") != 0) {
         fprintf(stderr, "usage: %s [pool|builtin] [max_threads] [M] [N] [K]\n",
@@ -421,7 +476,7 @@ int main(int argc, char **argv) {
             {24, 24, 24}, {25, 25, 25}};
 
     if (!verify_correctness(primary, ragged, sizeof(ragged) / sizeof(ragged[0]),
-                scan, n_scan, max_threads)) {
+                scan, n_scan, pool_set_threads, max_threads)) {
         fprintf(stderr, "correctness check FAILED\n");
         return 1;
     }
@@ -432,7 +487,7 @@ int main(int argc, char **argv) {
         static const shape_t shapes[] = {{256, 256, 256}, {512, 512, 512},
                 {1024, 1024, 1024}, {512, 512, 2048}};
         bench_scan(shapes, sizeof(shapes) / sizeof(shapes[0]), scan, n_scan,
-                max_threads);
+                pool_set_threads, max_threads);
     }
 
     printf("OK\n");

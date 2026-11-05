@@ -43,7 +43,13 @@
  * Output: human table (with the dispatched kernel name), or JSON Lines
  * (schema v1): a leading _meta object, then one object per case. The
  * `kernel` key attributes each case to the kernel dispatch actually
- * selected — the observability point for capability-tiered builds.
+ * selected — the observability point for capability-tiered builds. The
+ * `scheduler` key is an additive, schema-stable attribution field: it
+ * names the scheduler that handles the end-to-end metrics
+ * (rvcl_scheduler_get(): lazy default or an injected one), so multi-thread
+ * timing is attributable (D-11). Being additive, it does not advance the
+ * JSON schema — the schema stays at v1 and existing consumers reading
+ * schema v1 remain valid.
  *
  * This file holds corpus parser implementation #2 (differential has
  * #1): both follow the error table in tests/inputs/README.md, and the
@@ -615,6 +621,14 @@ int main(int argc, char **argv) {
 
     if (rvcl_init() != RVCL_SUCCESS) return 1;
 
+    /* Scheduler attribution (D-11): which scheduler handles the end-to-end
+     * metrics. kernel-only / pack+kernel micro-kernel direct calls are
+     * naturally single-core; only rvcl_matmul() end-to-end goes through the
+     * current scheduler (lazy default or an injected one). */
+    rvcl_ischeduler_t *sched = rvcl_scheduler_get();
+    const char *sched_name = sched->name;
+    const unsigned sched_num_threads = sched->num_threads;
+
     const int total = batch ? corpus.count : num_shapes;
     char mode_ch;
     if (mode == MODE_C)
@@ -731,12 +745,13 @@ int main(int argc, char **argv) {
                            "\"kernel_ms\":null,\"pack_ms\":null,"
                            "\"pack_kernel_ms\":null,\"e2e_ms\":null,"
                            "\"gflops_kernel\":null,\"gflops_e2e\":null,"
-                           "\"status\":\"%s\"%s%s%s%s}\n",
+                           "\"scheduler\":{\"name\":\"%s\","
+                           "\"num_threads\":%u},\"status\":\"%s\"%s%s%s%s}\n",
                             op, shape_s, label_s, dtstr, ok ? "\"" : "null",
                             ok ? rvcl_dispatch_kernel_name(rig.r) : "",
-                            ok ? "\"" : "", ok ? "ok" : "fail",
-                            *detail ? ",\"detail\":" : "", *detail ? "\"" : "",
-                            detail, *detail ? "\"" : "");
+                            ok ? "\"" : "", sched_name, sched_num_threads,
+                            ok ? "ok" : "fail", *detail ? ",\"detail\":" : "",
+                            *detail ? "\"" : "", detail, *detail ? "\"" : "");
                 } else {
                     printf("%-16s %-5s %-24s C: %s%s%s\n", shape_s, dtstr,
                             ok ? rvcl_dispatch_kernel_name(rig.r) : "-",
@@ -829,6 +844,7 @@ int main(int argc, char **argv) {
                        "\"kernel_ms\":%.4f,\"pack_ms\":%s,"
                        "\"pack_kernel_ms\":%s,\"e2e_ms\":%s,"
                        "\"gflops_kernel\":%s,\"gflops_e2e\":%s,"
+                       "\"scheduler\":{\"name\":\"%s\",\"num_threads\":%u},"
                        "\"status\":\"%s\"}\n",
                         op, shape_s, label_s, dtstr, mode_ch,
                         kname ? "\"" : "null", kname ? kname : "",
@@ -839,6 +855,7 @@ int main(int argc, char **argv) {
                         jms(b4, sizeof(b4),
                                 t_e2e > 0 ? flops / (t_e2e * 1e6) : 0.0,
                                 has_dispatch),
+                        sched_name, sched_num_threads,
                         has_dispatch ? "ok" : "nodispatch");
             } else {
                 char sh[32];
