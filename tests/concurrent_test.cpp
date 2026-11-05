@@ -26,8 +26,9 @@
  *    converges them (same cached pointer + identical content, TSan clean).
  * 2. dispatch concurrent first-call — the first rvcl_dispatch_matmul() of
  *    the process races through the cold cache under the cache mutex; both
- *    a same-desc group (one key) and a different-desc group (one slot per
- *    thread) must all succeed (cache-lock regression).
+ *    a same-desc group (one key) and a different-desc group (varied shapes
+ *    that collide into shared cache slots) must all succeed (cache-lock
+ *    regression, including the concurrent-eviction path).
  * 3. kernel run() under exclusive M slices — a host scheduler slices M and
  *    calls run() per slice, so one kernel instance and one tensor pack
  *    (including the packed-B workspace configure() reports) are shared by
@@ -206,9 +207,9 @@ static void capability_concurrent_firstcall(void) {
  * T threads issue their first rvcl_dispatch_matmul() at once, gated so the
  * cold cache races through the insertion path under the cache mutex. Two
  * groups: every thread dispatches the SAME desc (one cache key, concurrent
- * first-call hit on it) and a DIFFERENT desc (one cache slot per thread,
- * concurrent first-call inserts into distinct slots). All must succeed and
- * hand out a releasable result — a cache-lock regression.
+ * first-call hit on it) and a DIFFERENT desc (varied shapes that hash into
+ * overlapping slots, so later first-calls evict earlier ones). All must
+ * succeed and hand out a releasable result — a cache-lock regression.
  */
 typedef struct {
     pthread_barrier_t *start;
@@ -239,7 +240,7 @@ static void dispatch_burst(
     for (int t = 0; t < T; t++) {
         args[t].start = &gate;
         args[t].desc = *base;
-        if (vary) { /* distinct shape per thread -> distinct cache slot */
+        if (vary) { /* varied shape per thread; hashes may share a cache slot */
             args[t].desc.m = base->m + (int64_t)(t + 1) * 8;
             args[t].desc.n = base->n + (int64_t)(t + 1) * 4;
             args[t].desc.k = base->k + (int64_t)(t + 1) * 8;
@@ -295,7 +296,7 @@ static void *semantic_worker(void *p) {
     float *golden = (float *)malloc((size_t)elems * 4);
     if (!a || !b || !bias || !c || !golden) {
         arg->status = RVCL_ERROR_OUT_OF_MEMORY;
-        arg->mismatches = -1;
+        arg->mismatches = 0; /* no compare ran; run_bad reports the failure */
         free(a);
         free(b);
         free(bias);
@@ -359,7 +360,10 @@ static void semantic_concurrent(void) {
     int run_bad = 0, match_bad = 0;
     for (int t = 0; t < T; t++) {
         if (args[t].status != RVCL_SUCCESS) run_bad++;
-        if (args[t].mismatches != 0) match_bad++;
+        /* only a successful run performs the bit-exact comparison; a failed
+         * run (e.g. OOM) is reported once by run_bad, not twice here */
+        if (args[t].status == RVCL_SUCCESS && args[t].mismatches != 0)
+            match_bad++;
     }
     char msg[96];
     snprintf(
