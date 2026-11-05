@@ -17,13 +17,13 @@
  *
  * tests/concurrent_test.cpp — concurrent stress for the host-parallel stack
  *
- * Permanent smoke driver (PR-5): four concurrent scenarios, each gated so
- * all threads race into the shared path at once, all small enough to stay
- * smoke-fast on x86 and QEMU and cheap enough for the TSan job to amplify.
+ * Permanent smoke driver: four concurrent scenarios, each gated so all
+ * threads race into the shared path at once, all small enough to stay
+ * smoke-fast on every host and cheap enough for sanitizer CI to amplify.
  *
  * 1. capability concurrent first-call — the first rvcl_get_capability() of
  *    the process is issued by T threads at once; the magic-static once
- *    converges them (same cached pointer + identical content, TSan clean).
+ *    converges them (same cached pointer + identical content, race-free).
  * 2. dispatch concurrent first-call — the first rvcl_dispatch_matmul() of
  *    the process races through the cold cache under the cache mutex; both
  *    a same-desc group (one key) and a different-desc group (varied shapes
@@ -380,7 +380,9 @@ int main(void) {
 
     /* Capability first-call must precede any other capability use in the
      * process (rvcl_init does not touch capability), so the concurrent
-     * first-call really races into the magic-static once. */
+     * first-call really races into the magic-static once. Keep this premise
+     * explicit: if a future init change starts querying capability, this
+     * scenario silently stops racing the once and must be revisited. */
     capability_concurrent_firstcall();
 
     /* Dispatch first-call must precede the factory-bypass kernel section
