@@ -58,6 +58,34 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # OpenMP scheduler tier on the x86 CI. The scheduler_omp ctest is
+  # registered unconditionally inside the if(RVCL_ENABLE_OMP) block, so this
+  # job runs it end-to-end against the built-in OpenMP scheduler backend.
+  x86-omp:
+    name: ubuntu-24.04 / gcc / ninja / OpenMP
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      # System cmake 3.28 clears the ctest --test-dir (>= 3.21) floor; no
+      # pinned cmake action needed at this project size.
+      - name: Configure
+        run: cmake -B build -G Ninja -DRVCL_ENABLE_OMP=ON -DRVCL_ENABLE_WERROR=ON -DRVCL_TEST_SET=ci
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # ASan + UBSan build on the x86 CI. This is the recurring evidence for the
   # attack surface SECURITY.md self-describes: stride/dims validation, integer
   # overflow in size/stride math (rvcl_tensor_bytes, workspace sizing) and
