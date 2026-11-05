@@ -61,6 +61,12 @@ RVCL_API rvcl_ischeduler_t *rvcl_scheduler_get(void);
 /* Built-in serial scheduler (single-threaded fallback; tests/emulators). */
 RVCL_API rvcl_ischeduler_t *rvcl_serial_scheduler(void);
 
+/* Built-in OpenMP scheduler backend (PR-3 §5.3.1): zero-injection default
+ * parallelism. Only compiled into OpenMP builds (RVCL_ENABLE_OMP=ON); on a
+ * non-OpenMP build this returns NULL and the lazy default falls back to the
+ * serial scheduler. */
+RVCL_API rvcl_ischeduler_t *rvcl_omp_scheduler(void);
+
 /* Convenience: parallel_for through the current scheduler. */
 RVCL_API void rvcl_parallel_for(const rvcl_work_range_t *total,
         rvcl_parallel_task_fn task, void *user_ctx);

@@ -169,17 +169,21 @@ jobs:
       - name: Install clang-tidy-18
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-tidy-18 clang-18 ninja-build
+          sudo apt-get install -y clang-tidy-18 clang-18 ninja-build libomp-18-dev
 
       # Produce compile_commands.json; analysis needs it to know the exact
       # flags each translation unit is built with. Ninja + the header-only
       # clang-tidy build avoids running the full compiler on every file.
+      # RVCL_ENABLE_OMP is enabled so the compile database covers the built-in
+      # OpenMP scheduler TU and its test (with -fopenmp), letting clang-tidy
+      # analyze them; libomp-18-dev above supplies the omp.h they include.
       - name: Configure (compile database)
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_CXX_COMPILER=clang++-18 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DRVCL_TEST_SET=ci
+            -DRVCL_TEST_SET=ci \
+            -DRVCL_ENABLE_OMP=ON
 
       - name: Run clang-tidy-18
         run: |
