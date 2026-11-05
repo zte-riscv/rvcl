@@ -388,8 +388,8 @@ int main(void) {
     /* Dispatch first-call must precede the factory-bypass kernel section
      * below (which never calls rvcl_dispatch_matmul), so this is genuinely
      * the cold-cache concurrent first dispatch. Two groups: all threads
-     * dispatch the SAME desc (one cache key) and DIFFERENT descs (one slot
-     * each). */
+     * dispatch the SAME desc (one cache key) and DIFFERENT descs (varied
+     * shapes that may hash into shared slots). */
     rvcl_matmul_desc_t dbase = {
             .m = 32,
             .n = 24,
