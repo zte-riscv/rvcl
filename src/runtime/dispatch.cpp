@@ -100,19 +100,23 @@ static rvcl_dispatch_result_t *cache_lookup(const rvcl_matmul_desc_t *key) {
     return s->result;
 }
 
-/* insert: replaces any previous entry in the hashed slot. */
-static void cache_insert(
+/* insert: returns 1 when r now owns the hashed cache slot, 0 when the slot
+ * already holds an equal key (a concurrent first-call won the slot first) and
+ * r stays out of the cache. Replaces any previous different-key entry in the
+ * hashed slot, dropping that cache reference. */
+static int cache_insert(
         const rvcl_matmul_desc_t *key, rvcl_dispatch_result_t *r) {
     unsigned idx = desc_key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
     cache_slot_t *s = &g_cache[idx];
     if (s->used && !desc_key_equal(&s->key, key)) {
         result_unref(s->result); /* evict: drop the cache's reference */
     } else if (s->used) {
-        return; /* same key already cached: keep the older instance */
+        return 0; /* same key already cached: keep the older instance */
     }
     s->used = 1;
     s->key = *key;
     s->result = r; /* cache reference taken over from the caller */
+    return 1;
 }
 
 /* Drops the cache's reference; the instance survives while callers hold
@@ -281,7 +285,7 @@ rvcl_status_t rvcl_dispatch_matmul(
     }
     r->kernel = k;
     r->num_ws = 0;
-    r->refs = 1; /* the cache's reference (inserted below) */
+    r->refs = 0; /* references are taken below, under the cache lock */
 
     st = rvcl_kernel_configure(k, &od, r->ws_req, &r->num_ws);
     if (st != RVCL_SUCCESS) {
@@ -299,12 +303,17 @@ rvcl_status_t rvcl_dispatch_matmul(
         return RVCL_UNSUPPORTED;
     }
 
-    /* Insert into the cache (evicts a conflicting slot), then hand out
-     * the caller's own reference. */
+    /* Insert into the cache (evicts a conflicting slot), then hand out the
+     * caller's own reference. Both references are taken under the cache
+     * lock so a concurrent first-call cannot evict this result out from
+     * under the caller: between the insert and the caller's ref++ there is
+     * no window in which the cache can drop its reference and free the
+     * instance (a use-after-free on concurrent first dispatch). */
     pthread_mutex_lock(&g_cache_mutex);
-    cache_insert(desc, r);
+    const int inserted = cache_insert(desc, r);
+    if (inserted) r->refs++; /* the cache's reference */
+    r->refs++; /* the caller's reference */
     pthread_mutex_unlock(&g_cache_mutex);
-    r->refs++; /* caller's reference */
 
     *result = r;
     return RVCL_SUCCESS;
