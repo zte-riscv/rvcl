@@ -98,6 +98,7 @@ endif()
 
 set(RVCL_RUNTIME_SOURCES
     src/common/types.cpp
+    src/common/dtype_traits.cpp
     src/common/memory.cpp
     src/runtime/capability.cpp
     src/runtime/kernel.cpp
@@ -247,6 +248,10 @@ endif()
 # deliberately double-implemented — cross-validation is the feature.
 if(RVCL_BUILD_TESTS OR RVCL_BUILD_BENCH)
     add_library(rvcl_test_golden STATIC tests/golden.cpp)
+    # Test-side dtype operation table (tests/dtype_ops.cpp): owns the
+    # per-dtype test facts and references the library trait table.
+    add_library(rvcl_test_dtype_ops STATIC tests/dtype_ops.cpp)
+    target_link_libraries(rvcl_test_dtype_ops PUBLIC rvcl rvcl_test_golden)
 endif()
 
 if(RVCL_BUILD_TESTS)
@@ -267,7 +272,8 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME smoke COMMAND rvcl_smoke)
 
     add_executable(rvcl_differential tests/differential_test.cpp)
-    target_link_libraries(rvcl_differential PRIVATE rvcl m rvcl_test_golden)
+    target_link_libraries(
+            rvcl_differential PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops)
     add_test(NAME differential COMMAND rvcl_differential)
 
     # Concurrent driver: T pthreads take exclusive M slices through one
@@ -343,6 +349,13 @@ if(RVCL_BUILD_TESTS)
     # invocation and covers the non-host VLEN tiers and feature sets.
     add_test(NAME unit_dispatch_inject
         COMMAND rvcl_unit_dispatch --inject)
+
+    # Dtype trait table + assertion-level unit tests: element size facts,
+    # AUTO accumulation habit, default assertion levels, tolerance class,
+    # registry/ dispatch routing. Independent of RVCL_TEST_SET.
+    add_executable(rvcl_unit_dtype_traits tests/unit_dtype_traits.cpp)
+    target_link_libraries(rvcl_unit_dtype_traits PRIVATE rvcl rvcl_test_golden)
+    add_test(NAME unit_dtype_traits COMMAND rvcl_unit_dtype_traits)
 
     # Corpus registration: one line per corpus file -> one modeC ctest
     # target running the differential (the assertion engine) over it.
@@ -434,7 +447,8 @@ endif()
 # -------------------------------------------------------------------- bench
 if(RVCL_BUILD_BENCH)
     add_executable(rvcl_bench tests/bench_matmul.cpp)
-    target_link_libraries(rvcl_bench PRIVATE rvcl m rvcl_test_golden)
+    target_link_libraries(
+            rvcl_bench PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops)
 endif()
 
 # ------------------------------------------------------------------ install
