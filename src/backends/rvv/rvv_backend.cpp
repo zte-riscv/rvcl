@@ -42,6 +42,7 @@
  ******************************************************************************/
 
 #include "rvv_internal.hpp"
+#include "rvv_paths.hpp"
 
 #include "../../common/dtype_traits.hpp"
 
@@ -170,56 +171,22 @@ static const char *rvv_kernel_knob(void) {
     return knob;
 }
 
+/* Both by-name resolvers and the knob-free auto selectors are generated
+ * by walking the per-dtype path tables in rvv_paths.hpp, so a new dtype
+ * only adds a table row; the selectors never branch on the dtype. The
+ * auto semantics are table data too: f32 ranks the JIT path above C
+ * (JIT-when-RVV-else-C), f16 ranks the intrinsics above C
+ * (intrinsics-when-RVV-else-C), and a forced-but-unavailable path fails
+ * loudly with the table's message, bit-identical to the hand-written
+ * selectors this replaces. */
 __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f32_by_name(
         const char *name) {
-    if (!strcmp(name, "c")) return rvv_gemm_f32_c;
-#if defined(__riscv_vector)
-    if (!strcmp(name, "intrinsics")) return rvv_gemm_f32_rvv;
-#endif
-#if defined(RVCL_HAVE_JIT)
-    if (!strcmp(name, "auto") || !strcmp(name, "jit")) {
-        const int forced = strcmp(name, "jit") == 0;
-        if (rvv_gemm_f32_jit_available()) {
-            rvv_gemm_fn jit = rvv_gemm_f32_jit_entry();
-            if (jit) return jit;
-            /* generation failed and already warned; the forced request
-             * has no fallback, auto degrades to the C kernel below */
-            if (forced) return NULL;
-        } else if (forced) {
-            fprintf(stderr,
-                    "rvcl: forced JIT f32 path requires the vector "
-                    "extension\n");
-            return NULL;
-        }
-    }
-#endif
-    if (!strcmp(name, "auto")) return rvv_gemm_f32_c;
-    fprintf(stderr,
-            "rvcl: f32 kernel path '%s' is unavailable "
-            "(want auto, c, jit or intrinsics)\n",
-            name);
-    return NULL;
+    return rvv_path_by_name(&rvv_f32_paths, name);
 }
 
 __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16_by_name(
         const char *name) {
-    if (!strcmp(name, "c")) return rvv_gemm_f16_c;
-#if defined(__riscv_vector)
-    if (!strcmp(name, "intrinsics") || !strcmp(name, "auto"))
-        return rvv_gemm_f16_rvv;
-#else
-    if (!strcmp(name, "auto")) return rvv_gemm_f16_c;
-#endif
-    if (!strcmp(name, "jit")) {
-        fprintf(stderr,
-                "rvcl: f16 has no JIT path (want auto, c or intrinsics)\n");
-        return NULL;
-    }
-    fprintf(stderr,
-            "rvcl: f16 kernel path '%s' is unavailable "
-            "(want auto, c or intrinsics)\n",
-            name);
-    return NULL;
+    return rvv_path_by_name(&rvv_f16_paths, name);
 }
 
 /* Single source of truth for the live micro-kernel per dtype (see
