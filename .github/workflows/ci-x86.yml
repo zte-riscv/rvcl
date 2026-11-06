@@ -154,8 +154,9 @@ jobs:
         run: cmake --build build
 
       # The anchored regex picks exactly the concurrent driver, the
-      # multicore example (small shape) and the serial smoke baseline.
+      # multicore example (small shape), the serial smoke baseline and the
+      # dispatch suite's concurrent-churn case.
       - name: Test
         run: |
           ctest --test-dir build --output-on-failure \
-            -R "^(concurrent|smoke|example_multicore)$"
+            -R "^(concurrent|smoke|example_multicore|unit_dispatch)$"

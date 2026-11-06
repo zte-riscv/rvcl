@@ -47,6 +47,10 @@ static rvcl_status_t ref_validate(
     if (d->dtype_a != RVCL_DTYPE_FP32 || d->dtype_b != RVCL_DTYPE_FP32
             || d->dtype_c != RVCL_DTYPE_FP32)
         return RVCL_UNSUPPORTED_DTYPE_COMBO;
+    /* No quantization support: rejecting here (as the RVV backend does)
+     * keeps a quantized request from being computed as if unquantized if
+     * this kernel is instantiated outside the dispatch filter. */
+    if (d->quant.enabled) return RVCL_UNSUPPORTED;
     return RVCL_SUCCESS;
 }
 
@@ -115,8 +119,9 @@ static rvcl_status_t ref_create(
 
 /*
  * The reference kernel is the f32 tuple's unbounded fallback: no feature
- * requirement, no shape limit, registered after the vectorized variants
- * so it only wins when nothing else survives filtering (RFC-0002 FR1.5).
+ * requirement, no shape limit, registered after the dedicated, generic
+ * and portable variants so it only wins when nothing else survives
+ * filtering (RFC-0002 FR1.5).
  */
 RVCL_API rvcl_status_t rvcl_reference_register(void) {
     rvcl_kernel_desc_t d;

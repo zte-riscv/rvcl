@@ -37,8 +37,9 @@ typedef struct rvcl_dispatch_result rvcl_dispatch_result_t;
 /*
  * Dispatch pipeline:
  *   1. operation, 2. datatype (exact (A,B,acc,C) match after AUTO
- *   resolution), 3. required-feature subset, 4. VLEN tier, 5. shape
- *   bounds, 6. kernel validate().
+ *   resolution; a quantized request keeps only kernels that declare
+ *   quantization support), 3. required-feature subset, 4. VLEN tier,
+ *   5. shape bounds, 6. kernel validate().
  * Survivors are ordered by their cost callback; the smallest cost wins
  * and an equal cost keeps the earliest registered candidate. On success
  * the kernel is configured and workspace demands are reported; the
@@ -48,6 +49,12 @@ typedef struct rvcl_dispatch_result rvcl_dispatch_result_t;
  * for INT8/UINT8 inputs, FP32 otherwise) and in the bias slot (no bias).
  * A rejected datatype tuple returns RVCL_UNSUPPORTED_DTYPE_COMBO;
  * returns RVCL_UNSUPPORTED when no candidate survives.
+ *
+ * The registry may change while candidates are evaluated; dispatch then
+ * restarts the selection. If the registry never stays stable for one
+ * full attempt (pathological registration churn), the call gives up
+ * after a bounded number of retries and returns RVCL_UNSUPPORTED even
+ * though no kernel decision was reached.
  */
 RVCL_API rvcl_status_t rvcl_dispatch_matmul(
         const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result);
@@ -68,8 +75,10 @@ RVCL_API void rvcl_dispatch_release(rvcl_dispatch_result_t *r);
 /* ---------------------------------------------------------- dispatch cache
  * Repeated dispatches with an identical request (all request fields,
  * compared by raw value) reuse the configured kernel instance — no
- * re-filtering, re-validate or re-configure. Any registry change and
- * any change of the capability snapshot invalidate the whole cache.
+ * re-filtering, re-validate or re-configure. Any registry change
+ * invalidates the whole cache. The capability snapshot is otherwise
+ * fixed for the process lifetime; only the internal test-only override
+ * replaces it, and that override clears the cache itself.
  * rvcl_dispatch_release() detaches a cache-owned result safely.
  * Clearing the cache does not reset the counters below.
  */

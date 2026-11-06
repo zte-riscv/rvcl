@@ -19,7 +19,8 @@
  *
  * Six-stage filtering, then cost-based selection:
  *   1. operation     — descriptor operation equals the request operation
- *   2. datatype      — exact (A,B,acc,C) match after AUTO resolution
+ *   2. datatype      — exact (A,B,acc,C) match after AUTO resolution,
+ *                      plus quantization support for quantized requests
  *   3. capability    — every required feature is present in the snapshot
  *   4. vlen tier     — kernel tier is 0 (any) or not above the host tier
  *   5. shape         — m/n/k inside the kernel's inclusive bounds
@@ -258,8 +259,14 @@ static rvcl_status_t validate_request(const rvcl_matmul_desc_t *d) {
 
 static int filter_datatype(const rvcl_kernel_desc_t *kd,
         const rvcl_matmul_desc_t *d, rvcl_dtype_t acc) {
-    return kd->dtype_a == d->dtype_a && kd->dtype_b == d->dtype_b
-            && kd->dtype_acc == acc && kd->dtype_c == d->dtype_c;
+    if (kd->dtype_a != d->dtype_a || kd->dtype_b != d->dtype_b
+            || kd->dtype_acc != acc || kd->dtype_c != d->dtype_c)
+        return 0;
+    /* A kernel that declares no quantization support would compute a
+     * quantized request as if it were not quantized: exclude it before
+     * instantiation rather than relying on validate(). */
+    if (d->quant.enabled && kd->quant_support == RVCL_QUANT_NONE) return 0;
+    return 1;
 }
 
 static int filter_capability(

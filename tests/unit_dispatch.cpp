@@ -252,8 +252,20 @@ static int vector_build(void) {
     return rvcl_registry_find_factory("rvcl_matmul_f32_rvv") != NULL;
 }
 
+/* Portable generic entry, registered on builds without vector
+ * compilation. */
+static int portable_f32_registered(void) {
+    return rvcl_registry_find_factory("rvcl_matmul_f32_rvv_c") != NULL;
+}
+
 static int host_has_rvv(void) {
     return rvcl_capability_has(rvcl_get_capability(), RVCL_FEATURE_RVV);
+}
+
+/* Descriptor requires no capability: it survives an empty snapshot. */
+static int featureless_by_name(const char *name) {
+    const int idx = find_index(name);
+    return idx >= 0 && rvcl_registry_get(idx)->num_required_features == 0;
 }
 
 static int required_by_name(const char *name, rvcl_feature_id_t id) {
@@ -346,7 +358,8 @@ static void tc01_rvv_selection(void) {
     rvcl_dispatch_release(r);
 }
 
-/* TC-AC3-02: without a usable vector path, f32 selects the featureless
+/* TC-AC3-02: without a usable vector path, f32 selects the portable
+ * generic entry when the build provides one, otherwise the featureless
  * reference fallback. */
 static void tc02_reference_selection(void) {
     printf("TC-AC3-02 f32 selection without a usable vector path\n");
@@ -361,9 +374,39 @@ static void tc02_reference_selection(void) {
     CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
             "f32 dispatch succeeds");
     const char *name = r ? rvcl_dispatch_kernel_name(r) : NULL;
-    CHECK(name && name_ends_with(name, "reference"),
-            "selected kernel is the reference fallback");
+    if (portable_f32_registered()) {
+        CHECK(name && strcmp(name, "rvcl_matmul_f32_rvv_c") == 0,
+                "portable entry is preferred over the reference fallback");
+    } else {
+        CHECK(name && name_ends_with(name, "reference"),
+                "selected kernel is the reference fallback");
+    }
     rvcl_dispatch_release(r);
+}
+
+/* TC-AC3-02b: a quantized request must not fall through to a kernel that
+ * would compute it as if unquantized. No built-in kernel declares
+ * quantization support, so a built-in-only registry rejects the request
+ * instead of selecting the reference backend. */
+static void tc02b_quantized_rejected(void) {
+    printf("TC-AC3-02b quantized built-in request is rejected\n");
+    rvcl_dispatch_cache_clear();
+    rvcl_matmul_desc_t d = make_request(16, 16, 16, RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    d.quant.enabled = 1;
+    d.quant.scale_a = 0.5f;
+    d.quant.scale_b = 0.25f;
+    d.quant.scale_c = 1.0f;
+
+    rvcl_dispatch_result_t *r = NULL;
+    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_UNSUPPORTED,
+            "quantized f32 request -> UNSUPPORTED");
+    CHECK(r == NULL, "no result (reference included) is selected");
+
+    rvcl_dispatch_result_t *r2 = NULL;
+    CHECK(rvcl_dispatch_matmul(&d, &r2) == RVCL_UNSUPPORTED,
+            "repeated quantized request stays unsupported");
+    CHECK(r2 == NULL, "no result leaked on the repeated request");
 }
 
 /* TC-AC3-04: repeated dispatch is deterministic and a cache hit reuses
@@ -467,7 +510,20 @@ static void tc06_cache_key(void) {
     printf("TC-AC3-06 full-field cache key\n");
     rvcl_kernel_desc_t kd = make_desc("t06_k", RVCL_DTYPE_INT8, RVCL_DTYPE_INT8,
             RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
-    CHECK(register_desc(&kd), "counting kernel registered");
+    /* The quantized key variants below need a kernel that declares
+     * support, or the stage-2 quantization filter rejects them. */
+    kd.quant_support = RVCL_QUANT_PER_TENSOR;
+    /* One tuple per dtype variant so each changed request still finds a
+     * candidate; a miss on these keys is therefore observable. */
+    rvcl_kernel_desc_t da = make_desc("t06_a", RVCL_DTYPE_UINT8,
+            RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
+    rvcl_kernel_desc_t db = make_desc("t06_b", RVCL_DTYPE_INT8,
+            RVCL_DTYPE_UINT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
+    rvcl_kernel_desc_t dc = make_desc("t06_c", RVCL_DTYPE_INT8, RVCL_DTYPE_INT8,
+            RVCL_DTYPE_INT32, RVCL_DTYPE_FP32);
+    CHECK(register_desc(&kd) && register_desc(&da) && register_desc(&db)
+                    && register_desc(&dc),
+            "counting kernels registered");
     rvcl_dispatch_cache_clear();
 
     const rvcl_matmul_desc_t base = make_request(16, 16, 16, RVCL_DTYPE_INT8,
@@ -483,6 +539,15 @@ static void tc06_cache_key(void) {
     v = base;
     v.k = 17;
     expect_miss_then_hit(&v, "k variant");
+    v = base;
+    v.dtype_a = RVCL_DTYPE_UINT8;
+    expect_miss_then_hit(&v, "dtype_a variant");
+    v = base;
+    v.dtype_b = RVCL_DTYPE_UINT8;
+    expect_miss_then_hit(&v, "dtype_b variant");
+    v = base;
+    v.dtype_c = RVCL_DTYPE_FP32;
+    expect_miss_then_hit(&v, "dtype_c variant");
     v = base;
     v.dtype_bias = RVCL_DTYPE_INT32;
     expect_miss_then_hit(&v, "bias dtype variant");
@@ -517,6 +582,9 @@ static void tc06_cache_key(void) {
     expect_miss_then_hit(&v, "quant zp_c variant");
 
     unregister_quiet("t06_k");
+    unregister_quiet("t06_a");
+    unregister_quiet("t06_b");
+    unregister_quiet("t06_c");
     rvcl_dispatch_cache_clear();
 }
 
@@ -654,6 +722,14 @@ static void tc09_illegal_tuples(void) {
     v.dtype_c = RVCL_DTYPE_AUTO;
     cases[nc].label = "AUTO in C";
     cases[nc++].d = v;
+    v = base;
+    v.dtype_acc = (rvcl_dtype_t)99;
+    cases[nc].label = "out-of-range accumulator dtype";
+    cases[nc++].d = v;
+    v = base;
+    v.dtype_bias = (rvcl_dtype_t)99;
+    cases[nc].label = "out-of-range bias dtype";
+    cases[nc++].d = v;
 
     for (int i = 0; i < nc; i++) {
         rvcl_dispatch_result_t *r = NULL;
@@ -673,6 +749,15 @@ static void tc09_illegal_tuples(void) {
     CHECK(rvcl_dispatch_matmul(&mixed, &r) == RVCL_UNSUPPORTED,
             "mixed A/B input -> UNSUPPORTED");
     CHECK(r == NULL, "no result leaked for a mixed input");
+
+    /* AUTO in the bias slot is the legal "no bias" marker. */
+    const rvcl_matmul_desc_t auto_bias = make_request(16, 16, 16,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    rvcl_dispatch_result_t *rb = NULL;
+    CHECK(rvcl_dispatch_matmul(&auto_bias, &rb) == RVCL_SUCCESS,
+            "AUTO bias slot is accepted");
+    CHECK(rb != NULL, "AUTO-bias request returns a selection");
+    rvcl_dispatch_release(rb);
 }
 
 /* TC-AC3-10: AUTO is legal only in the accumulator slot and resolves by
@@ -833,6 +918,10 @@ static void tc14_validate_veto(void) {
     const int64_t ks[3] = {32, 33, 32};
     const char *want[3] = {"t14_y", "t14_f", "t14_y"};
     for (int i = 0; i < 3; i++) {
+        /* Force a full pipeline run per iteration: otherwise the third
+         * request would be a cache hit and would not exercise the
+         * repeated-dispatch side-effect freedom the case is about. */
+        rvcl_dispatch_cache_clear();
         const rvcl_matmul_desc_t d
                 = make_request(16, 16, ks[i], a, a, acc, acc);
         rvcl_dispatch_result_t *r = NULL;
@@ -852,45 +941,71 @@ static void tc14_validate_veto(void) {
 }
 
 /* TC-AC3-15: an oversized request degrades to an unbounded kernel and
- * the degraded path still computes the golden result. */
+ * the surviving built-in path still computes the golden result. */
 static void tc15_shape_fallback(void) {
     printf("TC-AC3-15 oversized shape falls back and computes\n");
-    rvcl_kernel_desc_t bounded = make_desc("t15_bounded", RVCL_DTYPE_FP32,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    /* Use a tuple no built-in occupies, so the bounded entry is the only
+     * candidate that could win before the fallback: with built-in f32
+     * entries present, a built-in would win the cost tie even if the
+     * shape filter failed. */
+    const rvcl_dtype_t a = RVCL_DTYPE_INT4;
+    const rvcl_dtype_t acc = RVCL_DTYPE_INT32;
+    rvcl_kernel_desc_t bounded = make_desc("t15_bounded", a, a, acc, acc);
     bounded.max_n = 32;
-    CHECK(register_desc(&bounded), "bounded f32 entry registered");
+    rvcl_kernel_desc_t fb = make_desc("t15_f", a, a, acc, acc);
+    CHECK(register_desc(&bounded) && register_desc(&fb),
+            "bounded entry and unbounded fallback registered");
     rvcl_dispatch_cache_clear();
 
-    /* n exceeds the bounded entry's limit. */
     enum { M = 8, N = 33, K = 16 };
-    const int64_t m = M, n = N, k = K;
-    const rvcl_matmul_desc_t d = make_request(m, n, k, RVCL_DTYPE_FP32,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
-
     rvcl_dispatch_result_t *r = NULL;
-    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
-            "oversized shape is still served");
-    const char *name = r ? rvcl_dispatch_kernel_name(r) : NULL;
-    CHECK(name && strcmp(name, "t15_bounded") != 0,
-            "bounded entry is excluded by the shape filter");
-    CHECK(name && unbounded_by_name(name),
-            "an unbounded kernel serves the oversized request");
+
+    /* Inside the bound the bounded entry is selected. */
+    const rvcl_matmul_desc_t in = make_request(M, 32, K, a, a, acc, acc);
+    CHECK(rvcl_dispatch_matmul(&in, &r) == RVCL_SUCCESS,
+            "in-bounds request dispatches");
+    CHECK(rvcl_dispatch_kernel_name(r)
+                    && strcmp(rvcl_dispatch_kernel_name(r), "t15_bounded") == 0,
+            "in-bounds request selects the bounded entry");
     rvcl_dispatch_release(r);
     r = NULL;
 
-    float a[M * K], b[K * N], c[M * N], ref[M * N];
+    /* n exceeds the bound: the fallback is the only survivor. */
+    const rvcl_matmul_desc_t d = make_request(M, N, K, a, a, acc, acc);
+    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
+            "oversized shape is still served");
+    CHECK(rvcl_dispatch_kernel_name(r)
+                    && strcmp(rvcl_dispatch_kernel_name(r), "t15_f") == 0,
+            "bounded entry is excluded and the fallback is selected");
+    CHECK(rvcl_dispatch_kernel_name(r)
+                    && unbounded_by_name(rvcl_dispatch_kernel_name(r)),
+            "the fallback carries no shape limit");
+    rvcl_dispatch_release(r);
+
+    /* An oversized f32 request through the built-in path still computes
+     * the golden result. */
+    float a32[M * K], b32[K * N], c32[M * N], ref[M * N];
     for (int i = 0; i < M * K; i++)
-        a[i] = (float)((i * 13) % 29) / 29.0f - 0.5f;
+        a32[i] = (float)((i * 13) % 29) / 29.0f - 0.5f;
     for (int i = 0; i < K * N; i++)
-        b[i] = (float)((i * 7) % 31) / 31.0f - 0.5f;
-    memset(c, 0, sizeof(c));
-    golden_f32(a, b, NULL, ref, M, N, K);
-    CHECK(rvcl_matmul(&d, a, b, NULL, c) == RVCL_SUCCESS,
-            "degraded dispatch runs through the semantic API");
-    golden_cmp_t cmp = golden_cmp_bitexact(c, ref, (int64_t)M * N);
-    CHECK(cmp.mismatches == 0, "degraded path is bit-identical to the golden");
+        b32[i] = (float)((i * 7) % 31) / 31.0f - 0.5f;
+    memset(c32, 0, sizeof(c32));
+    golden_f32(a32, b32, NULL, ref, M, N, K);
+    const rvcl_matmul_desc_t f32 = make_request(M, N, K, RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    CHECK(rvcl_matmul(&f32, a32, b32, NULL, c32) == RVCL_SUCCESS,
+            "oversized fallback runs through the semantic API");
+    /* The selected micro-kernel may fuse its multiply-add while the
+     * scalar golden's contraction depends on the build and the chosen
+     * kernel path, so compare with a tolerance: this case is about the
+     * shape fallback, not bit-exactness (the differential and concurrent
+     * suites cover that). */
+    golden_cmp_t cmp = golden_cmp_tol(c32, ref, (int64_t)M * N, 1e-5f);
+    CHECK(cmp.mismatches == 0,
+            "fallback path matches the golden within tolerance");
 
     unregister_quiet("t15_bounded");
+    unregister_quiet("t15_f");
     rvcl_dispatch_cache_clear();
 }
 
@@ -1142,10 +1257,16 @@ static void case_inject_feature_subset(void) {
             RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
     CHECK(rvcl_dispatch_matmul(&f32, &r) == RVCL_SUCCESS,
             "featureless snapshot still serves f32");
-    CHECK(rvcl_dispatch_kernel_name(r)
-                    && name_ends_with(
-                            rvcl_dispatch_kernel_name(r), "reference"),
-            "featureless fallback selected");
+    const char *sel = r ? rvcl_dispatch_kernel_name(r) : NULL;
+    CHECK(sel && featureless_by_name(sel),
+            "selected kernel requires no feature");
+    if (portable_f32_registered()) {
+        CHECK(sel && strcmp(sel, "rvcl_matmul_f32_rvv_c") == 0,
+                "portable entry is preferred in a featureless snapshot");
+    } else {
+        CHECK(sel && name_ends_with(sel, "reference"),
+                "reference fallback selected in a featureless snapshot");
+    }
     rvcl_dispatch_release(r);
 
     rvcl_unregister_kernel("t11_q");
@@ -1193,8 +1314,8 @@ static int save_entry(const char *name, rvcl_kernel_desc_t *desc,
 }
 
 /* TC-AC3-03: an injected VLEN=256 excludes higher tiers and prefers 256
- * over 128; removing 256 falls to 128, and re-injecting 128 (without a
- * manual cache clear) immediately reflects the new snapshot. */
+ * over 128; re-injecting 128 (without a manual cache clear) immediately
+ * invalidates the cached 256 selection, and removing 256 falls to 128. */
 static void case_inject_tier_preference(void) {
     printf("TC-AC3-03 injected VLEN preference (injected)\n");
     if (!vector_build()) {
@@ -1221,6 +1342,18 @@ static void case_inject_tier_preference(void) {
     rvcl_dispatch_release(r);
     r = NULL;
 
+    /* Re-injecting 128 must invalidate the cached 256 selection: without
+     * the override's cache clear this dispatch would return the stale
+     * tier-256 result while the tier-256 kernel is still registered. */
+    inject_rvv(128);
+    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
+            "dispatch after re-injecting VLEN=128 succeeds");
+    snprintf(msg, sizeof(msg), "re-injection is reflected immediately (got %d)",
+            r ? tier_of_name(rvcl_dispatch_kernel_name(r)) : -1);
+    CHECK(r && tier_of_name(rvcl_dispatch_kernel_name(r)) == 128, msg);
+    rvcl_dispatch_release(r);
+    r = NULL;
+
     rvcl_kernel_desc_t saved;
     rvcl_kernel_create_fn saved_create = NULL;
     CHECK(save_entry(n256, &saved, &saved_create), "tier-256 entry saved");
@@ -1229,16 +1362,6 @@ static void case_inject_tier_preference(void) {
     CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
             "dispatch after removing tier 256 succeeds");
     snprintf(msg, sizeof(msg), "tier-128 kernel takes over (got %d)",
-            r ? tier_of_name(rvcl_dispatch_kernel_name(r)) : -1);
-    CHECK(r && tier_of_name(rvcl_dispatch_kernel_name(r)) == 128, msg);
-    rvcl_dispatch_release(r);
-    r = NULL;
-
-    /* The override must invalidate the cached 256 selection. */
-    inject_rvv(128);
-    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
-            "dispatch after re-injecting VLEN=128 succeeds");
-    snprintf(msg, sizeof(msg), "re-injection is reflected immediately (got %d)",
             r ? tier_of_name(rvcl_dispatch_kernel_name(r)) : -1);
     CHECK(r && tier_of_name(rvcl_dispatch_kernel_name(r)) == 128, msg);
     rvcl_dispatch_release(r);
@@ -1315,6 +1438,7 @@ int main(int argc, char **argv) {
 
     tc01_rvv_selection();
     tc02_reference_selection();
+    tc02b_quantized_rejected();
     tc04_deterministic_cache();
     tc05_cache_counters();
     tc06_cache_key();

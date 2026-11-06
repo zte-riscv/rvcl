@@ -141,9 +141,9 @@ int main(void) {
             CHECK(strncmp(sel, "rvcl_matmul_f32_rvv", 19) == 0,
                     "vector build with RVV host selects an rvv-family kernel");
         /* Selection is cost-driven with registration order as the
-         * tie-break: dedicated tier variants first, then the generic
-         * entry, then the fallback. The prefix assertion above holds for
-         * every build configuration. */
+         * tie-break: dedicated tier variants first, then the generic or
+         * portable entry, then the reference fallback. The prefix
+         * assertion above holds for every build configuration. */
         CHECK(rvcl_registry_find_factory(sel) != NULL,
                 "selected name resolves in the registry");
     }
