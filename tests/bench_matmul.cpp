@@ -674,6 +674,7 @@ int main(int argc, char **argv) {
                 dtype_ops_for(RVCL_DTYPE_FP32), dtype_ops_for(RVCL_DTYPE_FP16)};
         for (int di = 0; di < 2; di++) { /* f32, f16 test table rows */
             const dtype_ops_t *dop = dtype_ops[di];
+            if (!dop) continue; /* missing test row (never happens today) */
             const int dt = dop->dtype == RVCL_DTYPE_FP16; /* 0 f32, 1 f16 */
             if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
             const char *dtstr = dop->dtstr;

@@ -105,10 +105,6 @@ typedef struct {
     rvcl_dtype_t dtype_c;
     rvcl_quant_support_t quant_support;
 
-    /* Numeric assertion level (see rvcl_assert_level_t above); zero-init
-     * means RVCL_ASSERT_BITEXACT. */
-    rvcl_assert_level_t assert_level;
-
     /* Feature requirements; count <= RVCL_MAX_FEATURES. */
     rvcl_feature_id_t required_features[RVCL_MAX_FEATURES];
     int num_required_features;
@@ -129,6 +125,11 @@ typedef struct {
     /* Cost estimation callback; non-NULL is enforced at registration.
      * Bind rvcl_kernel_cost_zero() when the kernel has no cost model. */
     rvcl_kernel_cost_fn cost_fn;
+
+    /* Numeric assertion level (see rvcl_assert_level_t above); zero-init
+     * means RVCL_ASSERT_BITEXACT. Appended after cost_fn so pre-existing
+     * fields keep their byte offsets (offset-preserving v0.2 addition). */
+    rvcl_assert_level_t assert_level;
 } rvcl_kernel_desc_t;
 
 /* ------------------------------------------------------- operation descs */

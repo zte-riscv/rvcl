@@ -443,8 +443,9 @@ static void parse_corpus(const char *path, corpus_t *c) {
  * this fails loudly instead of silently dropping corpus coverage. */
 #define CORPUS_MAX_KERNELS 8
 
-static int legal_kernels_for(
-        rvcl_dtype_t dt, const char *names[CORPUS_MAX_KERNELS]) {
+static int legal_kernels_for(rvcl_dtype_t dt,
+        const char *names[CORPUS_MAX_KERNELS],
+        rvcl_assert_level_t levels[CORPUS_MAX_KERNELS]) {
     const rvcl_capability_t *cap = rvcl_get_capability();
     int nk = 0;
     for (int i = 0; i < rvcl_registry_count(); i++) {
@@ -465,20 +466,11 @@ static int legal_kernels_for(
             /* exit(2) = corpus/usage error, as used by the parser paths. */
             exit(2);
         }
-        names[nk++] = kd->name;
+        names[nk] = kd->name;
+        levels[nk] = kd->assert_level;
+        nk++;
     }
     return nk;
-}
-
-/* The assertion level a kernel declares for its outputs (drives the
- * compare routing; see dtype_ops.hpp). Unknown kernels default to
- * bit-exact. */
-static rvcl_assert_level_t kernel_assert_level(const char *name) {
-    for (int i = 0, n = rvcl_registry_count(); i < n; i++) {
-        const rvcl_kernel_desc_t *kd = rvcl_registry_get(i);
-        if (kd && strcmp(kd->name, name) == 0) return kd->assert_level;
-    }
-    return RVCL_ASSERT_BITEXACT;
 }
 
 static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt, int dt_explicit) {
@@ -494,7 +486,8 @@ static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt, int dt_explicit) {
         return -1;
     }
     const char *names[CORPUS_MAX_KERNELS];
-    const int nk = legal_kernels_for(dt, names);
+    rvcl_assert_level_t levels[CORPUS_MAX_KERNELS];
+    const int nk = legal_kernels_for(dt, names, levels);
     const char *dtstr = op->dtstr;
     char shape_s[64];
     snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)cc->m,
@@ -547,8 +540,7 @@ static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt, int dt_explicit) {
             fails++;
             continue;
         }
-        golden_cmp_t r = op->compare(
-                c, golden, elems, kernel_assert_level(names[i]), dt);
+        golden_cmp_t r = op->compare(c, golden, elems, levels[i], dt);
         if (r.mismatches == 0) {
             printf("  ok: %s (%s, %s) %s\n", cc->label, shape_s, dtstr,
                     names[i]);

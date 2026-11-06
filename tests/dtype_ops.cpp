@@ -47,14 +47,10 @@ static void fill_f16_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_f16((uint16_t *)buf, n, seed);
 }
 
-/* fp32 storage is the value itself: the f32_to_storage slot exists for
- * table uniformity and is only meaningful (and only ever invoked) for
- * fp16. */
-static uint16_t f32_identity_storage(float f) {
-    uint16_t lo;
-    __builtin_memcpy(&lo, &f, sizeof(lo));
-    return lo;
-}
+/* fp32 storage is the value itself (4 bytes) while the f32_to_storage
+ * slot returns a narrow (uint16_t) storage word, so it is only meaningful
+ * for narrow dtypes (fp16). The fp32 row keeps it NULL; no consumer
+ * dereferences it for fp32 (both call sites guard on fp16). */
 
 /* Compare routing driven by the kernel desc assertion level. The
  * tolerance class is read from the LIBRARY trait table by dtype (single
@@ -81,7 +77,7 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .golden = golden_f32_op,
                 .fill = fill_f32_op,
                 .compare = compare_op,
-                .f32_to_storage = f32_identity_storage,
+                .f32_to_storage = NULL, /* narrow-only; see above */
         },
         {
                 .dtstr = "f16",

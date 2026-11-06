@@ -17,7 +17,7 @@
  *
  * dtype_traits.hpp — library-side dtype fact table (single source of truth)
  *
- * Holds only library facts: element size, family, corpus label, the AUTO
+ * Holds only library facts: element size, family, the AUTO
  * accumulation habit, the default assertion level and the tolerance class.
  * Backend headers (rvv_fp16.hpp) and test golden data are deliberately
  * out of scope here to keep the common layer free of a common -> backends/
@@ -47,8 +47,6 @@ typedef struct {
     /* Element size in bytes; 0 for AUTO / unknown. */
     size_t size;
     rvcl_dtype_family_t family;
-    /* Corpus / tool label ("f32", "f16", ...). */
-    const char *corpus_name;
     /* The accumulator dtype an AUTO request resolves to when this dtype is
      * the A operand (resolve_acc habit: int8/uint8 -> INT32, else FP32). */
     rvcl_dtype_t acc_default;

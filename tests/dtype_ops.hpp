@@ -51,8 +51,9 @@ typedef struct {
      * tolerance class comes from the library trait table by dtype. */
     golden_cmp_t (*compare)(const float *got, const float *exp, int64_t n,
             rvcl_assert_level_t level, rvcl_dtype_t dtype);
-    /* Soft-convert reference: fp32 value -> dtype storage
-     * (identity for fp32, rvv_f32_to_f16 for fp16). */
+    /* Soft-convert reference: fp32 value -> narrow dtype storage
+     * (rvv_f32_to_f16 for fp16); NULL for fp32, whose storage is the
+     * 4-byte value itself and cannot fit this uint16_t slot. */
     uint16_t (*f32_to_storage)(float);
 } dtype_ops_t;
 
