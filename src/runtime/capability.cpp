@@ -31,8 +31,19 @@
 
 #include "rvcl/capability.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "capability_internal.h"
+#include "rvcl/dispatch.h"
+
+/* Test override state: when active, rvcl_get_capability() serves this
+ * copy instead of the host snapshot. The buffer and the flag share one
+ * mutex with every snapshot read, so an override install never tears. */
+static rvcl_capability_t g_cap_override;
+static int g_cap_overridden;
+static pthread_mutex_t g_cap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Compile-time knowledge of the build target. */
 static void detect_compiletime(rvcl_capability_t *cap) {
@@ -89,6 +100,28 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
 
+/* The V bit macro is RISCV_HWPROBE_IMA_V in the original header and
+ * RISCV_HWPROBE_EXT_V in newer spellings; both name the same frozen bit
+ * position, so fall back across names and finally to the raw bit. */
+#if !defined(RISCV_HWPROBE_IMA_V)
+#if defined(RISCV_HWPROBE_EXT_V)
+#define RISCV_HWPROBE_IMA_V RISCV_HWPROBE_EXT_V
+#else
+#define RISCV_HWPROBE_IMA_V (1 << 2)
+#endif
+#endif
+
+/* Append-only merge rule of the runtime layer: a feature may be added
+ * when absent, but nothing already present is ever removed or
+ * downgraded — the compile-time view is a lower bound. */
+static void cap_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
+    if (rvcl_capability_has(cap, id)) return;
+    if (cap->num_features >= RVCL_MAX_FEATURES) return;
+    cap->features[cap->num_features].id = id;
+    cap->features[cap->num_features].value = 1;
+    cap->num_features++;
+}
+
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
             {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
@@ -106,23 +139,34 @@ static void detect_runtime(rvcl_capability_t *cap) {
     }
 
     const uint64_t ext = pairs[0].value;
-    int n = cap->num_features;
 
-    int has_rvv = (ext & RISCV_HWPROBE_IMA_V) != 0;
-    int seen_rvv = 0;
-    for (int i = 0; i < n; i++) {
-        if (cap->features[i].id == RVCL_FEATURE_RVV) {
-            seen_rvv = 1;
-            /* HWPROBE may not surface new dtype extensions even on silicon
-             * (PLAN §4.5.6): only upgrade here, never downgrade. */
-        }
+    /* hwprobe may not surface new dtype extensions even on silicon
+     * where they exist: each bit below can only add a feature, never
+     * contradict the compile-time view. */
+    const int has_rvv = (ext & RISCV_HWPROBE_IMA_V) != 0;
+    if (has_rvv) cap_add_feature(cap, RVCL_FEATURE_RVV);
+
+/* FP16 is a single feature bit: either Zvfh (native fp16 arithmetic)
+ * or Zvfhmin (conversion-only) counts. The bit macros exist only in
+ * newer kernel headers; on older ones this layer contributes nothing
+ * for fp16 and the compile-time view stands. */
+#if defined(RISCV_HWPROBE_EXT_ZVFH) || defined(RISCV_HWPROBE_EXT_ZVFHMIN)
+    {
+        int has_fp16 = 0;
+#if defined(RISCV_HWPROBE_EXT_ZVFH)
+        has_fp16 |= (ext & RISCV_HWPROBE_EXT_ZVFH) != 0;
+#endif
+#if defined(RISCV_HWPROBE_EXT_ZVFHMIN)
+        has_fp16 |= (ext & RISCV_HWPROBE_EXT_ZVFHMIN) != 0;
+#endif
+        if (has_fp16) cap_add_feature(cap, RVCL_FEATURE_FP16);
     }
-    if (has_rvv && !seen_rvv && n < RVCL_MAX_FEATURES) {
-        cap->features[n].id = RVCL_FEATURE_RVV;
-        cap->features[n].value = 1;
-        n++;
-        cap->num_features = n;
-    }
+#endif
+#if defined(RISCV_HWPROBE_EXT_ZVFBFMIN)
+    if ((ext & RISCV_HWPROBE_EXT_ZVFBFMIN) != 0)
+        cap_add_feature(cap, RVCL_FEATURE_BF16);
+#endif
+
     /* VLEN upgrade: safe whenever V is confirmed. hwprobe reporting V is
      * the runtime confirmation (baseline-tier builds); the compile-time
      * macro covered the no-hwprobe return above. When hwprobe explicitly
@@ -157,6 +201,25 @@ const rvcl_feature_t *rvcl_capability_get(
     return NULL;
 }
 
+/* Human-readable summary, shared by the host detection path and the
+ * test override path so an overridden snapshot describes itself with
+ * exactly the same semantics: the feature count, and the VLEN bits
+ * whenever the RVV entry carries a readable width. */
+static void format_description(rvcl_capability_t *cap) {
+    const rvcl_feature_t *rvv = rvcl_capability_get(cap, RVCL_FEATURE_RVV);
+    if (rvv && rvv->value > 1)
+        snprintf(cap->description, sizeof(cap->description),
+                "rvcl-capability: %d feature(s) detected, rvv vlen=%u",
+                cap->num_features, rvv->value);
+    else if (rvv)
+        snprintf(cap->description, sizeof(cap->description),
+                "rvcl-capability: %d feature(s) detected, rvv vlen=unknown",
+                cap->num_features);
+    else
+        snprintf(cap->description, sizeof(cap->description),
+                "rvcl-capability: %d feature(s) detected", cap->num_features);
+}
+
 /* Detection + description assembly, run exactly once by the magic-static
  * initializer in rvcl_get_capability(). A function-local static with a
  * non-trivial initializer is thread-safe in C++11 [stmt.dcl]: the standard
@@ -168,26 +231,52 @@ static rvcl_capability_t build_capability(void) {
     memset(&cap, 0, sizeof(cap));
     detect_compiletime(&cap);
     detect_runtime(&cap);
-
-    /* Human-readable summary; the RVV entry carries the VLEN when the
-     * vlenb read succeeded (value > 1). */
-    const rvcl_feature_t *rvv = rvcl_capability_get(&cap, RVCL_FEATURE_RVV);
-    if (rvv && rvv->value > 1)
-        snprintf(cap.description, sizeof(cap.description),
-                "rvcl-capability: %d feature(s) detected, rvv vlen=%u",
-                cap.num_features, rvv->value);
-    else if (rvv)
-        snprintf(cap.description, sizeof(cap.description),
-                "rvcl-capability: %d feature(s) detected, rvv vlen=unknown",
-                cap.num_features);
-    else
-        snprintf(cap.description, sizeof(cap.description),
-                "rvcl-capability: %d feature(s) detected", cap.num_features);
-
+    format_description(&cap);
     return cap;
 }
 
+int rvcl_capability_vlen_tier(const rvcl_capability_t *cap) {
+    if (!cap) return RVCL_VLEN_TIER_ANY;
+    const rvcl_feature_t *rvv = rvcl_capability_get(cap, RVCL_FEATURE_RVV);
+    /* No RVV entry, or a width below 128 (including the
+     * present-but-unknown value 1): no tier, only tier-agnostic kernels
+     * pass a tier check against this snapshot. */
+    if (!rvv || rvv->value < RVCL_VLEN_TIER_128) return RVCL_VLEN_TIER_ANY;
+    if (rvv->value >= RVCL_VLEN_TIER_1024) return RVCL_VLEN_TIER_1024;
+    if (rvv->value >= RVCL_VLEN_TIER_512) return RVCL_VLEN_TIER_512;
+    if (rvv->value >= RVCL_VLEN_TIER_256) return RVCL_VLEN_TIER_256;
+    return RVCL_VLEN_TIER_128;
+}
+
+void rvcl_capability_test_override(const rvcl_capability_t *cap) {
+    pthread_mutex_lock(&g_cap_mutex);
+    if (cap) {
+        g_cap_override = *cap;
+        /* The copy keeps the injected features but gets a
+         * library-generated summary: consumers must not be able to tell
+         * an overridden snapshot from a detected one by its formatting. */
+        format_description(&g_cap_override);
+        g_cap_overridden = 1;
+    } else {
+        g_cap_overridden = 0;
+    }
+    pthread_mutex_unlock(&g_cap_mutex);
+    /* The selection input changed while dispatch keys encode only the
+     * request: drop cached selections so the next dispatch reflects the
+     * now-active snapshot, in both the override and the restore
+     * direction. */
+    rvcl_dispatch_cache_clear();
+}
+
 const rvcl_capability_t *rvcl_get_capability(void) {
+    pthread_mutex_lock(&g_cap_mutex);
+    if (g_cap_overridden) {
+        const rvcl_capability_t *overridden = &g_cap_override;
+        pthread_mutex_unlock(&g_cap_mutex);
+        return overridden;
+    }
+    pthread_mutex_unlock(&g_cap_mutex);
+
     static rvcl_capability_t g_cap = build_capability();
     return &g_cap;
 }
