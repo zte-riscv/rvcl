@@ -15,7 +15,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * dispatch.cpp — kernel selection pipeline
+ * dispatch.cpp — generic kernel selection pipeline
  *
  * Six-stage filtering, then cost-based selection:
  *   1. operation     — descriptor operation equals the request operation
@@ -30,6 +30,13 @@
  * instantiated only when they can still win, so rejections at stage 6
  * simply move on to the next candidate.
  *
+ * The pipeline is operator-generic: each operator contributes one op-table
+ * entry (a request validator that resolves the datatype/shape filter inputs
+ * and a cache-key generator), and every registered operator automatically
+ * gets the whole pipeline and dispatch cache. rvcl_dispatch_op() is the
+ * internal generic entry; the public per-operator wrappers look their entry
+ * up and call it.
+ *
  * Dispatch only selects and configures; it never runs computations and
  * holds no ISA-specific code. Selection works on a registry snapshot so
  * a concurrent registration or unregistration is never observed
@@ -41,6 +48,7 @@
 
 #include "../common/dtype_traits.hpp"
 #include "capability_internal.h"
+#include "dispatch_internal.h"
 #include "registry_internal.h"
 #include "rvcl/capability.h"
 #include "rvcl/init.h"
@@ -55,19 +63,22 @@ struct rvcl_dispatch_result {
     rvcl_kernel_t *kernel;
     rvcl_workspace_req_t ws_req[RVCL_MAX_WORKSPACES];
     int num_ws;
-    /* Refcount: the cache holds one reference; every rvcl_dispatch_matmul()
-     * call (hit or fresh) hands out another. rvcl_dispatch_release() drops
-     * a reference and frees only at zero — the semantic API may release
+    /* Refcount: the cache holds one reference; every dispatch call (hit
+     * or fresh) hands out another. rvcl_dispatch_release() drops a
+     * reference and frees only at zero — the semantic API may release
      * its handle while the cache keeps the instance alive. */
     int refs;
 };
 
 /* ------------------------------------------------------ dispatch cache
  * Small direct-mapped cache of configured kernels keyed by the full
- * matmul request. Hit → reuse the configured instance (no filtering,
- * validate or configure); miss → full pipeline. Entries are tagged with
- * the registry generation they were selected under, so a registry
- * change racing a selection can never leave a stale selection cached.
+ * request (operator discriminant + full-width operation descriptor). Hit →
+ * reuse the configured instance (no filtering, validate or configure);
+ * miss → full pipeline. Entries are tagged with the registry generation
+ * they were selected under, so a registry change racing a selection can
+ * never leave a stale selection cached. The op discriminant participates
+ * in every comparison, so two operators whose descriptors collide in a
+ * cache slot never share an entry.
  */
 
 #define RVCL_DISPATCH_CACHE_SLOTS 8
@@ -79,7 +90,8 @@ struct rvcl_dispatch_result {
 typedef struct {
     int used;
     unsigned generation;
-    rvcl_matmul_desc_t key;
+    rvcl_operation_t op;
+    rvcl_op_desc_t key;
     rvcl_dispatch_result_t *result;
 } cache_slot_t;
 
@@ -90,10 +102,47 @@ static int g_cache_hits, g_cache_misses; /* observability */
 /* forward: cache eviction / clear drop their reference through this */
 static void result_unref(rvcl_dispatch_result_t *r);
 
+/* --------------------------------------------------------------- op table
+ * One entry per operator: a request validator resolving the datatype/shape
+ * filter inputs and a cache-key generator. The table is populated at
+ * startup with the matmul entry; internal callers and tests may append
+ * entries via rvcl_dispatch_register_op(). */
+#define RVCL_DISPATCH_MAX_OPS 8
+
+/* forward: the matmul entry's validator and key generator (defined in the
+ * keys / request sections below) */
+static rvcl_status_t matmul_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t matmul_key_hash(const rvcl_op_desc_t *key);
+static int matmul_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
+static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
+        {RVCL_OP_MATMUL, matmul_dims_validate, matmul_key_hash,
+                matmul_key_equal},
+};
+static int g_op_count = 1;
+
+static const rvcl_dispatch_op_entry_t *op_entry(rvcl_operation_t op) {
+    for (int i = 0; i < g_op_count; i++)
+        if (g_op_table[i].op == op) return &g_op_table[i];
+    return NULL;
+}
+
+rvcl_status_t rvcl_dispatch_register_op(const rvcl_dispatch_op_entry_t *entry) {
+    if (!entry || !entry->dims_validate || !entry->key_hash
+            || !entry->key_equal)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (op_entry(entry->op)) return RVCL_ERROR_ALREADY_REGISTERED;
+    if (g_op_count >= RVCL_DISPATCH_MAX_OPS) return RVCL_ERROR_OUT_OF_MEMORY;
+    g_op_table[g_op_count++] = *entry;
+    return RVCL_SUCCESS;
+}
+
 /* --------------------------------------------------------------- keys */
 /* The cache key is the raw request: every field participates, and an
  * AUTO datatype is not normalized to its resolved explicit value. Float
- * fields compare by bit pattern so equality and hashing agree. */
+ * fields compare by bit pattern so equality and hashing agree. Each
+ * operator's key generator covers its descriptor's full field set. */
 
 static uint32_t float_bits(float f) {
     uint32_t u;
@@ -101,18 +150,24 @@ static uint32_t float_bits(float f) {
     return u;
 }
 
-static int desc_key_equal(
-        const rvcl_matmul_desc_t *a, const rvcl_matmul_desc_t *b) {
-    return a->m == b->m && a->n == b->n && a->k == b->k
-            && a->dtype_a == b->dtype_a && a->dtype_b == b->dtype_b
-            && a->dtype_acc == b->dtype_acc && a->dtype_c == b->dtype_c
-            && a->dtype_bias == b->dtype_bias
-            && a->quant.enabled == b->quant.enabled
-            && float_bits(a->quant.scale_a) == float_bits(b->quant.scale_a)
-            && float_bits(a->quant.scale_b) == float_bits(b->quant.scale_b)
-            && float_bits(a->quant.scale_c) == float_bits(b->quant.scale_c)
-            && a->quant.zp_a == b->quant.zp_a && a->quant.zp_b == b->quant.zp_b
-            && a->quant.zp_c == b->quant.zp_c;
+static int matmul_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    return a->matmul.m == b->matmul.m && a->matmul.n == b->matmul.n
+            && a->matmul.k == b->matmul.k
+            && a->matmul.dtype_a == b->matmul.dtype_a
+            && a->matmul.dtype_b == b->matmul.dtype_b
+            && a->matmul.dtype_acc == b->matmul.dtype_acc
+            && a->matmul.dtype_c == b->matmul.dtype_c
+            && a->matmul.dtype_bias == b->matmul.dtype_bias
+            && a->matmul.quant.enabled == b->matmul.quant.enabled
+            && float_bits(a->matmul.quant.scale_a)
+            == float_bits(b->matmul.quant.scale_a)
+            && float_bits(a->matmul.quant.scale_b)
+            == float_bits(b->matmul.quant.scale_b)
+            && float_bits(a->matmul.quant.scale_c)
+            == float_bits(b->matmul.quant.scale_c)
+            && a->matmul.quant.zp_a == b->matmul.quant.zp_a
+            && a->matmul.quant.zp_b == b->matmul.quant.zp_b
+            && a->matmul.quant.zp_c == b->matmul.quant.zp_c;
 }
 
 static unsigned hash_mix(unsigned h, uint64_t v) {
@@ -121,33 +176,33 @@ static unsigned hash_mix(unsigned h, uint64_t v) {
     return h;
 }
 
-static unsigned desc_key_hash(const rvcl_matmul_desc_t *d) {
+static uint32_t matmul_key_hash(const rvcl_op_desc_t *key) {
     unsigned h = 2166136261u;
-    h = hash_mix(h, (uint64_t)d->m);
-    h = hash_mix(h, (uint64_t)d->n);
-    h = hash_mix(h, (uint64_t)d->k);
-    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
-    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
-    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
-    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
-    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
-    h = hash_mix(h, (uint64_t)(unsigned)d->quant.enabled);
-    h = hash_mix(h, float_bits(d->quant.scale_a));
-    h = hash_mix(h, float_bits(d->quant.scale_b));
-    h = hash_mix(h, float_bits(d->quant.scale_c));
-    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_a);
-    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_b);
-    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_c);
+    h = hash_mix(h, (uint64_t)key->matmul.m);
+    h = hash_mix(h, (uint64_t)key->matmul.n);
+    h = hash_mix(h, (uint64_t)key->matmul.k);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.dtype_bias);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.enabled);
+    h = hash_mix(h, float_bits(key->matmul.quant.scale_a));
+    h = hash_mix(h, float_bits(key->matmul.quant.scale_b));
+    h = hash_mix(h, float_bits(key->matmul.quant.scale_c));
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_a);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_b);
+    h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_c);
     return h;
 }
 
 /* lookup: returns the result (borrowed, cache-owned) or NULL. An entry
  * selected under an older registry generation is dropped on sight. */
-static rvcl_dispatch_result_t *cache_lookup(
-        const rvcl_matmul_desc_t *key, unsigned generation) {
-    unsigned idx = desc_key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
+static rvcl_dispatch_result_t *cache_lookup(const rvcl_dispatch_op_entry_t *e,
+        const rvcl_op_desc_t *key, unsigned generation) {
+    unsigned idx = e->key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
     cache_slot_t *s = &g_cache[idx];
-    if (!s->used || !desc_key_equal(&s->key, key)) return NULL;
+    if (!s->used || s->op != e->op || !e->key_equal(&s->key, key)) return NULL;
     if (s->generation != generation) {
         result_unref(s->result);
         s->used = 0;
@@ -162,18 +217,19 @@ static rvcl_dispatch_result_t *cache_lookup(
  * first call won) — then *winner is that entry. Replaces any previous
  * entry with a different key or an older generation, dropping its cache
  * reference. */
-static int cache_insert(const rvcl_matmul_desc_t *key,
-        rvcl_dispatch_result_t *r, unsigned generation,
-        rvcl_dispatch_result_t **winner) {
-    unsigned idx = desc_key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
+static int cache_insert(const rvcl_dispatch_op_entry_t *e,
+        const rvcl_op_desc_t *key, rvcl_dispatch_result_t *r,
+        unsigned generation, rvcl_dispatch_result_t **winner) {
+    unsigned idx = e->key_hash(key) % RVCL_DISPATCH_CACHE_SLOTS;
     cache_slot_t *s = &g_cache[idx];
-    if (s->used && s->generation == generation
-            && desc_key_equal(&s->key, key)) {
+    if (s->used && s->generation == generation && s->op == e->op
+            && e->key_equal(&s->key, key)) {
         *winner = s->result; /* same key: keep the older instance */
         return 0;
     }
     if (s->used) result_unref(s->result); /* evict the cache's reference */
     s->used = 1;
+    s->op = e->op;
     s->generation = generation;
     s->key = *key;
     s->result = r;
@@ -211,6 +267,9 @@ int rvcl_dispatch_cache_misses(void) {
 }
 
 /* ------------------------------------------------------------- request */
+/* Request-side validation and AUTO resolution are operator-specific and
+ * live in each op-table entry's dims_validate. The matmul entry below
+ * resolves its filter inputs from the matmul descriptor. */
 
 /* Datatypes this iteration can serve in a request. Reserved enum values
  * are rejected as illegal tuple members rather than reported as "no
@@ -256,17 +315,38 @@ static rvcl_status_t validate_request(const rvcl_matmul_desc_t *d) {
     return RVCL_SUCCESS;
 }
 
-/* ------------------------------------------------------------- filters */
+/* The matmul op-table entry: validates the request and resolves the
+ * generic filter inputs. */
+static rvcl_status_t matmul_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_matmul_desc_t *d = &od->matmul;
+    if (d->m <= 0 || d->n <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_request(d);
+    if (st != RVCL_SUCCESS) return st;
+    out->m = d->m;
+    out->n = d->n;
+    out->k = d->k;
+    out->dtype_a = d->dtype_a;
+    out->dtype_b = d->dtype_b;
+    out->dtype_acc = resolve_acc(d);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
 
-static int filter_datatype(const rvcl_kernel_desc_t *kd,
-        const rvcl_matmul_desc_t *d, rvcl_dtype_t acc) {
-    if (kd->dtype_a != d->dtype_a || kd->dtype_b != d->dtype_b
-            || kd->dtype_acc != acc || kd->dtype_c != d->dtype_c)
+/* ------------------------------------------------------------- filters */
+/* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
+ * stays operator-generic. */
+
+static int filter_datatype(
+        const rvcl_kernel_desc_t *kd, const rvcl_dispatch_filter_t *f) {
+    if (kd->dtype_a != f->dtype_a || kd->dtype_b != f->dtype_b
+            || kd->dtype_acc != f->dtype_acc || kd->dtype_c != f->dtype_c)
         return 0;
     /* A kernel that declares no quantization support would compute a
      * quantized request as if it were not quantized: exclude it before
      * instantiation rather than relying on validate(). */
-    if (d->quant.enabled && kd->quant_support == RVCL_QUANT_NONE) return 0;
+    if (f->quant_enabled && kd->quant_support == RVCL_QUANT_NONE) return 0;
     return 1;
 }
 
@@ -284,18 +364,23 @@ static int in_bounds(int64_t v, int64_t lo, int64_t hi) {
 }
 
 static int filter_shape(
-        const rvcl_kernel_desc_t *kd, const rvcl_matmul_desc_t *d) {
-    return in_bounds(d->m, kd->min_m, kd->max_m)
-            && in_bounds(d->n, kd->min_n, kd->max_n)
-            && in_bounds(d->k, kd->min_k, kd->max_k);
+        const rvcl_kernel_desc_t *kd, const rvcl_dispatch_filter_t *f) {
+    return in_bounds(f->m, kd->min_m, kd->max_m)
+            && in_bounds(f->n, kd->min_n, kd->max_n)
+            && in_bounds(f->k, kd->min_k, kd->max_k);
 }
 
 /* ------------------------------------------------------------- dispatch */
 
-rvcl_status_t rvcl_dispatch_matmul(
-        const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result) {
-    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+rvcl_status_t rvcl_dispatch_op(rvcl_operation_t op, const rvcl_op_desc_t *od,
+        rvcl_dispatch_result_t **result) {
+    if (!od || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     *result = NULL;
+
+    /* An operator with no dispatch table entry cannot be served: reject
+     * it here rather than reporting an empty selection. */
+    const rvcl_dispatch_op_entry_t *e = op_entry(op);
+    if (!e) return RVCL_UNSUPPORTED;
 
     /* Lazy init: a first computation without an explicit rvcl_init()
      * still dispatches over the full built-in registry. The init fast
@@ -305,9 +390,10 @@ rvcl_status_t rvcl_dispatch_matmul(
     const rvcl_status_t init_st = rvcl_init();
     if (init_st != RVCL_SUCCESS) return init_st;
 
-    if (desc->m <= 0 || desc->n <= 0 || desc->k <= 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
-    rvcl_status_t st = validate_request(desc);
+    /* Validate the request and resolve the filter inputs the pipeline
+     * stages consume (shape, datatype tuple with AUTO resolved, quant). */
+    rvcl_dispatch_filter_t f;
+    rvcl_status_t st = e->dims_validate(od, &f);
     if (st != RVCL_SUCCESS) return st;
 
     /* Cache hit: reuse the configured instance and hand out a fresh
@@ -317,7 +403,7 @@ rvcl_status_t rvcl_dispatch_matmul(
     unsigned generation = 0;
     pthread_mutex_lock(&g_cache_mutex);
     generation = rvcl_registry_generation();
-    rvcl_dispatch_result_t *cached = cache_lookup(desc, generation);
+    rvcl_dispatch_result_t *cached = cache_lookup(e, od, generation);
     if (cached) {
         g_cache_hits++;
         cached->refs++;
@@ -329,8 +415,6 @@ rvcl_status_t rvcl_dispatch_matmul(
     pthread_mutex_unlock(&g_cache_mutex);
 
     const rvcl_capability_t *cap = rvcl_get_capability();
-    const rvcl_op_desc_t od = {.matmul = *desc};
-    const rvcl_dtype_t acc = resolve_acc(desc);
     const int host_tier = rvcl_capability_vlen_tier(cap);
 
     /* Snapshot storage: one buffer per dispatch call, reused by every
@@ -348,15 +432,15 @@ rvcl_status_t rvcl_dispatch_matmul(
         for (int i = 0; i < n; i++) {
             const rvcl_kernel_desc_t *kd = &views[i].desc;
 
-            if (kd->operation != RVCL_OP_MATMUL) continue; /* stage 1 */
-            if (!filter_datatype(kd, desc, acc)) continue; /* stage 2 */
+            if (kd->operation != op) continue; /* stage 1 */
+            if (!filter_datatype(kd, &f)) continue; /* stage 2 */
             if (!filter_capability(kd, cap)) continue; /* stage 3 */
             if (kd->vlen_tier != RVCL_VLEN_TIER_ANY
                     && (int)kd->vlen_tier > host_tier)
                 continue; /* stage 4 */
-            if (!filter_shape(kd, desc)) continue; /* stage 5 */
+            if (!filter_shape(kd, &f)) continue; /* stage 5 */
 
-            const uint64_t cost = kd->cost_fn(&od, cap);
+            const uint64_t cost = kd->cost_fn(od, cap);
             /* Equal cost keeps the earlier candidate: no later entry can
              * win over the current best, so skip its instantiation. */
             if (best && cost >= best_cost) continue;
@@ -370,7 +454,7 @@ rvcl_status_t rvcl_dispatch_matmul(
             }
             if (!k) continue;
             if (k->vt && k->vt->validate
-                    && k->vt->validate(&od, cap) != RVCL_SUCCESS) {
+                    && k->vt->validate(od, cap) != RVCL_SUCCESS) {
                 rvcl_kernel_destroy(k);
                 continue;
             }
@@ -391,7 +475,7 @@ rvcl_status_t rvcl_dispatch_matmul(
         r->num_ws = 0;
         r->refs = 0; /* references are taken below, under the cache lock */
 
-        st = rvcl_kernel_configure(best, &od, r->ws_req, &r->num_ws);
+        st = rvcl_kernel_configure(best, od, r->ws_req, &r->num_ws);
         if (st != RVCL_SUCCESS) {
             rvcl_kernel_destroy(best);
             free(r);
@@ -419,7 +503,7 @@ rvcl_status_t rvcl_dispatch_matmul(
         }
 
         rvcl_dispatch_result_t *winner = NULL;
-        const int inserted = cache_insert(desc, r, generation, &winner);
+        const int inserted = cache_insert(e, od, r, generation, &winner);
         if (inserted) {
             /* Cache reference + caller reference. */
             r->refs = 2;
@@ -435,6 +519,15 @@ rvcl_status_t rvcl_dispatch_matmul(
     }
 
     return RVCL_UNSUPPORTED;
+}
+
+/* Public matmul entry: a thin wrapper that looks the op-table entry up
+ * via rvcl_dispatch_op(). Public ABI and semantics unchanged. */
+rvcl_status_t rvcl_dispatch_matmul(
+        const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result) {
+    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_op_desc_t od = {.matmul = *desc};
+    return rvcl_dispatch_op(RVCL_OP_MATMUL, &od, result);
 }
 
 const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r) {

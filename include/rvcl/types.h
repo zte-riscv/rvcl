@@ -112,6 +112,12 @@ typedef enum {
     RVCL_FEATURE_BF16, /* implies Zvfbfmin (+ Zvfbfwma for wfma) */
     RVCL_FEATURE_INT8,
     RVCL_FEATURE_INT4,
+    /* Upper bound of the standard feature range: registration validates
+     * standard ids as [RVCL_FEATURE_RV64, RVCL_FEATURE_STD_LAST); the
+     * sentinel itself is not a feature. New standard features are added
+     * just before it, so the range derives from the enum instead of a
+     * hard-coded last name. */
+    RVCL_FEATURE_STD_LAST,
     /* vendor/TPE slot: values from RVCL_FEATURE_VENDOR_FIRST are assigned
      * by registration; TPE lands here without model changes (PLAN §4.4). */
     RVCL_FEATURE_VENDOR_FIRST = 0x1000,

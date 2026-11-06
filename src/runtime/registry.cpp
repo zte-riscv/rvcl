@@ -77,7 +77,9 @@ static int dtype_is_concrete(rvcl_dtype_t dt) {
 
 static int feature_id_is_valid(rvcl_feature_id_t id) {
     if (id == RVCL_FEATURE_NONE) return 0;
-    if (id >= RVCL_FEATURE_RV64 && id <= RVCL_FEATURE_INT4) return 1;
+    /* Standard range derives from the enum sentinel (STD_LAST is not a
+     * feature); vendor/TPE ids escape through the vendor slot. */
+    if (id >= RVCL_FEATURE_RV64 && id < RVCL_FEATURE_STD_LAST) return 1;
     return id >= RVCL_FEATURE_VENDOR_FIRST;
 }
 
