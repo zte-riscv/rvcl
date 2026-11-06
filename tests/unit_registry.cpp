@@ -456,6 +456,17 @@ static void tc06_invalid_descriptors(void) {
     ADD_CASE("feature NONE listed",
             (d.required_features[0] = RVCL_FEATURE_NONE,
                     d.num_required_features = 1));
+    /* The standard-range sentinel is not a feature: it must be rejected
+     * even though it sits inside the enum-derived validation bound. */
+    ADD_CASE("feature STD_LAST listed",
+            (d.required_features[0] = RVCL_FEATURE_STD_LAST,
+                    d.num_required_features = 1));
+    /* A value between the standard range and the vendor slot is out of
+     * bounds: it is neither standard nor a vendor id. */
+    ADD_CASE("feature in the std/vendor gap",
+            (d.required_features[0]
+                    = (rvcl_feature_id_t)(RVCL_FEATURE_VENDOR_FIRST - 1),
+                    d.num_required_features = 1));
     ADD_CASE("negative min_m", d.min_m = -1);
     ADD_CASE("min_m above max_m", (d.min_m = 8, d.max_m = 4));
     ADD_CASE("min_n above max_n", (d.min_n = 8, d.max_n = 4));
@@ -476,7 +487,7 @@ static void tc06_invalid_descriptors(void) {
         else
             printf("  FAIL: case accepted: %s\n", cases[i].label);
     }
-    CHECK(total == 22 && rejects == 22, "all malformed descriptors rejected");
+    CHECK(total == 24 && rejects == 24, "all malformed descriptors rejected");
     CHECK(rvcl_register_kernel(NULL, test_create)
                     == RVCL_ERROR_INVALID_ARGUMENT,
             "NULL descriptor rejected");
@@ -484,6 +495,17 @@ static void tc06_invalid_descriptors(void) {
     CHECK(rvcl_register_kernel(&d, NULL) == RVCL_ERROR_INVALID_ARGUMENT,
             "NULL factory rejected");
     CHECK(rvcl_registry_count() == c0, "registry unchanged by all rejections");
+
+    /* Vendor/TPE ids escape the standard range: a descriptor requiring
+     * one registers (the vendor slot carries no model change). */
+    rvcl_kernel_desc_t vendor = make_desc("t06_vendor");
+    vendor.required_features[0] = RVCL_FEATURE_VENDOR_FIRST;
+    vendor.num_required_features = 1;
+    CHECK(rvcl_register_kernel(&vendor, test_create) == RVCL_SUCCESS,
+            "vendor feature id accepted (vendor slot escape)");
+    unregister_quiet("t06_vendor");
+    rvcl_dispatch_cache_clear();
+    CHECK(rvcl_registry_count() == c0, "registry restored after vendor case");
 }
 
 /* TC-AC1-07: count / iteration / factory lookup contract. */
