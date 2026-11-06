@@ -22,9 +22,10 @@
  * discovers what exists purely through the registry.
  *
  * Registration order is a dispatch contract (RFC-0002 FR1.5): dedicated
- * variants first (high VLEN tier to low), then generic, then the
- * unbounded fallback last. Dispatch breaks cost ties by this order, so
- * the sequence below directly shapes selection.
+ * variants first (high VLEN tier to low), then generic (including the
+ * portable entries on non-vector builds), then the unbounded fallback
+ * last. Dispatch breaks cost ties by this order, so the sequence below
+ * directly shapes selection.
  ******************************************************************************/
 
 #include "rvcl/init.h"
@@ -54,16 +55,13 @@ static rvcl_status_t register_all(void) {
     /* Dedicated tiers (high -> low) + generic, vector builds only. */
     st = rvcl_rvv_register();
     if (st != RVCL_SUCCESS) return st;
-#endif
-    /* Unbounded f32 fallback. */
-    st = rvcl_reference_register();
+    /* Portable generic entries (non-vector builds only) are still
+     * preferred over the reference fallback, so they register first. */
+    st = rvcl_rvv_register_portable();
     if (st != RVCL_SUCCESS) return st;
-#if defined(RVCL_ENABLE_RVV_BUILD)
-    /* Portable fallback-class entries, non-vector builds only. */
-    return rvcl_rvv_register_portable();
-#else
-    return RVCL_SUCCESS;
 #endif
+    /* Unbounded f32 fallback, last. */
+    return rvcl_reference_register();
 }
 
 static pthread_mutex_t g_init_mutex = PTHREAD_MUTEX_INITIALIZER;

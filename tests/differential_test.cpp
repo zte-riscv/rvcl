@@ -775,13 +775,12 @@ int main(int argc, char **argv) {
         CHECK(bad16 == 0, "rvv f16 (packed) matches soft-converted golden");
     }
 
-    /* ---- dispatch selection prefers rvv over reference (priority) ---- */
+    /* ---- dispatch selection through the full pipeline ---- */
     {
         rvcl_dispatch_result_t *r = NULL;
-        /* fp32 on an x86 host has no RVV feature → reference selected.
-         * Force-check the priority logic by faking... no: the smoke test
-         * already covers selection; here verify the priority function
-         * indirectly through a tiny shape that both serve. */
+        /* Both this backend pair and the reference entry serve the shape;
+         * the selection itself is covered by the dispatch unit tests, so
+         * here only assert that a full dispatch call succeeds. */
         CHECK(rvcl_dispatch_matmul(&d32, &r) == RVCL_SUCCESS,
                 "dispatch selects a kernel for fp32");
         if (r) {

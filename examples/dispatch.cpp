@@ -53,7 +53,11 @@ int main(void) {
             .quant = {},
     };
 
-    /* 1. Dispatch once (populates the cache). */
+    /* 1. Dispatch once (populates the cache). Selection filters by
+     * operation, datatype tuple, required features, VLEN tier and shape,
+     * then takes the lowest cost; equal costs keep the earliest
+     * registration, so dedicated tier variants precede the generic and
+     * portable entries, and the featureless reference fallback is last. */
     rvcl_dispatch_result_t *r = NULL;
     rvcl_status_t st = rvcl_dispatch_matmul(&d, &r);
     if (st != RVCL_SUCCESS || !r) {
