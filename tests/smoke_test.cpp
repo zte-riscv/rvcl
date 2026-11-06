@@ -140,11 +140,10 @@ int main(void) {
         if (vector_build && host_has_rvv)
             CHECK(strncmp(sel, "rvcl_matmul_f32_rvv", 19) == 0,
                     "vector build with RVV host selects an rvv-family kernel");
-        /* Interim selection: the legacy static priority ranks the portable
-         * `_rvv_c` entry above `reference` on hosts without RVV. The
-         * dispatch rework replaces that priority with registration order,
-         * after which those hosts select `reference`; the prefix assertion
-         * above holds in both phases. */
+        /* Selection is cost-driven with registration order as the
+         * tie-break: dedicated tier variants first, then the generic
+         * entry, then the fallback. The prefix assertion above holds for
+         * every build configuration. */
         CHECK(rvcl_registry_find_factory(sel) != NULL,
                 "selected name resolves in the registry");
     }

@@ -324,6 +324,26 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME unit_capability_inject
         COMMAND rvcl_unit_capability --inject)
 
+    # Dispatch unit tests (always registered, independent of
+    # RVCL_TEST_SET): six-stage filtering, AUTO resolution, cost-driven
+    # selection with registration-order tie-break, cache semantics,
+    # failure paths, the dispatch/execute boundary, and concurrent
+    # dispatch under registry churn. The build decides which VLEN tiers
+    # exist, so the test sees the same RVCL_RVV_TIERS_<T> definitions as
+    # the library.
+    add_executable(rvcl_unit_dispatch tests/unit_dispatch.cpp)
+    target_link_libraries(rvcl_unit_dispatch PRIVATE rvcl rvcl_test_golden)
+    if(RVCL_ENABLE_RVV)
+        target_compile_definitions(rvcl_unit_dispatch PRIVATE ${_rvcl_tier_defs})
+    endif()
+    add_test(NAME unit_dispatch COMMAND rvcl_unit_dispatch)
+
+    # Capability-injection subset of the same binary: mutates
+    # process-global snapshot state, so it runs as its own fresh-process
+    # invocation and covers the non-host VLEN tiers and feature sets.
+    add_test(NAME unit_dispatch_inject
+        COMMAND rvcl_unit_dispatch --inject)
+
     # Corpus registration: one line per corpus file -> one modeC ctest
     # target running the differential (the assertion engine) over it.
     # RVCL_TEST_SET picks the tier at configure time (smoke < ci < all,
