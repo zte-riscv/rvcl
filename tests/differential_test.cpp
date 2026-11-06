@@ -49,13 +49,13 @@
  * same corpus through both — cross-validation is the feature.
  ******************************************************************************/
 
-#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/backends/rvv/rvv_fp16.hpp"
+#include "../src/common/dtype_traits.hpp"
+#include "dtype_ops.hpp"
 #include "golden.hpp"
 #include "rvcl/rvcl.h"
 
@@ -311,12 +311,10 @@ static void parse_header(
         /* differential is inherently mode C: the value is validated and
          * ignored — bench honors it */
     } else { /* --dt */
-        if (!strcmp(val, "f32")) {
+        rvcl_dtype_t dt2;
+        if (dtype_ops_from_dtstr(val, &dt2)) {
             c->dt_explicit = 1;
-            c->dt = RVCL_DTYPE_FP32;
-        } else if (!strcmp(val, "f16")) {
-            c->dt_explicit = 1;
-            c->dt = RVCL_DTYPE_FP16;
+            c->dt = dt2;
         } else {
             corpus_fatal(file, line,
                     "bad value for --dt: '%s' (want f32 or f16)", val);
@@ -445,8 +443,9 @@ static void parse_corpus(const char *path, corpus_t *c) {
  * this fails loudly instead of silently dropping corpus coverage. */
 #define CORPUS_MAX_KERNELS 8
 
-static int legal_kernels_for(
-        rvcl_dtype_t dt, const char *names[CORPUS_MAX_KERNELS]) {
+static int legal_kernels_for(rvcl_dtype_t dt,
+        const char *names[CORPUS_MAX_KERNELS],
+        rvcl_assert_level_t levels[CORPUS_MAX_KERNELS]) {
     const rvcl_capability_t *cap = rvcl_get_capability();
     int nk = 0;
     for (int i = 0; i < rvcl_registry_count(); i++) {
@@ -467,15 +466,29 @@ static int legal_kernels_for(
             /* exit(2) = corpus/usage error, as used by the parser paths. */
             exit(2);
         }
-        names[nk++] = kd->name;
+        names[nk] = kd->name;
+        levels[nk] = kd->assert_level;
+        nk++;
     }
     return nk;
 }
 
 static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt, int dt_explicit) {
+    const dtype_ops_t *op = dtype_ops_for(dt);
+    /* An unsupported dtype has no test row: report like a missing kernel
+     * instead of dereferencing a NULL operation bundle. */
+    if (!op) {
+        if (dt_explicit) {
+            printf("FAIL %s: no test table row for dtype %d\n", cc->label,
+                    (int)dt);
+            return 1;
+        }
+        return -1;
+    }
     const char *names[CORPUS_MAX_KERNELS];
-    const int nk = legal_kernels_for(dt, names);
-    const char *dtstr = dt == RVCL_DTYPE_FP32 ? "f32" : "f16";
+    rvcl_assert_level_t levels[CORPUS_MAX_KERNELS];
+    const int nk = legal_kernels_for(dt, names, levels);
+    const char *dtstr = op->dtstr;
     char shape_s[64];
     snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)cc->m,
             (long long)cc->n, (long long)cc->k);
@@ -507,77 +520,41 @@ static int run_case(const corpus_case_t *cc, rvcl_dtype_t dt, int dt_explicit) {
             .dtype_bias = RVCL_DTYPE_FP32,
             .quant = {},
     };
+    d.dtype_a = d.dtype_b = dt;
     float *bias = (float *)malloc((size_t)cc->n * 4);
     lcg_fill_f32(bias, (size_t)cc->n, seed ^ 0x85ebca6bu);
 
-    if (dt == RVCL_DTYPE_FP32) {
-        d.dtype_a = d.dtype_b = RVCL_DTYPE_FP32;
-        float *a = (float *)malloc((size_t)(cc->m * cc->k) * 4);
-        float *b = (float *)malloc((size_t)(cc->k * cc->n) * 4);
-        lcg_fill_f32(a, (size_t)(cc->m * cc->k), seed);
-        lcg_fill_f32(b, (size_t)(cc->k * cc->n), seed ^ 0x9e3779b9u);
-        golden_f32(a, b, bias, golden, cc->m, cc->n, cc->k);
+    /* dtype-storage A/B buffers, sized and filled through the test table */
+    void *a = malloc((size_t)(cc->m * cc->k) * op->elt);
+    void *b = malloc((size_t)(cc->k * cc->n) * op->elt);
+    op->fill(a, (size_t)(cc->m * cc->k), seed);
+    op->fill(b, (size_t)(cc->k * cc->n), seed ^ 0x9e3779b9u);
+    op->golden(a, b, bias, golden, cc->m, cc->n, cc->k);
 
-        for (int i = 0; i < nk; i++) {
-            golden_sentinel(c, (size_t)elems * 4);
-            rvcl_status_t st = run_named_kernel(names[i], &d, a, b, bias, c);
-            if (st != RVCL_SUCCESS) {
-                printf("FAIL %s (%s, %s): kernel %s run status %d\n", cc->label,
-                        shape_s, dtstr, names[i], (int)st);
-                fails++;
-                continue;
-            }
-            golden_cmp_t r = golden_cmp_bitexact(c, golden, elems);
-            if (r.mismatches == 0) {
-                printf("  ok: %s (%s, %s) %s\n", cc->label, shape_s, dtstr,
-                        names[i]);
-            } else {
-                printf("FAIL %s (%s, %s): %s: first mismatch at "
-                       "(i=%lld,j=%lld) exp=%g got=%g (%lld mismatch)\n",
-                        cc->label, shape_s, dtstr, names[i],
-                        (long long)(r.first / cc->n),
-                        (long long)(r.first % cc->n), r.exp_first, r.got_first,
-                        (long long)r.mismatches);
-                fails++;
-            }
+    for (int i = 0; i < nk; i++) {
+        golden_sentinel(c, (size_t)elems * 4);
+        rvcl_status_t st = run_named_kernel(names[i], &d, a, b, bias, c);
+        if (st != RVCL_SUCCESS) {
+            printf("FAIL %s (%s, %s): kernel %s run status %d\n", cc->label,
+                    shape_s, dtstr, names[i], (int)st);
+            fails++;
+            continue;
         }
-        free(a);
-        free(b);
-    } else {
-        d.dtype_a = d.dtype_b = RVCL_DTYPE_FP16;
-        uint16_t *ah = (uint16_t *)malloc((size_t)(cc->m * cc->k) * 2);
-        uint16_t *bh = (uint16_t *)malloc((size_t)(cc->k * cc->n) * 2);
-        lcg_fill_f16(ah, (size_t)(cc->m * cc->k), seed);
-        lcg_fill_f16(bh, (size_t)(cc->k * cc->n), seed ^ 0x9e3779b9u);
-        golden_f16(ah, bh, bias, golden, cc->m, cc->n, cc->k);
-
-        for (int i = 0; i < nk; i++) {
-            golden_sentinel(c, (size_t)elems * 4);
-            rvcl_status_t st = run_named_kernel(names[i], &d, ah, bh, bias, c);
-            if (st != RVCL_SUCCESS) {
-                printf("FAIL %s (%s, %s): kernel %s run status %d\n", cc->label,
-                        shape_s, dtstr, names[i], (int)st);
-                fails++;
-                continue;
-            }
-            golden_cmp_t r = golden_cmp_tol(c, golden, elems, 1e-3f);
-            if (r.mismatches == 0) {
-                printf("  ok: %s (%s, %s) %s\n", cc->label, shape_s, dtstr,
-                        names[i]);
-            } else {
-                printf("FAIL %s (%s, %s): %s: first mismatch at "
-                       "(i=%lld,j=%lld) exp=%g got=%g (%lld mismatch)\n",
-                        cc->label, shape_s, dtstr, names[i],
-                        (long long)(r.first / cc->n),
-                        (long long)(r.first % cc->n), r.exp_first, r.got_first,
-                        (long long)r.mismatches);
-                fails++;
-            }
+        golden_cmp_t r = op->compare(c, golden, elems, levels[i], dt);
+        if (r.mismatches == 0) {
+            printf("  ok: %s (%s, %s) %s\n", cc->label, shape_s, dtstr,
+                    names[i]);
+        } else {
+            printf("FAIL %s (%s, %s): %s: first mismatch at "
+                   "(i=%lld,j=%lld) exp=%g got=%g (%lld mismatch)\n",
+                    cc->label, shape_s, dtstr, names[i],
+                    (long long)(r.first / cc->n), (long long)(r.first % cc->n),
+                    r.exp_first, r.got_first, (long long)r.mismatches);
+            fails++;
         }
-        free(ah);
-        free(bh);
     }
-
+    free(a);
+    free(b);
     free(bias);
     free(golden);
     free(c);
@@ -649,11 +626,11 @@ int main(int argc, char **argv) {
      * regardless of what the corpus file declares. */
     int dt_only_f32 = 0, dt_only_f16 = 0;
     if (dt_arg) {
-        if (!strcmp(dt_arg, "f32"))
-            dt_only_f32 = 1;
-        else if (!strcmp(dt_arg, "f16"))
-            dt_only_f16 = 1;
-        else {
+        rvcl_dtype_t dt2;
+        if (dtype_ops_from_dtstr(dt_arg, &dt2)) {
+            dt_only_f32 = dt2 == RVCL_DTYPE_FP32;
+            dt_only_f16 = dt2 == RVCL_DTYPE_FP16;
+        } else {
             fprintf(stderr,
                     "error: bad value for --dt: '%s' (want f32 or f16)\n",
                     dt_arg);
@@ -746,12 +723,13 @@ int main(int argc, char **argv) {
     /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
     uint16_t *ah = NULL, *bh = NULL;
     if (!dt_only_f32) {
+        const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
         ah = (uint16_t *)malloc((size_t)M * K * 2);
         bh = (uint16_t *)malloc((size_t)K * N * 2);
         for (int i = 0; i < M * K; i++)
-            ah[i] = rvv_f32_to_f16((float)((i * 11) % 23) / 23.0f - 0.5f);
+            ah[i] = op16->f32_to_storage((float)((i * 11) % 23) / 23.0f - 0.5f);
         for (int i = 0; i < K * N; i++)
-            bh[i] = rvv_f32_to_f16((float)((i * 5) % 29) / 29.0f - 0.5f);
+            bh[i] = op16->f32_to_storage((float)((i * 5) % 29) / 29.0f - 0.5f);
 
         rvcl_matmul_desc_t d16 = {
                 .m = M,
@@ -768,11 +746,10 @@ int main(int argc, char **argv) {
         CHECK(run_named_kernel(f16_rvv_name, &d16, ah, bh, bias, c_rvv)
                         == RVCL_SUCCESS,
                 "rvv f16 runs (packed path)");
-        int bad16 = 0;
-        for (int i = 0; i < M * N; i++)
-            if (fabsf(c_rvv[i] - golden[i]) > 1e-3f * (1.0f + fabsf(golden[i])))
-                bad16++;
-        CHECK(bad16 == 0, "rvv f16 (packed) matches soft-converted golden");
+        const golden_cmp_t cmp16 = op16->compare(c_rvv, golden, (int64_t)M * N,
+                RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
+        CHECK(cmp16.mismatches == 0,
+                "rvv f16 (packed) matches soft-converted golden");
     }
 
     /* ---- dispatch selection through the full pipeline ---- */

@@ -75,6 +75,24 @@ typedef enum {
     RVCL_QUANT_PER_CHANNEL, /* per output channel */
 } rvcl_quant_support_t;
 
+/*
+ * Numeric assertion level for a kernel's outputs, the metadata bit behind
+ * the v0.2 tolerance infrastructure:
+ *   RVCL_ASSERT_BITEXACT (0) — outputs must match the golden bit-exactly.
+ *       This is the zero-init default, so every memset-based registration
+ *       path (including the reference backend) is bit-exact without code.
+ *   RVCL_ASSERT_TOLERANT — outputs are compared within the tolerance class
+ *       the dtype trait table gives this kernel's datatype (e.g. fp16's
+ *       1e-3 relative). The tolerance VALUE never lives in the descriptor;
+ *       TOLERANT references the trait table by dtype.
+ * A per-operator override (e.g. a requantization grade) is a reserved
+ * extension slot and is not part of v0.1.
+ */
+typedef enum {
+    RVCL_ASSERT_BITEXACT = 0,
+    RVCL_ASSERT_TOLERANT,
+} rvcl_assert_level_t;
+
 typedef struct {
     char name[RVCL_KERNEL_NAME_MAX]; /* rvcl_<op>_<dtype>_<tile>_<backend> */
 
@@ -107,6 +125,11 @@ typedef struct {
     /* Cost estimation callback; non-NULL is enforced at registration.
      * Bind rvcl_kernel_cost_zero() when the kernel has no cost model. */
     rvcl_kernel_cost_fn cost_fn;
+
+    /* Numeric assertion level (see rvcl_assert_level_t above); zero-init
+     * means RVCL_ASSERT_BITEXACT. Appended after cost_fn so pre-existing
+     * fields keep their byte offsets (offset-preserving v0.2 addition). */
+    rvcl_assert_level_t assert_level;
 } rvcl_kernel_desc_t;
 
 /* ------------------------------------------------------- operation descs */

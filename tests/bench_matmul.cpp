@@ -63,8 +63,8 @@
 #include <string.h>
 #include <time.h>
 
-#include "../src/backends/rvv/rvv_fp16.hpp"
 #include "../src/backends/rvv/rvv_internal.hpp"
+#include "dtype_ops.hpp"
 #include "golden.hpp"
 #include "rvcl/rvcl.h"
 
@@ -189,12 +189,10 @@ static void bparse_header(
                     "bad value for --mode: '%s' (want C, P or S)", val);
         c->file_mode = val[0];
     } else { /* --dt */
-        if (!strcmp(val, "f32")) {
+        rvcl_dtype_t dt2;
+        if (dtype_ops_from_dtstr(val, &dt2)) {
             c->dt_fixed = 1;
-            c->dt = RVCL_DTYPE_FP32;
-        } else if (!strcmp(val, "f16")) {
-            c->dt_fixed = 1;
-            c->dt = RVCL_DTYPE_FP16;
+            c->dt = dt2;
         } else {
             bcorpus_fatal(file, line,
                     "bad value for --dt: '%s' (want f32 or f16)", val);
@@ -427,7 +425,8 @@ typedef enum { MODE_C, MODE_P, MODE_S } bench_mode_t;
 /* fills a/b(/ah/bh)/bias deterministically; f16 narrow-from-f32 for P
  * (legacy data path), direct f16 fill for C/S (S skips the fill
  * optimization by design; C shares data with the differential run) */
-static void fill_case(case_t *cs, int f16, bench_mode_t mode) {
+static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
+    const int f16 = op->dtype == RVCL_DTYPE_FP16;
     const uint32_t seed = golden_case_seed(cs->m, cs->n, cs->k);
     cs->a = (float *)calloc((size_t)(cs->m * cs->k), 4);
     cs->b = (float *)calloc((size_t)(cs->k * cs->n), 4);
@@ -442,9 +441,9 @@ static void fill_case(case_t *cs, int f16, bench_mode_t mode) {
         cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
         cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
         for (int64_t i = 0; i < cs->m * cs->k; i++)
-            cs->ah[i] = rvv_f32_to_f16(cs->a[i]);
+            cs->ah[i] = op->f32_to_storage(cs->a[i]);
         for (int64_t i = 0; i < cs->k * cs->n; i++)
-            cs->bh[i] = rvv_f32_to_f16(cs->b[i]);
+            cs->bh[i] = op->f32_to_storage(cs->b[i]);
     } else {
         free(cs->a);
         free(cs->b);
@@ -452,8 +451,8 @@ static void fill_case(case_t *cs, int f16, bench_mode_t mode) {
         cs->b = NULL;
         cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
         cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
-        lcg_fill_f16(cs->ah, (size_t)(cs->m * cs->k), seed);
-        lcg_fill_f16(cs->bh, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
+        op->fill(cs->ah, (size_t)(cs->m * cs->k), seed);
+        op->fill(cs->bh, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
     }
 }
 
@@ -671,24 +670,27 @@ int main(int argc, char **argv) {
         char label_s[96];
         snprintf(label_s, sizeof(label_s), "%s", cs.label);
 
-        for (int dt = 0; dt < 2; dt++) { /* 0: f32, 1: f16 */
-            if (corpus.dt_fixed
-                    && (dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32) != corpus.dt)
-                continue;
-            const char *dtstr = dt ? "f16" : "f32";
+        const dtype_ops_t *dtype_ops[2] = {
+                dtype_ops_for(RVCL_DTYPE_FP32), dtype_ops_for(RVCL_DTYPE_FP16)};
+        for (int di = 0; di < 2; di++) { /* f32, f16 test table rows */
+            const dtype_ops_t *dop = dtype_ops[di];
+            if (!dop) continue; /* missing test row (never happens today) */
+            const int dt = dop->dtype == RVCL_DTYPE_FP16; /* 0 f32, 1 f16 */
+            if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
+            const char *dtstr = dop->dtstr;
 
             cs.d = rvcl_matmul_desc_t {
                     .m = cs.m,
                     .n = cs.n,
                     .k = cs.k,
-                    .dtype_a = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
-                    .dtype_b = dt ? RVCL_DTYPE_FP16 : RVCL_DTYPE_FP32,
+                    .dtype_a = dop->dtype,
+                    .dtype_b = dop->dtype,
                     .dtype_acc = RVCL_DTYPE_AUTO,
                     .dtype_c = RVCL_DTYPE_FP32,
                     .dtype_bias = RVCL_DTYPE_AUTO,
                     .quant = {},
             };
-            fill_case(&cs, dt, mode);
+            fill_case(&cs, dop, mode);
             const double flops
                     = 2.0 * (double)cs.m * (double)cs.n * (double)cs.k;
             dispatch_rig_t rig;
@@ -715,16 +717,13 @@ int main(int argc, char **argv) {
                     } else {
                         float *golden
                                 = (float *)malloc((size_t)(cs.m * cs.n) * 4);
-                        if (dt)
-                            golden_f16(cs.ah, cs.bh, cs.bias, golden, cs.m,
-                                    cs.n, cs.k);
-                        else
-                            golden_f32(cs.a, cs.b, cs.bias, golden, cs.m, cs.n,
-                                    cs.k);
-                        golden_cmp_t cmp = dt ? golden_cmp_tol(cs.c, golden,
-                                                        cs.m * cs.n, 1e-3f)
-                                              : golden_cmp_bitexact(cs.c,
-                                                        golden, cs.m * cs.n);
+                        dop->golden(
+                                dt ? (const void *)cs.ah : (const void *)cs.a,
+                                dt ? (const void *)cs.bh : (const void *)cs.b,
+                                cs.bias, golden, cs.m, cs.n, cs.k);
+                        const rvcl_kernel_t *k = rvcl_dispatch_kernel(rig.r);
+                        golden_cmp_t cmp = dop->compare(cs.c, golden,
+                                cs.m * cs.n, k->desc.assert_level, dop->dtype);
                         free(golden);
                         if (cmp.mismatches) {
                             snprintf(dbuf, sizeof(dbuf),

@@ -39,6 +39,7 @@
 
 #include "rvcl/dispatch.h"
 
+#include "../common/dtype_traits.hpp"
 #include "capability_internal.h"
 #include "registry_internal.h"
 #include "rvcl/capability.h"
@@ -228,12 +229,12 @@ static int dtype_is_request_valid(rvcl_dtype_t dt) {
 }
 
 /* The accumulation type an AUTO request resolves to. AUTO is only legal
- * in the accumulator position. */
+ * in the accumulator position. The habit is table-backed (dtype trait
+ * table acc_default): int8/uint8 -> INT32, floating family -> FP32, so
+ * adding a dtype never forks this resolver again. */
 static rvcl_dtype_t resolve_acc(const rvcl_matmul_desc_t *d) {
     if (d->dtype_acc != RVCL_DTYPE_AUTO) return d->dtype_acc;
-    if (d->dtype_a == RVCL_DTYPE_INT8 || d->dtype_a == RVCL_DTYPE_UINT8)
-        return RVCL_DTYPE_INT32;
-    return RVCL_DTYPE_FP32;
+    return rvcl_dtype_traits(d->dtype_a).acc_default;
 }
 
 static rvcl_status_t validate_request(const rvcl_matmul_desc_t *d) {

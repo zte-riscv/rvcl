@@ -43,6 +43,8 @@
 
 #include "rvv_internal.hpp"
 
+#include "../../common/dtype_traits.hpp"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -287,6 +289,10 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
     d.dtype_acc = dacc;
     d.dtype_c = dc;
     d.quant_support = RVCL_QUANT_NONE;
+    /* Assertion level from the dtype trait default: fp16 family entries
+     * resolve to TOLERANT (1e-3 tolerance class), fp32 stays the zero
+     * value RVCL_ASSERT_BITEXACT. A new dtype only adds a table row. */
+    d.assert_level = rvcl_dtype_traits(da).assert_level_default;
     d.required_features[0] = f0;
     d.required_features[1] = f1;
     int nfeat = 0;

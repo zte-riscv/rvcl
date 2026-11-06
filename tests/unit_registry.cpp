@@ -288,6 +288,7 @@ static void tc01_register_full_fields(void) {
                 && kd->dtype_a == d.dtype_a && kd->dtype_b == d.dtype_b
                 && kd->dtype_acc == d.dtype_acc && kd->dtype_c == d.dtype_c
                 && kd->quant_support == d.quant_support
+                && kd->assert_level == d.assert_level
                 && kd->num_required_features == d.num_required_features
                 && kd->required_features[0] == d.required_features[0]
                 && kd->required_features[1] == d.required_features[1]
@@ -464,6 +465,8 @@ static void tc06_invalid_descriptors(void) {
     ADD_CASE("tier 3", d.vlen_tier = (rvcl_vlen_tier_t)3);
     ADD_CASE("tier negative", d.vlen_tier = (rvcl_vlen_tier_t)-1);
     ADD_CASE("NULL cost callback", d.cost_fn = NULL);
+    ADD_CASE("assert_level out of range",
+            d.assert_level = (rvcl_assert_level_t)99);
 
     for (int i = 0; i < nc; i++) {
         total++;
@@ -473,7 +476,7 @@ static void tc06_invalid_descriptors(void) {
         else
             printf("  FAIL: case accepted: %s\n", cases[i].label);
     }
-    CHECK(total == 21 && rejects == 21, "all malformed descriptors rejected");
+    CHECK(total == 22 && rejects == 22, "all malformed descriptors rejected");
     CHECK(rvcl_register_kernel(NULL, test_create)
                     == RVCL_ERROR_INVALID_ARGUMENT,
             "NULL descriptor rejected");

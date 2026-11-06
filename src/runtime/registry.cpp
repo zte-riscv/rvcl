@@ -101,6 +101,14 @@ static int quant_is_valid(rvcl_quant_support_t q) {
     }
 }
 
+static int assert_level_is_valid(rvcl_assert_level_t l) {
+    switch (l) {
+        case RVCL_ASSERT_BITEXACT:
+        case RVCL_ASSERT_TOLERANT: return 1;
+        default: return 0;
+    }
+}
+
 /* Full-descriptor gate; runs before taking the lock so a rejected
  * registration cannot leave partial state behind. */
 static rvcl_status_t validate_desc(
@@ -116,6 +124,8 @@ static rvcl_status_t validate_desc(
             || !dtype_is_concrete(desc->dtype_c))
         return RVCL_ERROR_INVALID_ARGUMENT;
     if (!quant_is_valid(desc->quant_support))
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (!assert_level_is_valid(desc->assert_level))
         return RVCL_ERROR_INVALID_ARGUMENT;
     if (desc->num_required_features < 0
             || desc->num_required_features > RVCL_MAX_FEATURES)
