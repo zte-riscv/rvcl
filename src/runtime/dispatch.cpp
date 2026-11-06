@@ -332,11 +332,13 @@ rvcl_status_t rvcl_dispatch_matmul(
     const rvcl_dtype_t acc = resolve_acc(desc);
     const int host_tier = rvcl_capability_vlen_tier(cap);
 
+    /* Snapshot storage: one buffer per dispatch call, reused by every
+     * retry instead of being reallocated on the stack each attempt. */
+    rvcl_registry_view_t views[RVCL_REGISTRY_MAX_KERNELS];
     for (int attempt = 0; attempt < RVCL_DISPATCH_MAX_ATTEMPTS; attempt++) {
         /* A registry snapshot keeps stages 1-5 on one coherent table.
          * The generation observed with the copy detects a change that
          * lands while the candidates are being evaluated. */
-        rvcl_registry_view_t views[RVCL_REGISTRY_MAX_KERNELS];
         const int n = rvcl_registry_snapshot(
                 views, RVCL_REGISTRY_MAX_KERNELS, &generation);
 

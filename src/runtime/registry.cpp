@@ -195,7 +195,11 @@ static int tuple_keeps_fallback_locked(int skip) {
 
 /* Registry changes invalidate the dispatch cache via
  * rvcl_dispatch_cache_clear() (declared in dispatch.h). It is called
- * outside g_mutex (lock order registry -> cache, never nested). */
+ * outside g_mutex (lock order registry -> cache, never nested).
+ * Generation tags already make stale entries unusable on their next
+ * lookup; the sweep additionally drops their cache references now, so a
+ * kernel instance removed from the registry is released without waiting
+ * for a colliding key. */
 
 /* ------------------------------------------------------------- public API */
 
