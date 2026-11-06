@@ -148,8 +148,23 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_matmul_desc_t;
 
+/*
+ * Matrix-vector product y[m] = A[m,k] x[k] (+ bias[m]). The output is a
+ * length-m vector, so there is no n dimension. Quantization is not part of
+ * the v0.x GEMV path: validate() rejects a quantized request, and the
+ * quantization context is kept for layout symmetry with the other
+ * descriptors.
+ */
+typedef struct {
+    int64_t m, k;
+    rvcl_dtype_t dtype_a, dtype_b, dtype_acc, dtype_c;
+    rvcl_dtype_t dtype_bias; /* RVCL_DTYPE_AUTO when no bias */
+    rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
+} rvcl_gemv_desc_t;
+
 typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
+    rvcl_gemv_desc_t gemv;
 } rvcl_op_desc_t;
 
 /* ------------------------------------------------------------ kernel vtable */

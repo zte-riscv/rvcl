@@ -1,0 +1,10 @@
+# gemv smoke — PR gate: boundary + degenerate + LCG
+# GEMV cases use the Mx1xK triple form: the middle (n) dimension is a
+# placeholder ignored by the gemv descriptor (y[m] = A[m,k] x[k]).
+33x1x47 n"ragged"
+64x1x64 n"boundary_exact"
+64x1x65 n"boundary_k_plus_one"
+64x1x63 n"boundary_k_minus_one"
+65x1x64 n"boundary_m_plus_one"
+1x1x47 n"degenerate_m1"
+33x1x1 n"degenerate_k1"

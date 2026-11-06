@@ -183,6 +183,54 @@ rvcl/
 
 Adding a backend = a new `src/backends/<name>/` directory + one registration line in `init.cpp` + one CMake switch. The dispatch/registry/scheduler/memory framework needs zero changes.
 
+## Extending rvcl
+
+rvcl is built around three extension slots: **dtype**, **operator**, and
+**backend**. Each has a fixed landing point, so growing the library is a
+matter of filling a table row / corpus entry rather than rewriting the
+pipeline. The six-stage dispatch pipeline (`dispatch.cpp`) is
+operator-generic: it only reads the op-table row (`rvcl_dispatch_op_entry_t`)
+for the request validator and key, then filters the registered kernels by
+dtype tuple, capability, vlen tier, shape and validation. Adding any of the
+three below leaves the pipeline body untouched.
+
+### Add a dtype
+
+1. Extend `rvcl_dtype_t` in `include/rvcl/types.h` and add a row to the
+   dtype-trait table in `src/common/dtype_traits.cpp` (name, size,
+   `acc_default` accumulator). The accumulator resolver (`resolve_acc`) and
+   the shared tuple validator read `acc_default`, so a new element type never
+   forks the dispatch path.
+2. Add the matching test facts (golden / fill / compare) to
+   `tests/dtype_ops.cpp` and extend the corpus `--dt` set.
+
+### Add an operator
+
+An operator is a dispatch-table row plus a kernel contract. Its framework
+footprint is one table row in `src/runtime/dispatch.cpp` (a
+`rvcl_dispatch_op_entry_t` = request validator + key hash/equal), one
+descriptor in the `rvcl_op_desc_t` union in `include/rvcl/kernel.h`, and one
+row in the test-side op table `tests/op_slots.cpp` (corpus name, dtype set,
+golden routing, run family). The test harness then drives the new operator
+with zero changes to the differential and bench mains.
+
+The **GEMV** operator is the working example: `src/backends/rvv/rvv_gemv_f32.cpp`
+implements the micro-kernel and `src/backends/reference/reference_gemv.cpp`
+the golden reduction; both register through the same table row. Adding it to
+the test suite was one corpus directory `tests/inputs/gemv/` plus one
+`rvcl_add_corpus(gemv …)` line in `CMakeLists.txt`.
+
+### Add a backend
+
+1. Create `src/backends/<name>/` and register its kernels against existing
+   operators/dtypes (a `rvcl_register_kernel` call per kernel, one line in
+   `src/runtime/init.cpp` to wire it into `register_all`).
+2. Add the sources to `CMakeLists.txt` under the backend's enable switch.
+3. Add the backend to the differential's `legal_kernels_for` coverage by
+   giving each kernel the right operator, dtype tuple and capability feature
+   so it is selected when its feature is present. The framework (dispatch,
+   registry, scheduler, memory) needs no changes.
+
 ## Roadmap
 
 | Version | Milestone                                                                                  |

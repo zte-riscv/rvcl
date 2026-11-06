@@ -64,8 +64,10 @@
 #include <time.h>
 
 #include "../src/backends/rvv/rvv_internal.hpp"
+#include "../src/runtime/dispatch_internal.h"
 #include "dtype_ops.hpp"
 #include "golden.hpp"
+#include "op_slots.hpp"
 #include "rvcl/rvcl.h"
 
 /* ------------------------------------------------------------- timing */
@@ -352,7 +354,8 @@ typedef struct {
     float *a, *b, *c;
     float *bias;
     uint16_t *ah, *bh;
-    rvcl_matmul_desc_t d;
+    const op_slot_t *slot;
+    rvcl_op_desc_t od;
 } case_t;
 
 typedef struct {
@@ -365,8 +368,8 @@ static void bench_kernel_only(void *p) {
     konly_ctx_t *kc = (konly_ctx_t *)p;
     const case_t *cs = kc->cs;
     rvcl_work_range_t full = rvcl_work_range_full(cs->m, cs->n, cs->k);
-    kc->gemm(cs->d.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
-                                              : (const void *)cs->ah,
+    kc->gemm(cs->od.matmul.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
+                                                      : (const void *)cs->ah,
             kc->packed, cs->bias, cs->c, cs->m, cs->n, cs->k, &full);
 }
 
@@ -379,7 +382,7 @@ typedef struct {
 static void bench_pack_only(void *p) {
     pack_ctx_t *pc = (pack_ctx_t *)p;
     const case_t *cs = pc->cs;
-    size_t elt = rvcl_dtype_size(cs->d.dtype_a);
+    size_t elt = rvcl_dtype_size(cs->od.matmul.dtype_a);
     rvv_pack_b_panel(pc->b, pc->dst, cs->m, cs->n, cs->k, elt);
 }
 
@@ -401,10 +404,10 @@ typedef struct {
 static void bench_e2e(void *p) {
     e2e_ctx_t *ec = (e2e_ctx_t *)p;
     const case_t *cs = ec->cs;
-    if (cs->d.dtype_a == RVCL_DTYPE_FP32)
-        rvcl_matmul(&cs->d, cs->a, cs->b, cs->bias, cs->c);
+    if (cs->od.matmul.dtype_a == RVCL_DTYPE_FP32)
+        rvcl_matmul(&cs->od.matmul, cs->a, cs->b, cs->bias, cs->c);
     else
-        rvcl_matmul(&cs->d, cs->ah, cs->bh, cs->bias, cs->c);
+        rvcl_matmul(&cs->od.matmul, cs->ah, cs->bh, cs->bias, cs->c);
 }
 
 /* ------------------------------------------------------- JSON helpers */
@@ -428,31 +431,35 @@ typedef enum { MODE_C, MODE_P, MODE_S } bench_mode_t;
 static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
     const int f16 = op->dtype == RVCL_DTYPE_FP16;
     const uint32_t seed = golden_case_seed(cs->m, cs->n, cs->k);
-    cs->a = (float *)calloc((size_t)(cs->m * cs->k), 4);
-    cs->b = (float *)calloc((size_t)(cs->k * cs->n), 4);
-    cs->c = (float *)calloc((size_t)(cs->m * cs->n), 4);
-    cs->bias = (float *)calloc((size_t)cs->n, 4);
-    lcg_fill_f32(cs->a, (size_t)(cs->m * cs->k), seed);
-    lcg_fill_f32(cs->b, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
-    lcg_fill_f32(cs->bias, (size_t)cs->n, seed ^ 0x85ebca6bu);
+    const int64_t a_elems = cs->slot->a_elems(&cs->od);
+    const int64_t b_elems = cs->slot->b_elems(&cs->od);
+    const int64_t bias_elems = cs->slot->bias_elems(&cs->od);
+    const int64_t c_elems = cs->slot->out_elems(&cs->od);
+    cs->a = (float *)calloc((size_t)a_elems, 4);
+    cs->b = (float *)calloc((size_t)b_elems, 4);
+    cs->c = (float *)calloc((size_t)c_elems, 4);
+    cs->bias = (float *)calloc((size_t)bias_elems, 4);
+    lcg_fill_f32(cs->a, (size_t)a_elems, seed);
+    lcg_fill_f32(cs->b, (size_t)b_elems, seed ^ 0x9e3779b9u);
+    lcg_fill_f32(cs->bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
     if (!f16) return;
 
     if (mode == MODE_P) {
-        cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
-        cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
-        for (int64_t i = 0; i < cs->m * cs->k; i++)
+        cs->ah = (uint16_t *)calloc((size_t)a_elems, 2);
+        cs->bh = (uint16_t *)calloc((size_t)b_elems, 2);
+        for (int64_t i = 0; i < a_elems; i++)
             cs->ah[i] = op->f32_to_storage(cs->a[i]);
-        for (int64_t i = 0; i < cs->k * cs->n; i++)
+        for (int64_t i = 0; i < b_elems; i++)
             cs->bh[i] = op->f32_to_storage(cs->b[i]);
     } else {
         free(cs->a);
         free(cs->b);
         cs->a = NULL;
         cs->b = NULL;
-        cs->ah = (uint16_t *)calloc((size_t)(cs->m * cs->k), 2);
-        cs->bh = (uint16_t *)calloc((size_t)(cs->k * cs->n), 2);
-        op->fill(cs->ah, (size_t)(cs->m * cs->k), seed);
-        op->fill(cs->bh, (size_t)(cs->k * cs->n), seed ^ 0x9e3779b9u);
+        cs->ah = (uint16_t *)calloc((size_t)a_elems, 2);
+        cs->bh = (uint16_t *)calloc((size_t)b_elems, 2);
+        op->fill(cs->ah, (size_t)a_elems, seed);
+        op->fill(cs->bh, (size_t)b_elems, seed ^ 0x9e3779b9u);
     }
 }
 
@@ -478,60 +485,40 @@ typedef struct {
 
 static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     memset(g, 0, sizeof(*g));
-    if (rvcl_dispatch_matmul(&cs->d, &g->r) != RVCL_SUCCESS || !g->r) return 0;
+    if (rvcl_dispatch_op(cs->slot->op, &cs->od, &g->r) != RVCL_SUCCESS || !g->r)
+        return 0;
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(g->r, &num_ws);
-    for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++) {
-        size_t align = ws[i].alignment > 1 ? (size_t)ws[i].alignment : 8;
-        if (posix_memalign(&g->ws_buf[i], align, (size_t)(ws[i].size + align))
-                != 0)
-            return 0;
-        rvcl_tensor_desc_t wd = {.ndims = 1,
-                .dims = {ws[i].size + 1},
-                .strides = {1},
-                .dtype = RVCL_DTYPE_UINT8};
-        rvcl_tensor_init(&g->ws_t[i], &wd, g->ws_buf[i]);
-    }
     g->num_ws = num_ws;
 
-    rvcl_tensor_desc_t td = {.ndims = 2,
-            .dims = {cs->m, cs->k},
-            .strides = {cs->k, 1},
-            .dtype = cs->d.dtype_a};
-    rvcl_tensor_init(&g->ta, &td,
-            cs->d.dtype_a == RVCL_DTYPE_FP16 ? (void *)cs->ah : (void *)cs->a);
-    td.dims[0] = cs->k;
-    td.dims[1] = cs->n;
-    td.strides[0] = cs->n;
-    td.dtype = cs->d.dtype_b;
-    rvcl_tensor_init(&g->tb, &td,
-            cs->d.dtype_b == RVCL_DTYPE_FP16 ? (void *)cs->bh : (void *)cs->b);
-    td.dims[0] = cs->m;
-    td.strides[0] = cs->n;
-    td.dtype = cs->d.dtype_c;
-    rvcl_tensor_init(&g->tc, &td, cs->c);
-    rvcl_tensor_desc_t bd = {.ndims = 1,
-            .dims = {cs->n},
-            .strides = {1},
-            .dtype = RVCL_DTYPE_FP32};
-    rvcl_tensor_init(&g->tbias, &bd, cs->bias);
+    /* fp16 storage lives in the narrow ah/bh buffers; fp32 in a/b. */
+    const int f16 = cs->slot->op == RVCL_OP_MATMUL
+            && cs->od.matmul.dtype_a == RVCL_DTYPE_FP16;
+    const void *a = f16 ? (const void *)cs->ah : (const void *)cs->a;
+    const void *b = f16 ? (const void *)cs->bh : (const void *)cs->b;
+    op_slot_pack_setup(cs->slot, &g->pack, &cs->od, a, b, cs->bias, cs->c,
+            &g->ta, &g->tb, &g->tc, &g->tbias);
 
-    rvcl_tensor_pack_init(&g->pack);
-    rvcl_tensor_pack_add(&g->pack, RVCL_TENSOR_SRC_A, &g->ta);
-    rvcl_tensor_pack_add(&g->pack, RVCL_TENSOR_SRC_B, &g->tb);
-    rvcl_tensor_pack_add_out(&g->pack, RVCL_TENSOR_DST, &g->tc);
-    rvcl_tensor_pack_add(&g->pack, RVCL_TENSOR_BIAS, &g->tbias);
-    for (int i = 0; i < num_ws && i < RVCL_MAX_WORKSPACES; i++)
-        rvcl_tensor_pack_add(&g->pack,
-                (rvcl_tensor_slot_t)(RVCL_TENSOR_AUX_0 + i), &g->ws_t[i]);
-    g->full = rvcl_work_range_full(cs->m, cs->n, cs->k);
+    if (op_slot_pack_ws(ws, num_ws, g->ws_buf, g->ws_t, &g->pack)
+            != RVCL_SUCCESS) {
+        op_slot_pack_free_ws(g->ws_buf, num_ws);
+        rvcl_dispatch_release(g->r);
+        g->r = NULL;
+        return 0;
+    }
+
+    const int64_t m
+            = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.m : cs->od.gemv.m;
+    const int64_t n = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.n : 1;
+    const int64_t k
+            = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.k : cs->od.gemv.k;
+    g->full = rvcl_work_range_full(m, n, k);
     return 1;
 }
 
 static void rig_release(dispatch_rig_t *g) {
-    for (int i = 0; i < RVCL_MAX_WORKSPACES; i++)
-        free(g->ws_buf[i]);
-    rvcl_dispatch_release(g->r);
+    op_slot_pack_free_ws(g->ws_buf, g->num_ws);
+    if (g->r) rvcl_dispatch_release(g->r);
 }
 
 int main(int argc, char **argv) {
@@ -650,6 +637,11 @@ int main(int argc, char **argv) {
                 "kernel", "k-ms", "pack", "p+k", "e2e");
     }
 
+    /* The operator is named on the CLI (--op=) or derived from the batch
+     * directory; the slot row carries all op-specific facts. */
+    const op_slot_t *slot = op_slot_from_name(op);
+    if (!slot) slot = op_slot_default();
+
     int nok = 0, nfail = 0, nskip = 0;
     for (int s = 0; s < total; s++) {
         case_t cs = {};
@@ -670,34 +662,26 @@ int main(int argc, char **argv) {
         char label_s[96];
         snprintf(label_s, sizeof(label_s), "%s", cs.label);
 
-        const dtype_ops_t *dtype_ops[2] = {
-                dtype_ops_for(RVCL_DTYPE_FP32), dtype_ops_for(RVCL_DTYPE_FP16)};
-        for (int di = 0; di < 2; di++) { /* f32, f16 test table rows */
-            const dtype_ops_t *dop = dtype_ops[di];
+        for (int di = 0; slot->dtypes[di] != RVCL_DTYPE_AUTO; di++) {
+            const dtype_ops_t *dop = dtype_ops_for(slot->dtypes[di]);
             if (!dop) continue; /* missing test row (never happens today) */
             const int dt = dop->dtype == RVCL_DTYPE_FP16; /* 0 f32, 1 f16 */
             if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
             const char *dtstr = dop->dtstr;
 
-            cs.d = rvcl_matmul_desc_t {
-                    .m = cs.m,
-                    .n = cs.n,
-                    .k = cs.k,
-                    .dtype_a = dop->dtype,
-                    .dtype_b = dop->dtype,
-                    .dtype_acc = RVCL_DTYPE_AUTO,
-                    .dtype_c = RVCL_DTYPE_FP32,
-                    .dtype_bias = RVCL_DTYPE_AUTO,
-                    .quant = {},
-            };
+            cs.slot = slot;
+            slot->build_desc(&cs.od, cs.m, cs.n, cs.k, dop->dtype, dop->dtype,
+                    RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO);
             fill_case(&cs, dop, mode);
             const double flops
                     = 2.0 * (double)cs.m * (double)cs.n * (double)cs.k;
             dispatch_rig_t rig;
 
-            if (mode == MODE_C) {
+            if (mode == MODE_C || !slot->can_timing) {
                 /* correctness: dispatch -> run -> shared golden; a
-                 * dispatch failure is a case failure here */
+                 * dispatch failure is a case failure here. Ops without a
+                 * micro-kernel timing path (can_timing == 0) also land
+                 * here for P/S modes. */
                 int ok = rig_setup(&rig, &cs);
                 const char *detail = "";
                 char dbuf[128];
@@ -705,7 +689,8 @@ int main(int argc, char **argv) {
                     snprintf(dbuf, sizeof(dbuf), "dispatch failed");
                     detail = dbuf;
                 } else {
-                    golden_sentinel(cs.c, (size_t)(cs.m * cs.n) * 4);
+                    const int64_t out_elems = slot->out_elems(&cs.od);
+                    golden_sentinel(cs.c, (size_t)out_elems * 4);
                     run_ctx_t rc = {.k = rvcl_dispatch_kernel(rig.r),
                             .pack = &rig.pack,
                             .range = &rig.full};
@@ -715,22 +700,23 @@ int main(int argc, char **argv) {
                         detail = dbuf;
                         ok = 0;
                     } else {
-                        float *golden
-                                = (float *)malloc((size_t)(cs.m * cs.n) * 4);
-                        dop->golden(
+                        float *golden = (float *)malloc((size_t)out_elems * 4);
+                        slot->golden(&cs.od,
                                 dt ? (const void *)cs.ah : (const void *)cs.a,
                                 dt ? (const void *)cs.bh : (const void *)cs.b,
-                                cs.bias, golden, cs.m, cs.n, cs.k);
+                                cs.bias, golden);
                         const rvcl_kernel_t *k = rvcl_dispatch_kernel(rig.r);
-                        golden_cmp_t cmp = dop->compare(cs.c, golden,
-                                cs.m * cs.n, k->desc.assert_level, dop->dtype);
+                        golden_cmp_t cmp = dop->compare(cs.c, golden, out_elems,
+                                k->desc.assert_level, dop->dtype);
                         free(golden);
                         if (cmp.mismatches) {
+                            const int64_t width
+                                    = slot->op == RVCL_OP_MATMUL ? cs.n : 1;
                             snprintf(dbuf, sizeof(dbuf),
                                     "first mismatch (i=%lld,j=%lld) "
                                     "exp=%g got=%g",
-                                    (long long)(cmp.first / cs.n),
-                                    (long long)(cmp.first % cs.n),
+                                    (long long)(cmp.first / width),
+                                    (long long)(cmp.first % width),
                                     cmp.exp_first, cmp.got_first);
                             detail = dbuf;
                             ok = 0;
@@ -781,7 +767,7 @@ int main(int argc, char **argv) {
                 rvcl_tensor_desc_t td = {.ndims = 2,
                         .dims = {cs.k, cs.n},
                         .strides = {cs.n, 1},
-                        .dtype = cs.d.dtype_b};
+                        .dtype = cs.od.matmul.dtype_b};
                 rvcl_tensor_init(
                         &b_src, &td, dt ? (void *)cs.bh : (void *)cs.b);
                 rvcl_tensor_desc_t pd = {.ndims = 1,
