@@ -39,6 +39,7 @@
 #include "registry_internal.h"
 #include "rvcl/dispatch.h"
 
+#include <atomic>
 #include <pthread.h>
 #include <string.h>
 
@@ -54,6 +55,9 @@ static int g_order[RVCL_REGISTRY_MAX_KERNELS];
 static int g_count;
 static int g_slots_used; /* high-water mark of slots ever allocated */
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Bumped inside g_mutex on every registry change. Dispatch reads it
+ * without the registry lock when validating a cached selection. */
+static std::atomic<unsigned> g_generation(0);
 
 /* -------------------------------------------------------------- zero cost */
 
@@ -214,6 +218,7 @@ rvcl_status_t rvcl_register_kernel(
     g_slots[s].create = create;
     g_slots[s].used = 1;
     g_order[g_count++] = s;
+    g_generation.fetch_add(1, std::memory_order_release);
     pthread_mutex_unlock(&g_mutex);
 
     rvcl_dispatch_cache_clear();
@@ -246,6 +251,7 @@ rvcl_status_t rvcl_unregister_kernel(const char *name) {
             (size_t)(g_count - pos - 1) * sizeof(int));
     g_count--;
     g_slots[s].used = 0;
+    g_generation.fetch_add(1, std::memory_order_release);
     pthread_mutex_unlock(&g_mutex);
 
     rvcl_dispatch_cache_clear();
@@ -275,6 +281,29 @@ rvcl_kernel_create_fn rvcl_registry_find_factory(const char *name) {
     if (s >= 0) fn = g_slots[s].create;
     pthread_mutex_unlock(&g_mutex);
     return fn;
+}
+
+unsigned rvcl_registry_generation(void) {
+    return g_generation.load(std::memory_order_acquire);
+}
+
+int rvcl_registry_snapshot(
+        rvcl_registry_view_t *out, int max_entries, unsigned *generation) {
+    if (!out || max_entries <= 0) {
+        if (generation) *generation = rvcl_registry_generation();
+        return 0;
+    }
+    pthread_mutex_lock(&g_mutex);
+    const unsigned gen = g_generation.load(std::memory_order_relaxed);
+    int n = 0;
+    for (; n < g_count && n < max_entries; n++) {
+        const registry_slot_t *s = &g_slots[g_order[n]];
+        out[n].desc = s->desc;
+        out[n].create = s->create;
+    }
+    pthread_mutex_unlock(&g_mutex);
+    if (generation) *generation = gen;
+    return n;
 }
 
 /* ------------------------------------------------------------ invariant */
@@ -307,6 +336,7 @@ rvcl_status_t rvcl_registry_rollback(int count) {
         g_slots[s].used = 0;
         g_count--;
     }
+    g_generation.fetch_add(1, std::memory_order_release);
     pthread_mutex_unlock(&g_mutex);
 
     rvcl_dispatch_cache_clear();

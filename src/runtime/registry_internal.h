@@ -24,6 +24,7 @@
 #ifndef RVCL_REGISTRY_INTERNAL_H
 #define RVCL_REGISTRY_INTERNAL_H
 
+#include "rvcl/kernel.h"
 #include "rvcl/types.h"
 
 /* Whole-table fallback check (FR1.7): every datatype tuple that has at
@@ -39,5 +40,32 @@ rvcl_status_t rvcl_registry_verify_fallback_invariant(void);
  * appended by a failed pass must disappear even when the remaining user
  * entries would not satisfy the invariant on their own. */
 rvcl_status_t rvcl_registry_rollback(int count);
+
+/* Copy of one live registry entry as seen by dispatch. Descriptors are
+ * copied out, so the selection loop works on a coherent table without
+ * holding the registry lock while it calls factories, cost callbacks or
+ * validate(). */
+typedef struct {
+    rvcl_kernel_desc_t desc;
+    rvcl_kernel_create_fn create;
+} rvcl_registry_view_t;
+
+/*
+ * Copies up to max_entries live entries in registration order into out
+ * and stores the registry generation observed for that copy in
+ * *generation. Returns the number of entries copied. The copy is
+ * consistent: concurrent registrations and unregistrations are never
+ * observed half-applied.
+ */
+int rvcl_registry_snapshot(
+        rvcl_registry_view_t *out, int max_entries, unsigned *generation);
+
+/*
+ * Monotonic change counter: bumped by every successful registration,
+ * unregistration and rollback. Dispatch tags cache entries with the
+ * generation they were selected under, so a change racing a selection
+ * cannot leave a stale selection behind.
+ */
+unsigned rvcl_registry_generation(void);
 
 #endif /* RVCL_REGISTRY_INTERNAL_H */
