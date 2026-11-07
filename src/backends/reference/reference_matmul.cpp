@@ -25,6 +25,8 @@
 #include "rvcl/kernel.h"
 #include "rvcl/registry.h"
 
+#include "../../runtime/cost_model.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,7 +140,7 @@ RVCL_API rvcl_status_t rvcl_reference_register(void) {
     d.num_required_features = 0;
     d.alignment_a = d.alignment_b = d.alignment_c = 1;
     d.vlen_tier = RVCL_VLEN_TIER_ANY; /* memset zero, kept explicit */
-    d.cost_fn = rvcl_kernel_cost_zero;
+    d.cost_fn = rvcl_cost_matmul_reference;
 
     return rvcl_register_kernel(&d, ref_create);
 }

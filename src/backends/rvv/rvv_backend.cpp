@@ -45,6 +45,7 @@
 #include "rvv_paths.hpp"
 
 #include "../../common/dtype_traits.hpp"
+#include "../../runtime/cost_model.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -270,7 +271,7 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
     d.num_required_features = nfeat;
     d.alignment_a = d.alignment_b = d.alignment_c = 4;
     d.vlen_tier = tier;
-    d.cost_fn = rvcl_kernel_cost_zero;
+    d.cost_fn = rvcl_cost_matmul_rvv;
 
     return rvcl_register_kernel(&d, create);
 }
