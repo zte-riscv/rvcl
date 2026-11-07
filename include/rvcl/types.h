@@ -89,6 +89,10 @@ typedef enum {
     RVCL_OP_MATMUL = 0,
     RVCL_OP_GEMV,
     RVCL_OP_CONV2D,
+    /* Reserved extension slot: never registered by the runtime, available
+     * to test executables as a freely registerable operator whose dispatch
+     * table entry is absent until they add one. */
+    RVCL_OP_RESERVED,
     RVCL_OP_COUNT,
 } rvcl_operation_t;
 

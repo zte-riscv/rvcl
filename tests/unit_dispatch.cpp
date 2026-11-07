@@ -1237,7 +1237,9 @@ static uint32_t test_op_key_hash(const rvcl_op_desc_t *key) {
 
 /* TC-AC3-19: generic op-table dispatch — unregistered op rejected,
  * registered op runs the full pipeline with cache hit, and per-op cache
- * key isolation (same hash, different op, no slot cross-talk). */
+ * key isolation (same hash, different op, no slot cross-talk). The two
+ * freely registerable test ops are the reserved extension slot and CONV2D
+ * — neither has a built-in table entry, so the test owns their entries. */
 static void tc19_op_table(void) {
     printf("TC-AC3-19 generic op-table dispatch\n");
     rvcl_dispatch_cache_clear();
@@ -1247,75 +1249,77 @@ static void tc19_op_table(void) {
             = {.matmul = make_request(16, 16, 16, RVCL_DTYPE_INT8,
                        RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32)};
     rvcl_dispatch_result_t *r = NULL;
-    CHECK(rvcl_dispatch_op(RVCL_OP_GEMV, &od, &r) == RVCL_UNSUPPORTED,
+    CHECK(rvcl_dispatch_op(RVCL_OP_RESERVED, &od, &r) == RVCL_UNSUPPORTED,
             "op with no table entry is rejected");
     CHECK(r == NULL, "no result leaked on an unregistered op");
 
     /* (b) Register the op entries once (they persist for this case). */
-    const rvcl_dispatch_op_entry_t gemv_e = {RVCL_OP_GEMV,
+    const rvcl_dispatch_op_entry_t resv_e = {RVCL_OP_RESERVED,
             test_op_dims_validate, test_op_key_hash, test_op_key_equal};
     const rvcl_dispatch_op_entry_t conv_e = {RVCL_OP_CONV2D,
             test_op_dims_validate, test_op_key_hash, test_op_key_equal};
-    CHECK(rvcl_dispatch_register_op(&gemv_e) == RVCL_SUCCESS,
-            "GEMV op table entry registered");
+    CHECK(rvcl_dispatch_register_op(&resv_e) == RVCL_SUCCESS,
+            "reserved op table entry registered");
     CHECK(rvcl_dispatch_register_op(&conv_e) == RVCL_SUCCESS,
             "CONV2D op table entry registered");
-    CHECK(rvcl_dispatch_register_op(&gemv_e) == RVCL_ERROR_ALREADY_REGISTERED,
+    CHECK(rvcl_dispatch_register_op(&resv_e) == RVCL_ERROR_ALREADY_REGISTERED,
             "duplicate op table entry rejected");
 
     /* (c) A registered op runs the full pipeline, then hits the cache. */
-    rvcl_kernel_desc_t kd = make_desc("t19_gemv", RVCL_DTYPE_INT8,
+    rvcl_kernel_desc_t kd = make_desc("t19_resv", RVCL_DTYPE_INT8,
             RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
-    kd.operation = RVCL_OP_GEMV;
-    CHECK(register_desc(&kd), "GEMV kernel registered");
+    kd.operation = RVCL_OP_RESERVED;
+    CHECK(register_desc(&kd), "reserved op kernel registered");
     rvcl_dispatch_cache_clear();
     g_validate_calls.store(0);
     g_configure_calls.store(0);
     g_run_calls.store(0);
 
     rvcl_dispatch_result_t *r1 = NULL, *r2 = NULL;
-    CHECK(rvcl_dispatch_op(RVCL_OP_GEMV, &od, &r1) == RVCL_SUCCESS,
-            "GEMV dispatch succeeds");
+    CHECK(rvcl_dispatch_op(RVCL_OP_RESERVED, &od, &r1) == RVCL_SUCCESS,
+            "reserved op dispatch succeeds");
     CHECK(rvcl_dispatch_kernel_name(r1)
-                    && strcmp(rvcl_dispatch_kernel_name(r1), "t19_gemv") == 0,
-            "GEMV selects its own kernel");
-    CHECK(g_validate_calls.load() == 1, "GEMV first dispatch validates once");
-    CHECK(g_configure_calls.load() == 1, "GEMV first dispatch configures once");
+                    && strcmp(rvcl_dispatch_kernel_name(r1), "t19_resv") == 0,
+            "reserved op selects its own kernel");
+    CHECK(g_validate_calls.load() == 1,
+            "reserved op first dispatch validates once");
+    CHECK(g_configure_calls.load() == 1,
+            "reserved op first dispatch configures once");
     CHECK(g_run_calls.load() == 0, "dispatch never runs the kernel");
 
-    CHECK(rvcl_dispatch_op(RVCL_OP_GEMV, &od, &r2) == RVCL_SUCCESS,
-            "GEMV repeat dispatch succeeds");
-    CHECK(r1 == r2, "GEMV cache hit returns the same result object");
-    CHECK(g_validate_calls.load() == 1, "GEMV cache hit skips validate");
-    CHECK(g_configure_calls.load() == 1, "GEMV cache hit skips configure");
+    CHECK(rvcl_dispatch_op(RVCL_OP_RESERVED, &od, &r2) == RVCL_SUCCESS,
+            "reserved op repeat dispatch succeeds");
+    CHECK(r1 == r2, "reserved op cache hit returns the same result object");
+    CHECK(g_validate_calls.load() == 1, "cache hit skips validate");
+    CHECK(g_configure_calls.load() == 1, "cache hit skips configure");
     rvcl_dispatch_release(r1);
     rvcl_dispatch_release(r2);
-    unregister_quiet("t19_gemv");
+    unregister_quiet("t19_resv");
     rvcl_dispatch_cache_clear();
 
     /* (d) Per-op cache key isolation: both test ops collide on slot 0,
      * but the op discriminant keeps their entries apart. */
     const rvcl_dtype_t a = RVCL_DTYPE_INT4;
     const rvcl_dtype_t acc = RVCL_DTYPE_INT32;
-    rvcl_kernel_desc_t gemv = make_desc("t19c_gemv", a, a, acc, acc);
-    gemv.operation = RVCL_OP_GEMV;
+    rvcl_kernel_desc_t resv = make_desc("t19c_resv", a, a, acc, acc);
+    resv.operation = RVCL_OP_RESERVED;
     rvcl_kernel_desc_t conv = make_desc("t19c_conv", a, a, acc, acc);
     conv.operation = RVCL_OP_CONV2D;
-    CHECK(register_desc(&gemv) && register_desc(&conv),
-            "GEMV and CONV2D kernels registered");
+    CHECK(register_desc(&resv) && register_desc(&conv),
+            "reserved and CONV2D kernels registered");
     rvcl_dispatch_cache_clear();
 
-    const rvcl_op_desc_t gemv_od
+    const rvcl_op_desc_t resv_od
             = {.matmul = make_request(8, 8, 8, a, a, acc, acc)};
-    rvcl_op_desc_t conv_od = gemv_od;
+    rvcl_op_desc_t conv_od = resv_od;
     conv_od.matmul.m = 9; /* distinct key, still the same slot-0 hash */
 
     rvcl_dispatch_result_t *rg = NULL;
-    CHECK(rvcl_dispatch_op(RVCL_OP_GEMV, &gemv_od, &rg) == RVCL_SUCCESS,
-            "GEMV dispatch succeeds");
+    CHECK(rvcl_dispatch_op(RVCL_OP_RESERVED, &resv_od, &rg) == RVCL_SUCCESS,
+            "reserved op dispatch succeeds");
     CHECK(rvcl_dispatch_kernel_name(rg)
-                    && strcmp(rvcl_dispatch_kernel_name(rg), "t19c_gemv") == 0,
-            "GEMV selects its own kernel");
+                    && strcmp(rvcl_dispatch_kernel_name(rg), "t19c_resv") == 0,
+            "reserved op selects its own kernel");
     rvcl_dispatch_release(rg);
     rg = NULL;
 
@@ -1327,11 +1331,11 @@ static void tc19_op_table(void) {
             "colliding-hash CONV2D is a cache miss (no cross-talk)");
     CHECK(rvcl_dispatch_kernel_name(rc)
                     && strcmp(rvcl_dispatch_kernel_name(rc), "t19c_conv") == 0,
-            "CONV2D selects its own kernel, not the colliding GEMV entry");
+            "CONV2D selects its own kernel, not the colliding reserved entry");
     rvcl_dispatch_release(rc);
     rc = NULL;
 
-    unregister_quiet("t19c_gemv");
+    unregister_quiet("t19c_resv");
     unregister_quiet("t19c_conv");
     rvcl_dispatch_cache_clear();
 }

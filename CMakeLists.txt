@@ -236,8 +236,18 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
             src/backends/rvv/rvv_pack.cpp
             src/backends/rvv/rvv_gemm_f32.cpp
             src/backends/rvv/rvv_gemm_f16.cpp
-            src/backends/rvv/rvv_gemv_f32.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
+        # The GEMV C-portable kernel is the operator's only compute path and
+        # the differential oracle. Under the vector -march override the cross
+        # gcc auto-vectorizes its scalar K reduction into a non-fused
+        # vfmul+vfredosum, landing 1 ulp off the scalar golden that compiles
+        # at the baseline march. -fno-tree-vectorize keeps the loop a fused
+        # fmadd chain (the reference and golden compile identically), so the
+        # rvv GEMV kernel stays bit-exact on the vector tier. The file has no
+        # intrinsics path, so disabling vectorization costs nothing here.
+        set_source_files_properties(src/backends/rvv/rvv_gemv_f32.cpp
+            PROPERTIES COMPILE_OPTIONS
+                        "-march=${RVCL_RVV_MARCH};-fno-tree-vectorize")
     endif()
 endif()
 

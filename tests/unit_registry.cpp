@@ -642,7 +642,10 @@ static void tc11_table_invariant(void) {
 
 /* TC-AC1-12: builtin order = dedicated (high tier -> low), then generic,
  * then fallback. Dedicated and generic entries must declare the vector
- * features they depend on (FR1.5). */
+ * features they depend on (FR1.5). The grouping invariant is checked per
+ * operation family (matmul here): other operators, e.g. the GEMV entries
+ * sharing the f32 tuple, are ordered and grouped the same way within their
+ * own family, but a cross-family interleave must not disturb this check. */
 static void tc12_builtin_order(void) {
     printf("TC-AC1-12 builtin registration order\n");
     const int n = rvcl_registry_count();
@@ -656,7 +659,9 @@ static void tc12_builtin_order(void) {
         int group_ok = 1;
         for (int i = 0; i < n; i++) {
             const rvcl_kernel_desc_t *kd = rvcl_registry_get(i);
-            if (!kd || kd->dtype_a != key || kd->dtype_b != key) continue;
+            if (!kd || kd->operation != RVCL_OP_MATMUL || kd->dtype_a != key
+                    || kd->dtype_b != key)
+                continue;
             seen++;
 
             int cls;
