@@ -104,6 +104,7 @@ set(RVCL_RUNTIME_SOURCES
     src/runtime/kernel.cpp
     src/runtime/registry.cpp
     src/runtime/dispatch.cpp
+    src/runtime/cost_model.cpp
     src/runtime/init.cpp
     src/runtime/scheduler/scheduler.cpp
     src/operators/matmul.cpp
