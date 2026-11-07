@@ -1563,7 +1563,7 @@ static void case_inject_tier_exclusion(void) {
     rvcl_dispatch_cache_clear();
 }
 
-/* TC-AC3-13 (EX-5): the real scoring wrappers must (a) never report 0
+/* TC-AC3-13: the real scoring wrappers must (a) never report 0
  * (0 is reserved for "no cost information"), (b) keep matmul-rvv strictly
  * below matmul-reference so an RVV entry always wins contention on a
  * capable host, and (c) apply the VLEN tier gain (wider host -> cheaper
@@ -1572,6 +1572,8 @@ static void tc20_cost_scoring(void) {
     printf("TC-AC3-13 heuristic cost scoring math\n");
     const rvcl_capability_t cap128 = make_snapshot(1, 1, 128);
     const rvcl_capability_t cap256 = make_snapshot(1, 1, 256);
+    const rvcl_capability_t cap512 = make_snapshot(1, 1, 512);
+    const rvcl_capability_t cap1024 = make_snapshot(1, 1, 1024);
     const rvcl_capability_t cap_norvv = make_snapshot(1, 0, 0);
 
     rvcl_op_desc_t od;
@@ -1585,8 +1587,23 @@ static void tc20_cost_scoring(void) {
     CHECK(ref >= 1, "reference cost is never 0");
     CHECK(rvv < ref, "matmul-rvv scores below matmul-reference on an RVV host");
 
-    const uint64_t rvv256 = rvcl_cost_matmul_rvv(&od, &cap256);
-    CHECK(rvv256 <= rvv, "wider VLEN tier does not raise the rvv cost");
+    /* The per-element coefficient for matmul-rvv is 1 and the shape
+     * heuristic is neutral (all preferred-tile hints are 0), so the
+     * combined wrapper score floors to 1 at every VLEN tier and the tier
+     * gain is not observable through rvcl_cost_matmul_rvv alone. Pin the
+     * gain directly on the cost model's vlen_tier_gain helper instead:
+     * it must shrink monotonically as the host tier widens, with the
+     * narrowest tier and a no-RVV host both at 1.0x (256 fixed-point). */
+    CHECK(vlen_tier_gain(&cap_norvv) == 256,
+            "no-RVV host gain is 1.0x (256 fp)");
+    CHECK(vlen_tier_gain(&cap128) == 256, "tier-128 gain is 1.0x (256 fp)");
+    CHECK(vlen_tier_gain(&cap256) == 200, "tier-256 gain is 0.78x (200 fp)");
+    CHECK(vlen_tier_gain(&cap512) == 160, "tier-512 gain is 0.62x (160 fp)");
+    CHECK(vlen_tier_gain(&cap1024) == 128, "tier-1024 gain is 0.5x (128 fp)");
+    CHECK(vlen_tier_gain(&cap1024) < vlen_tier_gain(&cap512)
+                    && vlen_tier_gain(&cap512) < vlen_tier_gain(&cap256)
+                    && vlen_tier_gain(&cap256) < vlen_tier_gain(&cap128),
+            "gain shrinks monotonically as the VLEN tier widens");
 
     /* No RVV in the snapshot: the rvv wrapper still yields a valid score
      * (cost_fn is only consulted on kernels that survived feature
@@ -1597,8 +1614,8 @@ static void tc20_cost_scoring(void) {
             "rvv cost stays valid and below reference without RVV");
 
     /* The shape heuristic is neutral until preferred-tile hints are filled
-     * in (v0.5 backfill): a different request size must not change the
-     * score while the hint table is all-zero. */
+     * in (a future calibration backfill): a different request size must
+     * not change the score while the hint table is all-zero. */
     rvcl_op_desc_t other;
     memset(&other, 0, sizeof(other));
     other.matmul = make_request(97, 65, 33, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
@@ -1609,7 +1626,7 @@ static void tc20_cost_scoring(void) {
             "neutral reference baseline is stable across request sizes");
 }
 
-/* TC-AC3-14 (EX-5): real-scoring contention over the built-in matmul
+/* TC-AC3-14: real-scoring contention over the built-in matmul
  * entries under capability override. On an RVV host the matmul-rvv
  * category must beat the reference; on a no-RVV host the featureless
  * portable entry (or the reference, when no portable exists) is selected.

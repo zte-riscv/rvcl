@@ -28,8 +28,8 @@
  *   - per_element_coefficient: a structured default constant per category
  *     (matmul-rvv cheap, matmul-reference expensive). These are heuristic
  *     defaults, not measured data; the real-machine backfill that turns the
- *     constant table into registrable per-kernel data is a v0.5 extension
- *     (see the table below).
+ *     constant table into registrable per-kernel data is a future
+ *     calibration step (see the table below).
  *   - shape_heuristic: dimensionless fixed-point penalty from the request
  *     against the kernel's preferred-tile hints (partial tail tiles cost a
  *     little extra). Neutral when a kernel declares no preferred hint, so
@@ -56,8 +56,8 @@
  * Structured default constants (estimated cycles per output element),
  * deliberately ordered so the matmul-rvv category is always cheaper than
  * matmul-reference when both are eligible. Real-machine calibration that
- * replaces these with registered per-kernel data lands in v0.5 (T11);
- * the shape heuristic and tier gain below already consume the request and
+ * replaces these with registered per-kernel data is a future step; the
+ * shape heuristic and tier gain below already consume the request and
  * capability so the backfill only swaps the coefficient table, not the
  * scoring path.
  */
@@ -97,9 +97,10 @@ static uint64_t shape_factor(
  * vector registers amortize the micro-kernel overhead, so the score shrinks
  * as the host tier grows. The reference gets no gain — it is a scalar loop
  * regardless of VLEN. Tier-parameterized specialization of individual
- * kernels is reserved for v0.5 and does not change this host-driven gain.
+ * kernels is a future step and does not change this host-driven gain.
+ * Exported for the test executables (see cost_model.h).
  */
-static uint64_t vlen_tier_gain(const rvcl_capability_t *cap) {
+RVCL_API uint64_t vlen_tier_gain(const rvcl_capability_t *cap) {
     switch (rvcl_capability_vlen_tier(cap)) {
         case RVCL_VLEN_TIER_1024: return 128; /* 0.5x */
         case RVCL_VLEN_TIER_512: return 160; /* ~0.62x */

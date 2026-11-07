@@ -26,8 +26,8 @@
  * non-negative cycle count (smaller = better) from the request shape and
  * the host capability snapshot so dispatch can order surviving candidates
  * by an explainable heuristic. The real-machine calibration that turns
- * the default coefficients into measured data is a v0.5 extension and
- * does not change this interface.
+ * the default coefficients into measured data does not change this
+ * interface.
  ******************************************************************************/
 
 #ifndef RVCL_COST_MODEL_H
@@ -59,6 +59,17 @@ RVCL_API uint64_t rvcl_cost_matmul_rvv(
  */
 RVCL_API uint64_t rvcl_cost_matmul_reference(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
+ * VLEN tier gain (fixed-point, 256 = 1.0x) applied to the matmul-rvv
+ * category: wider vector registers amortize the micro-kernel overhead, so
+ * the gain shrinks as the host tier grows. Exported for the test
+ * executables to pin the tier-gain table directly (the combined wrapper
+ * score floors to 1 at the current cheap per-element coefficient, so the
+ * gain is not observable through rvcl_cost_matmul_rvv alone). Not
+ * installed as API.
+ */
+RVCL_API uint64_t vlen_tier_gain(const rvcl_capability_t *cap);
 
 #ifdef __cplusplus
 } /* extern "C" */
