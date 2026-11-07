@@ -1,0 +1,22 @@
+# gemv ci — boundary scan + degenerates + LCG
+# GEMV cases use the Mx1xK triple form: the middle (n) dimension is a
+# placeholder ignored by the gemv descriptor (y[m] = A[m,k] x[k]).
+# boundary scan: K in {8k-1, 8k, 8k+1} and M in {32,64,128} edges
+64x1x63 n"scan_k_064m1"
+64x1x64 n"scan_k_064x0"
+64x1x65 n"scan_k_064p1"
+128x1x127 n"scan_k_128m1"
+128x1x128 n"scan_k_128x0"
+128x1x129 n"scan_k_128p1"
+63x1x64 n"scan_m_064m1"
+65x1x64 n"scan_m_064p1"
+127x1x64 n"scan_m_128m1"
+129x1x64 n"scan_m_128p1"
+1x1x64 n"degenerate_m1"
+64x1x1 n"degenerate_k1"
+1x1x1 n"degenerate_m1_k1"
+33x1x47 n"ragged"
+167x1x51 n"lcg01"
+94x1x97 n"lcg02"
+1x1x55 n"lcg03"
+128x1x178 n"lcg04"

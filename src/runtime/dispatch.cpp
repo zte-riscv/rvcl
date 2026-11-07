@@ -116,11 +116,19 @@ static rvcl_status_t matmul_dims_validate(
 static uint32_t matmul_key_hash(const rvcl_op_desc_t *key);
 static int matmul_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
 
+/* forward: the gemv entry's validator and key generator (request / keys
+ * sections below) */
+static rvcl_status_t gemv_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t gemv_key_hash(const rvcl_op_desc_t *key);
+static int gemv_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
 static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
         {RVCL_OP_MATMUL, matmul_dims_validate, matmul_key_hash,
                 matmul_key_equal},
+        {RVCL_OP_GEMV, gemv_dims_validate, gemv_key_hash, gemv_key_equal},
 };
-static int g_op_count = 1;
+static int g_op_count = 2;
 
 static const rvcl_dispatch_op_entry_t *op_entry(rvcl_operation_t op) {
     for (int i = 0; i < g_op_count; i++)
@@ -193,6 +201,27 @@ static uint32_t matmul_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_a);
     h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_b);
     h = hash_mix(h, (uint64_t)(unsigned)key->matmul.quant.zp_c);
+    return h;
+}
+
+static int gemv_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    return a->gemv.m == b->gemv.m && a->gemv.k == b->gemv.k
+            && a->gemv.dtype_a == b->gemv.dtype_a
+            && a->gemv.dtype_b == b->gemv.dtype_b
+            && a->gemv.dtype_acc == b->gemv.dtype_acc
+            && a->gemv.dtype_c == b->gemv.dtype_c
+            && a->gemv.dtype_bias == b->gemv.dtype_bias;
+}
+
+static uint32_t gemv_key_hash(const rvcl_op_desc_t *key) {
+    unsigned h = 2166136261u;
+    h = hash_mix(h, (uint64_t)key->gemv.m);
+    h = hash_mix(h, (uint64_t)key->gemv.k);
+    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_bias);
     return h;
 }
 
@@ -291,28 +320,33 @@ static int dtype_is_request_valid(rvcl_dtype_t dt) {
  * in the accumulator position. The habit is table-backed (dtype trait
  * table acc_default): int8/uint8 -> INT32, floating family -> FP32, so
  * adding a dtype never forks this resolver again. */
-static rvcl_dtype_t resolve_acc(const rvcl_matmul_desc_t *d) {
-    if (d->dtype_acc != RVCL_DTYPE_AUTO) return d->dtype_acc;
-    return rvcl_dtype_traits(d->dtype_a).acc_default;
+static rvcl_dtype_t resolve_acc(rvcl_dtype_t dtype_a, rvcl_dtype_t dtype_acc) {
+    if (dtype_acc != RVCL_DTYPE_AUTO) return dtype_acc;
+    return rvcl_dtype_traits(dtype_a).acc_default;
+}
+
+/* Validates the (A,B,acc,C,bias) dtype tuple shared by the operators. */
+static rvcl_status_t validate_dtype_tuple(rvcl_dtype_t dtype_a,
+        rvcl_dtype_t dtype_b, rvcl_dtype_t dtype_acc, rvcl_dtype_t dtype_c,
+        rvcl_dtype_t dtype_bias) {
+    /* AUTO is a request-side marker valid only for the accumulator and
+     * for the "no bias" bias slot. */
+    if (dtype_a == RVCL_DTYPE_AUTO || dtype_b == RVCL_DTYPE_AUTO
+            || dtype_c == RVCL_DTYPE_AUTO)
+        return RVCL_UNSUPPORTED_DTYPE_COMBO;
+    if (!dtype_is_request_valid(dtype_a) || !dtype_is_request_valid(dtype_b)
+            || !dtype_is_request_valid(dtype_c))
+        return RVCL_UNSUPPORTED_DTYPE_COMBO;
+    if (dtype_acc != RVCL_DTYPE_AUTO && !dtype_is_request_valid(dtype_acc))
+        return RVCL_UNSUPPORTED_DTYPE_COMBO;
+    if (dtype_bias != RVCL_DTYPE_AUTO && !dtype_is_request_valid(dtype_bias))
+        return RVCL_UNSUPPORTED_DTYPE_COMBO;
+    return RVCL_SUCCESS;
 }
 
 static rvcl_status_t validate_request(const rvcl_matmul_desc_t *d) {
-    /* AUTO is a request-side marker valid only for the accumulator and
-     * for the "no bias" bias slot. */
-    if (d->dtype_a == RVCL_DTYPE_AUTO || d->dtype_b == RVCL_DTYPE_AUTO
-            || d->dtype_c == RVCL_DTYPE_AUTO)
-        return RVCL_UNSUPPORTED_DTYPE_COMBO;
-    if (!dtype_is_request_valid(d->dtype_a)
-            || !dtype_is_request_valid(d->dtype_b)
-            || !dtype_is_request_valid(d->dtype_c))
-        return RVCL_UNSUPPORTED_DTYPE_COMBO;
-    if (d->dtype_acc != RVCL_DTYPE_AUTO
-            && !dtype_is_request_valid(d->dtype_acc))
-        return RVCL_UNSUPPORTED_DTYPE_COMBO;
-    if (d->dtype_bias != RVCL_DTYPE_AUTO
-            && !dtype_is_request_valid(d->dtype_bias))
-        return RVCL_UNSUPPORTED_DTYPE_COMBO;
-    return RVCL_SUCCESS;
+    return validate_dtype_tuple(
+            d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
 }
 
 /* The matmul op-table entry: validates the request and resolves the
@@ -328,7 +362,28 @@ static rvcl_status_t matmul_dims_validate(
     out->k = d->k;
     out->dtype_a = d->dtype_a;
     out->dtype_b = d->dtype_b;
-    out->dtype_acc = resolve_acc(d);
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
+
+/* The gemv op-table entry. The descriptor has no n dimension; the filter
+ * keeps n at 1 and the pipeline shape stage treats the kernel's unbounded
+ * n bounds as "any", so a gemv kernel is never rejected on n. */
+static rvcl_status_t gemv_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_gemv_desc_t *d = &od->gemv;
+    if (d->m <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_dtype_tuple(
+            d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
+    if (st != RVCL_SUCCESS) return st;
+    out->m = d->m;
+    out->n = 1; /* no n dimension in a gemv request */
+    out->k = d->k;
+    out->dtype_a = d->dtype_a;
+    out->dtype_b = d->dtype_b;
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
     out->dtype_c = d->dtype_c;
     out->quant_enabled = d->quant.enabled;
     return RVCL_SUCCESS;

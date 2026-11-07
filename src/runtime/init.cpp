@@ -39,12 +39,18 @@
 
 /* reference backend (always built: golden path + CI on any host) */
 rvcl_status_t rvcl_reference_register(void);
+/* reference GEMV golden (always built, like the matmul reference) */
+rvcl_status_t rvcl_gemv_reference_register(void);
 /* rvv backend: f32/f16 GEMM, panel packing. On vector builds registers
  * per-tier dedicated variants plus the generic entry; no-op otherwise. */
 rvcl_status_t rvcl_rvv_register(void);
 /* rvv portable entries (scalar C loops) for builds without vector
  * compilation; no-op on vector builds. */
 rvcl_status_t rvcl_rvv_register_portable(void);
+/* rvv GEMV: single C-portable path. The generic entry requires RVV on
+ * vector builds; the portable entry serves any host otherwise. */
+rvcl_status_t rvcl_rvv_register_gemv(void);
+rvcl_status_t rvcl_rvv_register_gemv_portable(void);
 /* ime/vme/ame backends: experimental, land in v0.2/v0.3 */
 
 /* Registration failures propagate: a partially registered backend set
@@ -59,7 +65,15 @@ static rvcl_status_t register_all(void) {
      * preferred over the reference fallback, so they register first. */
     st = rvcl_rvv_register_portable();
     if (st != RVCL_SUCCESS) return st;
+    /* GEMV generic + portable entries, same ordering habit. */
+    st = rvcl_rvv_register_gemv();
+    if (st != RVCL_SUCCESS) return st;
+    st = rvcl_rvv_register_gemv_portable();
+    if (st != RVCL_SUCCESS) return st;
 #endif
+    /* GEMV golden fallback, before the matmul fallback (same family). */
+    st = rvcl_gemv_reference_register();
+    if (st != RVCL_SUCCESS) return st;
     /* Unbounded f32 fallback, last. */
     return rvcl_reference_register();
 }

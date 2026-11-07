@@ -108,6 +108,7 @@ set(RVCL_RUNTIME_SOURCES
     src/runtime/scheduler/scheduler.cpp
     src/operators/matmul.cpp
     src/backends/reference/reference_matmul.cpp
+    src/backends/reference/reference_gemv.cpp
 )
 
 # ------------------------------------------------------------ RVV backend
@@ -121,6 +122,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_pack.cpp
         src/backends/rvv/rvv_gemm_f32.cpp
         src/backends/rvv/rvv_gemm_f16.cpp
+        src/backends/rvv/rvv_gemv_f32.cpp
     )
     # The JIT micro-kernel compiles on RISC-V hosts only, always at the
     # baseline -march and never under the RVCL_RVV_MARCH override below:
@@ -235,6 +237,17 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
             src/backends/rvv/rvv_gemm_f32.cpp
             src/backends/rvv/rvv_gemm_f16.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
+        # The GEMV C-portable kernel is the operator's only compute path and
+        # the differential oracle. Under the vector -march override the cross
+        # gcc auto-vectorizes its scalar K reduction into a non-fused
+        # vfmul+vfredosum, landing 1 ulp off the scalar golden that compiles
+        # at the baseline march. -fno-tree-vectorize keeps the loop a fused
+        # fmadd chain (the reference and golden compile identically), so the
+        # rvv GEMV kernel stays bit-exact on the vector tier. The file has no
+        # intrinsics path, so disabling vectorization costs nothing here.
+        set_source_files_properties(src/backends/rvv/rvv_gemv_f32.cpp
+            PROPERTIES COMPILE_OPTIONS
+                        "-march=${RVCL_RVV_MARCH};-fno-tree-vectorize")
     endif()
 endif()
 
@@ -252,6 +265,13 @@ if(RVCL_BUILD_TESTS OR RVCL_BUILD_BENCH)
     # per-dtype test facts and references the library trait table.
     add_library(rvcl_test_dtype_ops STATIC tests/dtype_ops.cpp)
     target_link_libraries(rvcl_test_dtype_ops PUBLIC rvcl rvcl_test_golden)
+    # Test-side operator slot table (tests/op_slots.cpp): owns the per-operator
+    # test facts (corpus name, dtype set, golden routing, run family) and
+    # routes through the internal rvcl_dispatch_op entry. matmul is the first
+    # row; a new operator adds a row here plus a corpus directory.
+    add_library(rvcl_test_op_slots STATIC tests/op_slots.cpp)
+    target_link_libraries(
+        rvcl_test_op_slots PUBLIC rvcl rvcl_test_golden rvcl_test_dtype_ops)
 endif()
 
 if(RVCL_BUILD_TESTS)
@@ -273,7 +293,8 @@ if(RVCL_BUILD_TESTS)
 
     add_executable(rvcl_differential tests/differential_test.cpp)
     target_link_libraries(
-            rvcl_differential PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops)
+            rvcl_differential PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
+            rvcl_test_op_slots)
     add_test(NAME differential COMMAND rvcl_differential)
 
     # Concurrent driver: T pthreads take exclusive M slices through one
@@ -407,6 +428,8 @@ if(RVCL_BUILD_TESTS)
 
     rvcl_add_corpus(matmul smoke test_matmul_smoke)
     rvcl_add_corpus(matmul ci    test_matmul_ci)
+    rvcl_add_corpus(gemv   smoke test_gemv_smoke)
+    rvcl_add_corpus(gemv   ci    test_gemv_ci)
 endif()
 
 # ---------------------------------------------------------------- examples
@@ -448,7 +471,8 @@ endif()
 if(RVCL_BUILD_BENCH)
     add_executable(rvcl_bench tests/bench_matmul.cpp)
     target_link_libraries(
-            rvcl_bench PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops)
+            rvcl_bench PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
+            rvcl_test_op_slots)
 endif()
 
 # ------------------------------------------------------------------ install
