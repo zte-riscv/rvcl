@@ -570,192 +570,205 @@ int main(int argc, char **argv) {
     CHECK(rvcl_registry_find_factory(f16_rvv_name) != NULL,
             "rvv f16 kernel present (generic or portable)");
 
-    /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
-    enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
-    float *a = NULL, *b = NULL;
-    float *bias = (float *)malloc((size_t)N * 4);
-    float *c_ref = (float *)malloc((size_t)M * N * 4),
-          *c_rvv = (float *)malloc((size_t)M * N * 4);
-    float *golden = (float *)malloc((size_t)M * N * 4);
-    if (!dt_only_f16) {
-        a = (float *)malloc((size_t)M * K * 4);
-        b = (float *)malloc((size_t)K * N * 4);
-        for (int i = 0; i < M * K; i++)
-            a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
-        for (int i = 0; i < K * N; i++)
-            b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
-    }
-    for (int j = 0; j < N; j++)
-        bias[j] = 0.25f;
-
-    rvcl_matmul_desc_t d32 = {
-            .m = M,
-            .n = N,
-            .k = K,
-            .dtype_a = RVCL_DTYPE_FP32,
-            .dtype_b = RVCL_DTYPE_FP32,
-            .dtype_acc = RVCL_DTYPE_AUTO,
-            .dtype_c = RVCL_DTYPE_FP32,
-            .dtype_bias = RVCL_DTYPE_FP32,
-            .quant = {},
-    };
-
-    if (!dt_only_f16) {
-        golden_f32(a, b, bias, golden, M, N, K);
-
-        CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, b, bias,
-                      c_ref, -1, -1)
-                        == RVCL_SUCCESS,
-                "reference f32 runs");
-        CHECK(run_matmul_kernel(f32_rvv_name, &d32, a, b, bias, c_rvv, -1, -1)
-                        == RVCL_SUCCESS,
-                "rvv f32 runs (packed path)");
-
-        int bad_ref = 0, bad_rvv = 0;
-        for (int i = 0; i < M * N; i++) {
-            if (c_ref[i] != golden[i]) bad_ref++;
-            if (c_rvv[i] != golden[i]) bad_rvv++;
+    /* The fixed contract block below is matmul-specific: it drives the
+     * matmul reference/rvv pair, matmul dispatch and matmul work ranges.
+     * A non-matmul operator (e.g. --op=gemv) runs only its corpus batch and
+     * must not inherit this block, whose forced C path would otherwise pull
+     * the matmul vector-tier 1-ulp case into a gemv-targeted run. */
+    if (slot->op == RVCL_OP_MATMUL) {
+        /* ---- fp32 differential: reference vs rvv (C path on x86) ---- */
+        enum { M = 33, N = 19, K = 47 }; /* ragged sizes to hit panel edges */
+        float *a = NULL, *b = NULL;
+        float *bias = (float *)malloc((size_t)N * 4);
+        float *c_ref = (float *)malloc((size_t)M * N * 4),
+              *c_rvv = (float *)malloc((size_t)M * N * 4);
+        float *golden = (float *)malloc((size_t)M * N * 4);
+        if (!dt_only_f16) {
+            a = (float *)malloc((size_t)M * K * 4);
+            b = (float *)malloc((size_t)K * N * 4);
+            for (int i = 0; i < M * K; i++)
+                a[i] = (float)((i * 13) % 17) / 17.0f - 0.5f;
+            for (int i = 0; i < K * N; i++)
+                b[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
         }
-        CHECK(bad_ref == 0, "reference matches naive golden (bit-exact)");
-        CHECK(bad_rvv == 0,
-                "rvv f32 (packed) matches naive golden (bit-exact)");
+        for (int j = 0; j < N; j++)
+            bias[j] = 0.25f;
 
-        /* fp32 must be identical between backends too */
-        int diff_backends = 0;
-        for (int i = 0; i < M * N; i++)
-            if (c_ref[i] != c_rvv[i]) diff_backends++;
-        CHECK(diff_backends == 0, "reference and rvv f32 outputs identical");
-
-        /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
-        golden_f32(a, b, NULL, golden, M, N, K);
-        CHECK(run_matmul_kernel(f32_rvv_name, &d32, a, b, NULL, c_rvv, -1, -1)
-                        == RVCL_SUCCESS,
-                "rvv f32 runs without bias");
-        int bad_nobias = 0;
-        for (int i = 0; i < M * N; i++)
-            if (c_rvv[i] != golden[i]) bad_nobias++;
-        CHECK(bad_nobias == 0,
-                "rvv f32 no-bias matches naive golden (bit-exact)");
-    }
-
-    /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
-    uint16_t *ah = NULL, *bh = NULL;
-    if (!dt_only_f32) {
-        const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
-        ah = (uint16_t *)malloc((size_t)M * K * 2);
-        bh = (uint16_t *)malloc((size_t)K * N * 2);
-        for (int i = 0; i < M * K; i++)
-            ah[i] = op16->f32_to_storage((float)((i * 11) % 23) / 23.0f - 0.5f);
-        for (int i = 0; i < K * N; i++)
-            bh[i] = op16->f32_to_storage((float)((i * 5) % 29) / 29.0f - 0.5f);
-
-        rvcl_matmul_desc_t d16 = {
+        rvcl_matmul_desc_t d32 = {
                 .m = M,
                 .n = N,
                 .k = K,
-                .dtype_a = RVCL_DTYPE_FP16,
-                .dtype_b = RVCL_DTYPE_FP16,
+                .dtype_a = RVCL_DTYPE_FP32,
+                .dtype_b = RVCL_DTYPE_FP32,
                 .dtype_acc = RVCL_DTYPE_AUTO,
                 .dtype_c = RVCL_DTYPE_FP32,
                 .dtype_bias = RVCL_DTYPE_FP32,
                 .quant = {},
         };
-        golden_f16(ah, bh, bias, golden, M, N, K);
-        CHECK(run_matmul_kernel(f16_rvv_name, &d16, ah, bh, bias, c_rvv, -1, -1)
-                        == RVCL_SUCCESS,
-                "rvv f16 runs (packed path)");
-        const golden_cmp_t cmp16 = op16->compare(c_rvv, golden, (int64_t)M * N,
-                RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
-        CHECK(cmp16.mismatches == 0,
-                "rvv f16 (packed) matches soft-converted golden");
-    }
 
-    /* ---- dispatch selection through the full pipeline ---- */
-    {
-        rvcl_dispatch_result_t *r = NULL;
-        /* Both this backend pair and the reference entry serve the shape;
+        if (!dt_only_f16) {
+            golden_f32(a, b, bias, golden, M, N, K);
+
+            CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, b,
+                          bias, c_ref, -1, -1)
+                            == RVCL_SUCCESS,
+                    "reference f32 runs");
+            CHECK(run_matmul_kernel(
+                          f32_rvv_name, &d32, a, b, bias, c_rvv, -1, -1)
+                            == RVCL_SUCCESS,
+                    "rvv f32 runs (packed path)");
+
+            int bad_ref = 0, bad_rvv = 0;
+            for (int i = 0; i < M * N; i++) {
+                if (c_ref[i] != golden[i]) bad_ref++;
+                if (c_rvv[i] != golden[i]) bad_rvv++;
+            }
+            CHECK(bad_ref == 0, "reference matches naive golden (bit-exact)");
+            CHECK(bad_rvv == 0,
+                    "rvv f32 (packed) matches naive golden (bit-exact)");
+
+            /* fp32 must be identical between backends too */
+            int diff_backends = 0;
+            for (int i = 0; i < M * N; i++)
+                if (c_ref[i] != c_rvv[i]) diff_backends++;
+            CHECK(diff_backends == 0,
+                    "reference and rvv f32 outputs identical");
+
+            /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
+            golden_f32(a, b, NULL, golden, M, N, K);
+            CHECK(run_matmul_kernel(
+                          f32_rvv_name, &d32, a, b, NULL, c_rvv, -1, -1)
+                            == RVCL_SUCCESS,
+                    "rvv f32 runs without bias");
+            int bad_nobias = 0;
+            for (int i = 0; i < M * N; i++)
+                if (c_rvv[i] != golden[i]) bad_nobias++;
+            CHECK(bad_nobias == 0,
+                    "rvv f32 no-bias matches naive golden (bit-exact)");
+        }
+
+        /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
+        uint16_t *ah = NULL, *bh = NULL;
+        if (!dt_only_f32) {
+            const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
+            ah = (uint16_t *)malloc((size_t)M * K * 2);
+            bh = (uint16_t *)malloc((size_t)K * N * 2);
+            for (int i = 0; i < M * K; i++)
+                ah[i] = op16->f32_to_storage(
+                        (float)((i * 11) % 23) / 23.0f - 0.5f);
+            for (int i = 0; i < K * N; i++)
+                bh[i] = op16->f32_to_storage(
+                        (float)((i * 5) % 29) / 29.0f - 0.5f);
+
+            rvcl_matmul_desc_t d16 = {
+                    .m = M,
+                    .n = N,
+                    .k = K,
+                    .dtype_a = RVCL_DTYPE_FP16,
+                    .dtype_b = RVCL_DTYPE_FP16,
+                    .dtype_acc = RVCL_DTYPE_AUTO,
+                    .dtype_c = RVCL_DTYPE_FP32,
+                    .dtype_bias = RVCL_DTYPE_FP32,
+                    .quant = {},
+            };
+            golden_f16(ah, bh, bias, golden, M, N, K);
+            CHECK(run_matmul_kernel(
+                          f16_rvv_name, &d16, ah, bh, bias, c_rvv, -1, -1)
+                            == RVCL_SUCCESS,
+                    "rvv f16 runs (packed path)");
+            const golden_cmp_t cmp16 = op16->compare(c_rvv, golden,
+                    (int64_t)M * N, RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
+            CHECK(cmp16.mismatches == 0,
+                    "rvv f16 (packed) matches soft-converted golden");
+        }
+
+        /* ---- dispatch selection through the full pipeline ---- */
+        {
+            rvcl_dispatch_result_t *r = NULL;
+            /* Both this backend pair and the reference entry serve the shape;
          * the selection itself is covered by the dispatch unit tests, so
          * here only assert that a full dispatch call succeeds. */
-        CHECK(rvcl_dispatch_matmul(&d32, &r) == RVCL_SUCCESS,
-                "dispatch selects a kernel for fp32");
-        if (r) {
-            printf("  (host selects: %s)\n", rvcl_dispatch_kernel_name(r));
-            rvcl_dispatch_release(r);
+            CHECK(rvcl_dispatch_matmul(&d32, &r) == RVCL_SUCCESS,
+                    "dispatch selects a kernel for fp32");
+            if (r) {
+                printf("  (host selects: %s)\n", rvcl_dispatch_kernel_name(r));
+                rvcl_dispatch_release(r);
+            }
         }
-    }
 
-    /* ---- scheduler acceptance: injection does not change results ---- */
-    {
-        rvcl_ischeduler_t rec = {
-                .parallel_for = recording_parallel_for,
-                .num_threads = 4,
-                .name = "recording-4-slice",
-        };
-        /* NOTE: set-once means we cannot inject after the serial scheduler
+        /* ---- scheduler acceptance: injection does not change results ---- */
+        {
+            rvcl_ischeduler_t rec = {
+                    .parallel_for = recording_parallel_for,
+                    .num_threads = 4,
+                    .name = "recording-4-slice",
+            };
+            /* NOTE: set-once means we cannot inject after the serial scheduler
          * was installed by default. The smoke suite owns the serial set;
          * here we verify slice coverage only (same process constraint). */
-        g_num_slices = 0;
-        rvcl_work_range_t total = rvcl_work_range_full(M, N, K);
-        recording_parallel_for(&rec, &total, no_op_task, NULL);
-        CHECK(g_num_slices == 4, "4-slice scheduler produced 4 slices");
+            g_num_slices = 0;
+            rvcl_work_range_t total = rvcl_work_range_full(M, N, K);
+            recording_parallel_for(&rec, &total, no_op_task, NULL);
+            CHECK(g_num_slices == 4, "4-slice scheduler produced 4 slices");
 
-        /* coverage: no overlap, no gap over M */
-        int64_t covered = 0, prev_end = 0;
-        int overlap = 0;
-        for (int i = 0; i < g_num_slices; i++) {
-            if (g_slices[i].m_begin < prev_end) overlap = 1;
-            covered += g_slices[i].m_end - g_slices[i].m_begin;
-            prev_end = g_slices[i].m_end;
-        }
-        CHECK(overlap == 0, "slices do not overlap");
-        CHECK(covered == M, "slices cover all rows without gaps");
-    }
-
-    /* ---- work-range honoring inside a kernel ---- */
-    if (!dt_only_f16) {
-        /* run_matmul_kernel uses the full range; exercise a sub-range by
-         * passing an explicit row span [4,9). */
-        memset(c_rvv, 0, (size_t)M * N * 4);
-        rvcl_status_t st = run_matmul_kernel(f32_rvv_name, &d32, a, b, bias,
-                c_rvv, 4, 9 /* rows [4,9) only */);
-        CHECK(st == RVCL_SUCCESS, "rvv f32 runs on sub-range");
-        int bad_full = 0, untouched_ok = 1;
-        golden_f32(a, b, bias, golden, M, N, K);
-        for (int i = 0; i < M; i++)
-            for (int j = 0; j < N; j++) {
-                if (i >= 4 && i < 9) {
-                    if (c_rvv[i * N + j] != golden[i * N + j]) bad_full++;
-                } else if (c_rvv[i * N + j] != 0.0f) {
-                    untouched_ok = 0;
-                }
+            /* coverage: no overlap, no gap over M */
+            int64_t covered = 0, prev_end = 0;
+            int overlap = 0;
+            for (int i = 0; i < g_num_slices; i++) {
+                if (g_slices[i].m_begin < prev_end) overlap = 1;
+                covered += g_slices[i].m_end - g_slices[i].m_begin;
+                prev_end = g_slices[i].m_end;
             }
-        CHECK(bad_full == 0, "sub-range block matches golden");
-        CHECK(untouched_ok, "rows outside sub-range untouched");
-    }
+            CHECK(overlap == 0, "slices do not overlap");
+            CHECK(covered == M, "slices cover all rows without gaps");
+        }
 
-    /* ---- dispatch cache ---- */
-    {
-        rvcl_dispatch_cache_clear();
-        rvcl_dispatch_result_t *r1 = NULL, *r2 = NULL;
-        CHECK(rvcl_dispatch_matmul(&d32, &r1) == RVCL_SUCCESS,
-                "dispatch after clear (miss)");
-        CHECK(rvcl_dispatch_matmul(&d32, &r2) == RVCL_SUCCESS,
-                "second identical dispatch (hit)");
-        CHECK(r1 == r2, "cache hit returns the same result object");
-        CHECK(rvcl_dispatch_cache_misses() >= 1, "miss counter advanced");
-        CHECK(rvcl_dispatch_cache_hits() >= 1, "hit counter advanced");
-        /* r1 == r2 (cache-owned single object): one release suffices. */
-        rvcl_dispatch_release(r1);
-    }
+        /* ---- work-range honoring inside a kernel ---- */
+        if (!dt_only_f16) {
+            /* run_matmul_kernel uses the full range; exercise a sub-range by
+         * passing an explicit row span [4,9). */
+            memset(c_rvv, 0, (size_t)M * N * 4);
+            rvcl_status_t st = run_matmul_kernel(f32_rvv_name, &d32, a, b, bias,
+                    c_rvv, 4, 9 /* rows [4,9) only */);
+            CHECK(st == RVCL_SUCCESS, "rvv f32 runs on sub-range");
+            int bad_full = 0, untouched_ok = 1;
+            golden_f32(a, b, bias, golden, M, N, K);
+            for (int i = 0; i < M; i++)
+                for (int j = 0; j < N; j++) {
+                    if (i >= 4 && i < 9) {
+                        if (c_rvv[i * N + j] != golden[i * N + j]) bad_full++;
+                    } else if (c_rvv[i * N + j] != 0.0f) {
+                        untouched_ok = 0;
+                    }
+                }
+            CHECK(bad_full == 0, "sub-range block matches golden");
+            CHECK(untouched_ok, "rows outside sub-range untouched");
+        }
 
-    free(a);
-    free(b);
-    free(bias);
-    free(c_ref);
-    free(c_rvv);
-    free(golden);
-    free(ah);
-    free(bh);
+        /* ---- dispatch cache ---- */
+        {
+            rvcl_dispatch_cache_clear();
+            rvcl_dispatch_result_t *r1 = NULL, *r2 = NULL;
+            CHECK(rvcl_dispatch_matmul(&d32, &r1) == RVCL_SUCCESS,
+                    "dispatch after clear (miss)");
+            CHECK(rvcl_dispatch_matmul(&d32, &r2) == RVCL_SUCCESS,
+                    "second identical dispatch (hit)");
+            CHECK(r1 == r2, "cache hit returns the same result object");
+            CHECK(rvcl_dispatch_cache_misses() >= 1, "miss counter advanced");
+            CHECK(rvcl_dispatch_cache_hits() >= 1, "hit counter advanced");
+            /* r1 == r2 (cache-owned single object): one release suffices. */
+            rvcl_dispatch_release(r1);
+        }
+
+        free(a);
+        free(b);
+        free(bias);
+        free(c_ref);
+        free(c_rvv);
+        free(golden);
+        free(ah);
+        free(bh);
+    }
 
     /* ---- corpus batch (shape numerics; contract cases stay above) ---- */
     int batch_fail = 0;
