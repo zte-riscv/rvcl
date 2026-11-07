@@ -17,9 +17,9 @@
  *
  * reference_gemv.cpp — golden FP32 GEMV (reference backend)
  *
- * Phase 0 reference backend (PLAN §6.2 step 4): correctness-first
- * reduction loop, zero workspace, no packing. Also the differential-testing
- * golden implementation that v0.1 RVV GEMV kernels are compared against.
+ * Reference backend: correctness-first reduction loop, zero workspace,
+ * no packing. Also the differential-testing golden implementation that
+ * the GEMV kernels are compared against.
  * y[m] = bias? + A[m,k] x[k], row-major A, length-m output vector.
  ******************************************************************************/
 

@@ -66,7 +66,7 @@ typedef struct {
     /* Corpus directory / CLI operator name ("matmul", "gemv"). */
     const char *name;
     rvcl_operation_t op;
-    /* Supported test dtypes, NULL-terminated. */
+    /* Supported test dtypes, RVCL_DTYPE_AUTO-terminated. */
     const rvcl_dtype_t *dtypes;
     /* Buffer sizing: element counts of A, B, the bias and the output C. */
     op_slot_elems_fn a_elems;
