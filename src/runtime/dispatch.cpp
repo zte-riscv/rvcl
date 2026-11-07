@@ -210,17 +210,7 @@ static int gemv_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
             && a->gemv.dtype_b == b->gemv.dtype_b
             && a->gemv.dtype_acc == b->gemv.dtype_acc
             && a->gemv.dtype_c == b->gemv.dtype_c
-            && a->gemv.dtype_bias == b->gemv.dtype_bias
-            && a->gemv.quant.enabled == b->gemv.quant.enabled
-            && float_bits(a->gemv.quant.scale_a)
-            == float_bits(b->gemv.quant.scale_a)
-            && float_bits(a->gemv.quant.scale_b)
-            == float_bits(b->gemv.quant.scale_b)
-            && float_bits(a->gemv.quant.scale_c)
-            == float_bits(b->gemv.quant.scale_c)
-            && a->gemv.quant.zp_a == b->gemv.quant.zp_a
-            && a->gemv.quant.zp_b == b->gemv.quant.zp_b
-            && a->gemv.quant.zp_c == b->gemv.quant.zp_c;
+            && a->gemv.dtype_bias == b->gemv.dtype_bias;
 }
 
 static uint32_t gemv_key_hash(const rvcl_op_desc_t *key) {
@@ -232,13 +222,6 @@ static uint32_t gemv_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_acc);
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_c);
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_bias);
-    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.quant.enabled);
-    h = hash_mix(h, float_bits(key->gemv.quant.scale_a));
-    h = hash_mix(h, float_bits(key->gemv.quant.scale_b));
-    h = hash_mix(h, float_bits(key->gemv.quant.scale_c));
-    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.quant.zp_a);
-    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.quant.zp_b);
-    h = hash_mix(h, (uint64_t)(unsigned)key->gemv.quant.zp_c);
     return h;
 }
 

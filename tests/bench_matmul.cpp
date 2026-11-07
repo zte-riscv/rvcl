@@ -325,27 +325,6 @@ static void bparse_corpus(const char *path, bcorpus_t *c) {
         bcorpus_fatal(path, lineno, "empty corpus (no case lines)");
 }
 
-/* the op key is the corpus directory name (multi-operator landing
- * point: a corpus under tests/inputs/<op>/ reports op:"<op>") */
-static void op_from_batch_path(const char *path, char *out, size_t sz) {
-    const char *slash = strrchr(path, '/');
-    size_t flen = slash ? (size_t)(slash - path) : 0;
-    const char *start = path;
-    for (size_t i = flen; i > 0;)
-        if (path[--i] == '/') {
-            start = path + i + 1;
-            break;
-        }
-    if (flen == 0 || start >= path + flen) {
-        snprintf(out, sz, "matmul");
-        return;
-    }
-    size_t n = (size_t)(path + flen - start);
-    if (n >= sz) n = sz - 1;
-    memcpy(out, start, n);
-    out[n] = '\0';
-}
-
 /* ------------------------------------------------------- bench contexts */
 
 typedef struct {
@@ -586,7 +565,8 @@ int main(int argc, char **argv) {
     char op[32] = "matmul";
     if (batch) {
         bparse_corpus(batch, &corpus);
-        op_from_batch_path(batch, op, sizeof(op));
+        const op_slot_t *bslot = op_slot_from_batch_path(batch);
+        snprintf(op, sizeof(op), "%s", bslot->name);
         /* file header --mode is the default; an explicit CLI --mode wins */
         if (!mode_given && corpus.file_mode) {
             if (corpus.file_mode == 'C')
@@ -637,8 +617,8 @@ int main(int argc, char **argv) {
                 "kernel", "k-ms", "pack", "p+k", "e2e");
     }
 
-    /* The operator is named on the CLI (--op=) or derived from the batch
-     * directory; the slot row carries all op-specific facts. */
+    /* The operator is derived from the batch directory name, defaulting
+     * to matmul when absent; the slot row carries all op-specific facts. */
     const op_slot_t *slot = op_slot_from_name(op);
     if (!slot) slot = op_slot_default();
 

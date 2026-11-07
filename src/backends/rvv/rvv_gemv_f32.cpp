@@ -42,13 +42,12 @@
 /* ------------------------------------------------------ C-portable kernel */
 
 static void rvv_gemv_f32_c(const void *a_in, const void *x_in,
-        const void *bias_in, void *y_in, int64_t m, int64_t k_dim,
+        const void *bias_in, void *y_in, int64_t k_dim,
         const rvcl_work_range_t *r) {
     const float *a = (const float *)a_in;
     const float *x = (const float *)x_in;
     const float *bias = (const float *)bias_in;
     float *y = (float *)y_in;
-    (void)m;
 
     for (int64_t i = r->m_begin; i < r->m_end; i++) {
         float acc = bias ? bias[i] : 0.0f;
@@ -98,8 +97,8 @@ static rvcl_status_t rvv_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     const rvcl_tensor_t *bias = rvcl_tensor_pack_get(pack, RVCL_TENSOR_BIAS);
     if (!a || !x || !y) return RVCL_ERROR_INVALID_ARGUMENT;
 
-    rvv_gemv_f32_c(a->data, x->data, bias ? bias->data : NULL, y->data, rk->m,
-            rk->k, r);
+    rvv_gemv_f32_c(
+            a->data, x->data, bias ? bias->data : NULL, y->data, rk->k, r);
     return RVCL_SUCCESS;
 }
 
