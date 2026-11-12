@@ -38,12 +38,73 @@
 #include "capability_internal.h"
 #include "rvcl/dispatch.h"
 
+#include <signal.h>
+#include <setjmp.h>
+
 /* Test override state: when active, rvcl_get_capability() serves this
  * copy instead of the host snapshot. The buffer and the flag share one
  * mutex with every snapshot read, so an override install never tears. */
 static rvcl_capability_t g_cap_override;
 static int g_cap_overridden;
 static pthread_mutex_t g_cap_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* -------------------------------------------------- vendor probe registry
+ *
+ * Vendor probes registered before the snapshot is built are invoked once
+ * during build_capability(). g_probes_locked turns 1 the first time the
+ * snapshot build runs, closing the registration window (see capability.h
+ * for the contract); until then registration is mutex-protected and the
+ * probe array grows append-only. The snapshot build itself runs under the
+ * same mutex so a registration racing the first build is serialized either
+ * before the probes are captured or after the window closes. */
+static rvcl_vendor_probe_fn g_probes[RVCL_MAX_VENDOR_PROBES];
+static int g_num_probes;
+static int g_probes_locked;
+
+/* ------------------------------------------------------- probe sanitizer
+ *
+ * Whatever a probe appends is filtered before it enters the snapshot:
+ * only vendor-range ids are kept, an id already present is dropped
+ * (append-only, never overwrite), and an over-full table rolls back to
+ * the pre-probe count so a misbehaving probe cannot overflow or clobber
+ * standard features. */
+static void sanitize_probe_increment(rvcl_capability_t *cap, int num_before) {
+    int n = num_before;
+    for (int i = num_before; i < cap->num_features; i++) {
+        if (cap->features[i].id < RVCL_FEATURE_VENDOR_FIRST) continue;
+        int dup = 0;
+        for (int j = 0; j < n; j++)
+            if (cap->features[j].id == cap->features[i].id) dup = 1;
+        if (dup) continue;
+        if (n >= RVCL_MAX_FEATURES) break;
+        cap->features[n++] = cap->features[i];
+    }
+    cap->num_features = n;
+}
+
+static void run_vendor_probes(rvcl_capability_t *cap) {
+    /* Snapshot the probe array under the mutex so a registration racing
+     * the single snapshot build is never read half-applied. After the
+     * window closes no registration can add to the array, so the copy is
+     * stable for the duration of the build. */
+    rvcl_vendor_probe_fn probes[RVCL_MAX_VENDOR_PROBES];
+    int num = 0;
+    pthread_mutex_lock(&g_cap_mutex);
+    for (int i = 0; i < g_num_probes; i++)
+        probes[i] = g_probes[i];
+    num = g_num_probes;
+    pthread_mutex_unlock(&g_cap_mutex);
+
+    for (int i = 0; i < num; i++) {
+        const int num_before = cap->num_features;
+        if (probes[i](cap) != RVCL_SUCCESS) {
+            /* degrade, never error: discard this probe's whole increment */
+            cap->num_features = num_before;
+            continue;
+        }
+        sanitize_probe_increment(cap, num_before);
+    }
+}
 
 /* Compile-time knowledge of the build target. */
 static void detect_compiletime(rvcl_capability_t *cap) {
@@ -231,6 +292,7 @@ static rvcl_capability_t build_capability(void) {
     memset(&cap, 0, sizeof(cap));
     detect_compiletime(&cap);
     detect_runtime(&cap);
+    run_vendor_probes(&cap);
     format_description(&cap);
     return cap;
 }
@@ -257,6 +319,10 @@ void rvcl_capability_test_override(const rvcl_capability_t *cap) {
          * an overridden snapshot from a detected one by its formatting. */
         format_description(&g_cap_override);
         g_cap_overridden = 1;
+        /* The injected snapshot fixes the process capability view: close
+         * the probe window so a later registration is rejected instead of
+         * silently having no effect on the served snapshot. */
+        g_probes_locked = 1;
     } else {
         g_cap_overridden = 0;
     }
@@ -275,8 +341,77 @@ const rvcl_capability_t *rvcl_get_capability(void) {
         pthread_mutex_unlock(&g_cap_mutex);
         return overridden;
     }
+    /* First real snapshot access closes the probe registration window
+     * (capability.h contract): the snapshot content is fixed from here on,
+     * so a later registration cannot change what dispatch observes. */
+    g_probes_locked = 1;
     pthread_mutex_unlock(&g_cap_mutex);
 
     static rvcl_capability_t g_cap = build_capability();
     return &g_cap;
 }
+
+rvcl_status_t rvcl_capability_register_vendor_probe(
+        rvcl_vendor_probe_fn probe) {
+    if (!probe) return RVCL_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock(&g_cap_mutex);
+    if (g_probes_locked) {
+        pthread_mutex_unlock(&g_cap_mutex);
+        return RVCL_ERROR_ALREADY_INITIALIZED;
+    }
+    if (g_num_probes >= RVCL_MAX_VENDOR_PROBES) {
+        pthread_mutex_unlock(&g_cap_mutex);
+        return RVCL_ERROR_OUT_OF_MEMORY;
+    }
+    g_probes[g_num_probes++] = probe;
+    pthread_mutex_unlock(&g_cap_mutex);
+    return RVCL_SUCCESS;
+}
+
+/* SIGILL-guarded csrr: the CSR may not exist on this core, and capability
+ * must degrade rather than crash. The signal handler is process-global, so
+ * the probe-time (single-threaded snapshot build) usage is the supported
+ * pattern; a concurrent csrr elsewhere could share the handler slot. */
+#if defined(__riscv)
+static sigjmp_buf g_csr_jmp;
+static volatile sig_atomic_t g_csr_trapped;
+
+static void csr_trap_handler(int) {
+    g_csr_trapped = 1;
+    siglongjmp(g_csr_jmp, 1);
+}
+
+int rvcl_capability_try_csr(unsigned int csr, uint32_t *value) {
+    if (!value) return 0;
+    struct sigaction sa, old;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = csr_trap_handler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGILL, &sa, &old) != 0) return 0;
+    if (sigsetjmp(g_csr_jmp, 1) == 0) {
+        uint32_t v = 0;
+        /* csrr takes a compile-time CSR offset, so each supported CSR is read
+         * through its own immediate; an unknown CSR degrades to "absent"
+         * rather than trapping. The probe/example use 0x7c0 and 0xCE4. */
+        switch (csr) {
+            case 0x7c0: __asm__ volatile("csrr %0, 0x7c0" : "=r"(v)); break;
+            case 0xCE4: __asm__ volatile("csrr %0, 0xCE4" : "=r"(v)); break;
+            default: (void)sigaction(SIGILL, &old, NULL); return 0;
+        }
+        (void)sigaction(SIGILL, &old, NULL);
+        *value = v;
+        return 1;
+    }
+    (void)sigaction(SIGILL, &old, NULL);
+    return 0;
+}
+#else
+/* Must match the riscv signature that writes *value; this stub just never
+ * dereferences it. */
+// NOLINTNEXTLINE(readability-non-const-parameter)
+int rvcl_capability_try_csr(unsigned int csr, uint32_t *value) {
+    (void)csr;
+    (void)value;
+    return 0; /* non-RISC-V hosts have no CSR instruction */
+}
+#endif

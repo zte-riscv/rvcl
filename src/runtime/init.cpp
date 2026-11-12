@@ -107,7 +107,11 @@ RVCL_API rvcl_status_t rvcl_init(void) {
         const int before = rvcl_registry_count();
         rvcl_status_t st = register_all();
         if (st == RVCL_SUCCESS) {
-            const rvcl_status_t inv = rvcl_registry_verify_fallback_invariant();
+            /* App-owned tuples (all entries registered before this pass)
+             * are exempt from the fallback check; a plugin's shape-bounded
+             * kernel on an otherwise-unoccupied tuple must not fail init. */
+            const rvcl_status_t inv
+                    = rvcl_registry_verify_fallback_invariant(before);
             if (inv != RVCL_SUCCESS) st = RVCL_ERROR_INTERNAL;
         }
         if (st != RVCL_SUCCESS) {

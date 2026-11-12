@@ -23,6 +23,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+unsigned rvcl_kernel_abi_version(void) {
+    return RVCL_KERNEL_ABI_VERSION;
+}
+
 rvcl_status_t rvcl_kernel_alloc(rvcl_kernel_t **out,
         const rvcl_kernel_desc_t *desc, size_t instance_size) {
     if (!out || !desc || instance_size < sizeof(rvcl_kernel_t))

@@ -40,6 +40,7 @@
 #include "rvcl/rvcl.h"
 
 #include "../src/runtime/capability_internal.h"
+#include "../src/runtime/cost_model.h"
 
 static int g_failures;
 
@@ -124,6 +125,7 @@ static void case_host_features(void) {
     if (has_rv64 && has_rvv) {
         const rvcl_feature_t *rvv = rvcl_capability_get(cap, RVCL_FEATURE_RVV);
         CHECK(rvv != NULL, "rvv detail is queryable");
+        // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
         CHECK(rvv->value == 1 || (rvv->value >= 128 && is_pow2(rvv->value)),
                 "rvv value is unknown(1) or a power-of-two width >= 128");
         const char *pin = getenv("RVCL_EXPECT_VLEN");
@@ -489,6 +491,386 @@ static void case_inject_restore(
     rvcl_capability_test_override(NULL);
 }
 
+/* ------------------------------------------- vendor probe registration
+ *
+ * Fresh-process modes (own ctest entries): the capability snapshot is built
+ * at most once per process and the probe window closes permanently after
+ * the first query, so each vendor-scenario runs in its own invocation.
+ * A minimal out-of-tree kernel (INT8 tuple, no builtin occupancy) requiring
+ * a vendor feature is registered to prove the probe's write channel changes
+ * dispatch visibility — the way an actual plugin would.
+ */
+
+#define VENDOR_FEATURE ((rvcl_feature_id_t)0x1001)
+
+static rvcl_status_t vendor_probe_1001(rvcl_capability_t *cap) {
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        /* vendor-range id (>= RVCL_FEATURE_VENDOR_FIRST) is deliberately
+         * not an enumerator of rvcl_feature_id_t. */
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = VENDOR_FEATURE;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+/* A do-nothing vendor kernel: the tests exercise registration, feature
+ * visibility and dispatch selection, not arithmetic. */
+static rvcl_status_t vk_validate(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
+    (void)desc;
+    (void)cap;
+    return RVCL_SUCCESS;
+}
+
+static rvcl_status_t vk_configure(rvcl_kernel_t *k, const rvcl_op_desc_t *desc,
+        rvcl_workspace_req_t *ws_req, int *num_ws) {
+    (void)k;
+    (void)desc;
+    if (ws_req) *ws_req = rvcl_workspace_req_t {};
+    if (num_ws) *num_ws = 0;
+    return RVCL_SUCCESS;
+}
+
+static rvcl_status_t vk_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
+        const rvcl_work_range_t *range) {
+    (void)k;
+    (void)pack;
+    (void)range;
+    return RVCL_SUCCESS;
+}
+
+static void vk_destroy(rvcl_kernel_t *k) {
+    free(k);
+}
+
+static const rvcl_kernel_vtable_t vk_vtable = {
+        .validate = vk_validate,
+        .configure = vk_configure,
+        .pack_a = NULL,
+        .pack_b = NULL,
+        .run = vk_run,
+        .destroy = vk_destroy,
+};
+
+static rvcl_status_t vk_create(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvcl_kernel_t *k = (rvcl_kernel_t *)calloc(1, sizeof(rvcl_kernel_t));
+    if (!k) return RVCL_ERROR_OUT_OF_MEMORY;
+    k->vt = &vk_vtable;
+    k->desc = *desc;
+    *out = k;
+    return RVCL_SUCCESS;
+}
+
+/* Registers the vendor kernel on the INT8 tuple (unoccupied by any builtin),
+ * requiring the vendor feature. */
+static rvcl_status_t register_vendor_kernel(const char *name) {
+    rvcl_kernel_desc_t d;
+    memset(&d, 0, sizeof(d));
+    snprintf(d.name, RVCL_KERNEL_NAME_MAX, "%s", name);
+    d.operation = RVCL_OP_MATMUL;
+    d.dtype_a = RVCL_DTYPE_INT8;
+    d.dtype_b = RVCL_DTYPE_INT8;
+    d.dtype_acc = RVCL_DTYPE_INT32;
+    d.dtype_c = RVCL_DTYPE_INT32;
+    d.quant_support = RVCL_QUANT_NONE;
+    /* vendor-range id (>= RVCL_FEATURE_VENDOR_FIRST) is deliberately not an
+     * enumerator of rvcl_feature_id_t. */
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    d.required_features[0] = VENDOR_FEATURE;
+    d.num_required_features = 1;
+    d.alignment_a = d.alignment_b = d.alignment_c = 1;
+    d.vlen_tier = RVCL_VLEN_TIER_ANY;
+    d.cost_fn = rvcl_kernel_cost_zero;
+    return rvcl_register_kernel(&d, vk_create);
+}
+
+static rvcl_matmul_desc_t vendor_request(void) {
+    return (rvcl_matmul_desc_t) {
+            .m = 16,
+            .n = 16,
+            .k = 16,
+            .dtype_a = RVCL_DTYPE_INT8,
+            .dtype_b = RVCL_DTYPE_INT8,
+            .dtype_acc = RVCL_DTYPE_INT32,
+            .dtype_c = RVCL_DTYPE_INT32,
+            .dtype_bias = RVCL_DTYPE_AUTO,
+            .quant = {},
+    };
+}
+
+/* U-P2-1a: probe registered -> snapshot carries the vendor feature and the
+ * required-feature kernel dispatches to the vendor entry. */
+static int vendor_probe_case(void) {
+    printf("vendor probe: registered -> snapshot + dispatch\n");
+    if (rvcl_capability_register_vendor_probe(vendor_probe_1001)
+            != RVCL_SUCCESS) {
+        printf("  FAIL: probe registration (line %d)\n", __LINE__);
+        return 1;
+    }
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+
+    const rvcl_capability_t *cap = rvcl_get_capability();
+    /* vendor-range id (>= RVCL_FEATURE_VENDOR_FIRST) is deliberately not an
+     * enumerator of rvcl_feature_id_t. */
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_has(cap, VENDOR_FEATURE),
+            "snapshot carries the vendor feature declared by the probe");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_get(cap, VENDOR_FEATURE) != NULL,
+            "vendor feature detail is queryable");
+
+    CHECK(register_vendor_kernel("t_vendor_probe") == RVCL_SUCCESS,
+            "vendor kernel registered");
+    rvcl_dispatch_cache_clear();
+    rvcl_dispatch_result_t *r = NULL;
+    const rvcl_matmul_desc_t d = vendor_request();
+    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS,
+            "dispatch on the vendor tuple succeeds");
+    if (r) {
+        CHECK(strcmp(rvcl_dispatch_kernel_name(r), "t_vendor_probe") == 0,
+                "dispatch selects the vendor kernel");
+        rvcl_dispatch_release(r);
+    } else {
+        CHECK(0, "dispatch produced a result object");
+    }
+    printf(g_failures ? "VENDOR-PROBE: %d failure(s)\n"
+                      : "VENDOR-PROBE: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
+/* U-P2-1b: no probe registered -> the same required-feature kernel is
+ * filtered at stage 3 and the tuple dispatches UNSUPPORTED. */
+static int vendor_probe_noreg_case(void) {
+    printf("vendor probe: not registered -> UNSUPPORTED\n");
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    /* vendor-range id (>= RVCL_FEATURE_VENDOR_FIRST) is deliberately not an
+     * enumerator of rvcl_feature_id_t. */
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(!rvcl_capability_has(rvcl_get_capability(), VENDOR_FEATURE),
+            "snapshot has no vendor feature");
+
+    CHECK(register_vendor_kernel("t_vendor_noreg") == RVCL_SUCCESS,
+            "vendor kernel registered");
+    rvcl_dispatch_cache_clear();
+    rvcl_dispatch_result_t *r = NULL;
+    const rvcl_matmul_desc_t d = vendor_request();
+    CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_UNSUPPORTED,
+            "vendor tuple without a snapshot feature -> UNSUPPORTED");
+    CHECK(r == NULL, "no result leaked on an unsupported request");
+    printf(g_failures ? "VENDOR-PROBE-NOREG: %d failure(s)\n"
+                      : "VENDOR-PROBE-NOREG: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
+/* U-P2-2: registering a probe after the first capability query (window
+ * closed) returns RVCL_ERROR_ALREADY_INITIALIZED instead of silently
+ * ignoring it. */
+static int vendor_probe_late_case(void) {
+    printf("vendor probe: post-query registration rejected\n");
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    (void)rvcl_get_capability(); /* first query closes the window */
+    CHECK(rvcl_capability_register_vendor_probe(vendor_probe_1001)
+                    == RVCL_ERROR_ALREADY_INITIALIZED,
+            "late probe registration returns ALREADY_INITIALIZED");
+    printf(g_failures ? "VENDOR-PROBE-LATE: %d failure(s)\n"
+                      : "VENDOR-PROBE-LATE: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
+/* ------------------------------------------------------- probe sanitization
+ *
+ * U-P2-4: whatever a probe appends is filtered before it reaches the
+ * snapshot. Four malformed/undisciplined forms are exercised, all registered
+ * before the first query so they run during the single snapshot build:
+ *   - a probe appending a standard feature id (dropped: only vendor ids
+ *     survive);
+ *   - a probe appending a duplicate vendor id (deduped: append-only);
+ *   - a probe returning non-SUCCESS (its whole increment discarded, the
+ *     remaining probes still run);
+ *   - a probe flooding distinct vendor ids up to the table capacity (the
+ *     snapshot is capped at RVCL_MAX_FEATURES; standard features survive).
+ */
+
+static rvcl_status_t probe_std(rvcl_capability_t *cap) {
+    /* a standard-range id must be dropped by the sanitizer */
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        cap->features[cap->num_features].id = RVCL_FEATURE_INT8;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static rvcl_status_t probe_dup(rvcl_capability_t *cap) {
+    /* the same vendor id twice: append-only dedup keeps one */
+    for (int i = 0; i < 2 && cap->num_features < RVCL_MAX_FEATURES; i++) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = (rvcl_feature_id_t)0x1001;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static rvcl_status_t probe_fail(rvcl_capability_t *cap) {
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = (rvcl_feature_id_t)0x1003;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_UNSUPPORTED; /* non-SUCCESS: drop this probe's increment */
+}
+
+static rvcl_status_t probe_flood(rvcl_capability_t *cap) {
+    /* distinct vendor ids until the table is full; the sanitizer caps the
+     * snapshot at RVCL_MAX_FEATURES without ever clobbering standard ids. */
+    unsigned id = 0x1100;
+    while (cap->num_features < RVCL_MAX_FEATURES) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = (rvcl_feature_id_t)id;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+        id++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static int vendor_probe_sanitize_case(void) {
+    printf("vendor probe: malformed increment sanitization\n");
+    if (rvcl_capability_register_vendor_probe(probe_std) != RVCL_SUCCESS
+            || rvcl_capability_register_vendor_probe(probe_dup) != RVCL_SUCCESS
+            || rvcl_capability_register_vendor_probe(probe_fail) != RVCL_SUCCESS
+            || rvcl_capability_register_vendor_probe(probe_flood)
+                    != RVCL_SUCCESS) {
+        printf("  FAIL: probe registration (line %d)\n", __LINE__);
+        return 1;
+    }
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    const rvcl_capability_t *cap = rvcl_get_capability();
+
+    CHECK(cap->num_features <= RVCL_MAX_FEATURES,
+            "snapshot never exceeds the feature table capacity");
+    /* vendor-range ids (>= RVCL_FEATURE_VENDOR_FIRST) are deliberately not
+     * enumerators of rvcl_feature_id_t. */
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_has(cap, (rvcl_feature_id_t)0x1001),
+            "duplicate vendor id deduped to one present entry");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(!rvcl_capability_has(cap, (rvcl_feature_id_t)0x1003),
+            "non-SUCCESS probe's increment fully discarded");
+    CHECK(!rvcl_capability_has(cap, RVCL_FEATURE_INT8),
+            "standard-range id appended by a probe is dropped");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_has(cap, (rvcl_feature_id_t)0x1100),
+            "flood probe's first vendor id survives (probing continued)");
+
+    /* every surviving feature is a vendor id: no standard feature was
+     * clobbered by the flood. */
+    int all_vendor = 1;
+    for (int i = 0; i < cap->num_features; i++)
+        if (cap->features[i].id < RVCL_FEATURE_VENDOR_FIRST) all_vendor = 0;
+    CHECK(all_vendor, "every surviving probe feature is in the vendor range");
+    printf(g_failures ? "VENDOR-PROBE-SANITIZE: %d failure(s)\n"
+                      : "VENDOR-PROBE-SANITIZE: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
+/* ------------------------------------------------------------- hint pinning
+ *
+ * U-P2-3: the public cost hint must agree with the internal category wrapper
+ * at the tie tier and stay pinned there regardless of the host VLEN tier
+ * (a vendor tile is VLEN-independent). Assertions anchor the semantic tiers
+ * (256 == cheap-vector tie tier, coefficients below that never exceed it),
+ * not the concrete cycle numbers, so a future coefficient recalibration does
+ * not turn this into a maintenance burden.
+ */
+static int vendor_hint_case(void) {
+    printf("cost hint: semantic tier pinning\n");
+    static const int64_t shapes[][3] = {
+            {16, 16, 16},
+            {64, 32, 16},
+            {128, 128, 128},
+            {13, 7, 20},
+    };
+
+    /* At the tie tier (128, gain 256) the hint at coeff 256 must equal the
+     * internal cheap-vector wrapper exactly, for every shape. */
+    rvcl_capability_t t128 = make_snapshot(1, 1, 128);
+    rvcl_capability_test_override(&t128);
+    int tie_ok = 1;
+    for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++) {
+        rvcl_matmul_desc_t d = {
+                .m = shapes[i][0],
+                .n = shapes[i][1],
+                .k = shapes[i][2],
+                .dtype_a = RVCL_DTYPE_FP32,
+                .dtype_b = RVCL_DTYPE_FP32,
+                .dtype_acc = RVCL_DTYPE_FP32,
+                .dtype_c = RVCL_DTYPE_FP32,
+                .dtype_bias = RVCL_DTYPE_AUTO,
+                .quant = {},
+        };
+        const rvcl_op_desc_t od = {.matmul = d};
+        const uint64_t hint256 = rvcl_cost_matmul_hint(&od, &t128, 256);
+        const uint64_t rvv = rvcl_cost_matmul_rvv(&od, &t128);
+        if (hint256 != rvv) {
+            printf("  shape %ldx%ldx%ld: hint(256)=%llu rvv=%llu\n",
+                    (long)shapes[i][0], (long)shapes[i][1], (long)shapes[i][2],
+                    (unsigned long long)hint256, (unsigned long long)rvv);
+        }
+        tie_ok = tie_ok && (hint256 == rvv);
+        /* a sub-256 coefficient scores no higher than the rvv category. */
+        const uint64_t h128 = rvcl_cost_matmul_hint(&od, &t128, 128);
+        const uint64_t h512 = rvcl_cost_matmul_hint(&od, &t128, 512);
+        const uint64_t h1024 = rvcl_cost_matmul_hint(&od, &t128, 1024);
+        tie_ok = tie_ok && (h128 <= rvv);
+        /* coefficient is monotonic: 512 > 256 > 128 in ordering terms. */
+        if (h128 > hint256 || hint256 >= h512 || h512 >= h1024)
+            printf("  shape %ldx%ldx%ld: coeff ordering broken\n",
+                    (long)shapes[i][0], (long)shapes[i][1], (long)shapes[i][2]);
+        tie_ok = tie_ok && (h128 <= hint256 && hint256 < h512 && h512 < h1024);
+    }
+    CHECK(tie_ok, "hint ties the cheap-vector wrapper at the tie tier");
+
+    /* VLEN independence: the hint is identical across host tiers while the
+     * internal wrapper's tier gain changes. */
+    rvcl_capability_t t256 = make_snapshot(1, 1, 256);
+    rvcl_capability_t t512 = make_snapshot(1, 1, 512);
+    rvcl_matmul_desc_t d = {
+            .m = 64,
+            .n = 64,
+            .k = 64,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_FP32,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_AUTO,
+            .quant = {},
+    };
+    const rvcl_op_desc_t od = {.matmul = d};
+    const uint64_t h_t128 = rvcl_cost_matmul_hint(&od, &t128, 256);
+    const uint64_t h_t256 = rvcl_cost_matmul_hint(&od, &t256, 256);
+    const uint64_t h_t512 = rvcl_cost_matmul_hint(&od, &t512, 256);
+    CHECK(h_t128 == h_t256 && h_t256 == h_t512,
+            "hint is independent of the host VLEN tier");
+    CHECK(vlen_tier_gain(&t128) != vlen_tier_gain(&t512),
+            "internal tier gain does change with the host tier");
+
+    rvcl_capability_test_override(NULL);
+    printf(g_failures ? "VENDOR-HINT: %d failure(s)\n"
+                      : "VENDOR-HINT: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
 static int run_inject_mode(void) {
     printf("== capability unit tests: injection subset ==\n");
     const rvcl_capability_t *host_ptr = rvcl_get_capability();
@@ -506,6 +888,16 @@ static int run_inject_mode(void) {
 
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--inject") == 0) return run_inject_mode();
+    if (argc > 1 && strcmp(argv[1], "--vendor-probe") == 0)
+        return vendor_probe_case();
+    if (argc > 1 && strcmp(argv[1], "--vendor-probe-noreg") == 0)
+        return vendor_probe_noreg_case();
+    if (argc > 1 && strcmp(argv[1], "--vendor-probe-late") == 0)
+        return vendor_probe_late_case();
+    if (argc > 1 && strcmp(argv[1], "--vendor-probe-sanitize") == 0)
+        return vendor_probe_sanitize_case();
+    if (argc > 1 && strcmp(argv[1], "--vendor-hint") == 0)
+        return vendor_hint_case();
 
     printf("== capability unit tests ==\n");
     /* Must stay the first capability user of the process: the first

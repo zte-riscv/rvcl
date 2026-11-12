@@ -199,20 +199,52 @@ static int preinit_fallback_case(void) {
     return g_failures ? 1 : 0;
 }
 
+/* App-owned tuples — every entry registered before the built-in init pass —
+ * are exempt from the whole-table fallback check, so a plugin's lone
+ * shape-bounded kernel no longer fails init: the plugin's pre-init kernel is
+ * accepted, the built-ins still register, and the bounded kernel simply
+ * reports UNSUPPORTED for shapes outside its bounds. */
 static int preinit_lone_bounded_case(void) {
     printf("init-path: lone bounded tuple registered before init\n");
     rvcl_kernel_desc_t bounded = make_desc("pre_lone_bounded");
     bounded.max_n = 32;
     CHECK(rvcl_register_kernel(&bounded, test_create) == RVCL_SUCCESS,
             "pre-init bounded registration succeeds");
-    CHECK(rvcl_init() == RVCL_ERROR_INTERNAL,
-            "init rejects a tuple without an unbounded kernel");
-    CHECK(rvcl_registry_count() == 1,
-            "failed init rolls back the built-ins it registered");
+    CHECK(rvcl_init() == RVCL_SUCCESS,
+            "init accepts a lone bounded app-owned tuple");
     CHECK(rvcl_registry_find_factory("pre_lone_bounded") != NULL,
-            "pre-init entries survive the failed init");
-    CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_reference") == NULL,
-            "no built-in is left behind by the failed init");
+            "pre-init entry survives init");
+    CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_reference") != NULL,
+            "built-ins are fully registered after the successful init");
+
+    /* The bounded kernel serves in-bounds shapes and the tuple is UNSUPPORTED
+     * outside them (no other INT8 entry exists). */
+    const rvcl_matmul_desc_t in = {
+            .m = 16,
+            .n = 16,
+            .k = 16,
+            .dtype_a = RVCL_DTYPE_INT8,
+            .dtype_b = RVCL_DTYPE_INT8,
+            .dtype_acc = RVCL_DTYPE_INT32,
+            .dtype_c = RVCL_DTYPE_INT32,
+            .dtype_bias = RVCL_DTYPE_AUTO,
+            .quant = {},
+    };
+    rvcl_dispatch_result_t *r = NULL;
+    CHECK(rvcl_dispatch_matmul(&in, &r) == RVCL_SUCCESS,
+            "in-bounds shape dispatches on the app-owned tuple");
+    if (r) {
+        CHECK(strcmp(rvcl_dispatch_kernel_name(r), "pre_lone_bounded") == 0,
+                "in-bounds dispatch selects the app-owned bounded kernel");
+        rvcl_dispatch_release(r);
+    }
+    r = NULL;
+    /* only n is bounded, so an oversized n escapes the kernel's shape */
+    rvcl_matmul_desc_t out_n = in;
+    out_n.n = 64;
+    CHECK(rvcl_dispatch_matmul(&out_n, &r) == RVCL_UNSUPPORTED,
+            "out-of-bounds shape dispatches UNSUPPORTED");
+    CHECK(r == NULL, "no result leaked on an unsupported request");
     printf(g_failures ? "UNIT-REGISTRY-PREINIT: %d failure(s)\n"
                       : "UNIT-REGISTRY-PREINIT: all passed\n",
             g_failures);
@@ -246,6 +278,7 @@ static void tc02_first_compute_lazy_init(void) {
     CHECK(rvcl_matmul(&d, a, b, bias, c) == RVCL_SUCCESS,
             "first computation succeeds without explicit init");
     golden_f32(a, b, bias, ref, M, N, K);
+    // NOLINTNEXTLINE(bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c)
     CHECK(memcmp(c, ref, sizeof(c)) == 0, "lazy-init path matches golden");
 
     CHECK(rvcl_registry_count() >= 1, "registry populated after lazy init");
@@ -444,12 +477,15 @@ static void tc06_invalid_descriptors(void) {
     ADD_CASE("empty name", d.name[0] = '\0');
     ADD_CASE("overlong name", memset(d.name, 'x', RVCL_KERNEL_NAME_MAX));
     ADD_CASE("operation out of range", d.operation = RVCL_OP_COUNT);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("operation negative", d.operation = (rvcl_operation_t)-1);
     ADD_CASE("dtype_a AUTO", d.dtype_a = RVCL_DTYPE_AUTO);
     ADD_CASE("dtype_b AUTO", d.dtype_b = RVCL_DTYPE_AUTO);
     ADD_CASE("dtype_acc AUTO", d.dtype_acc = RVCL_DTYPE_AUTO);
     ADD_CASE("dtype_c AUTO", d.dtype_c = RVCL_DTYPE_AUTO);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("dtype out of range", d.dtype_a = (rvcl_dtype_t)99);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("quant out of range", d.quant_support = (rvcl_quant_support_t)99);
     ADD_CASE("too many features",
             d.num_required_features = RVCL_MAX_FEATURES + 1);
@@ -465,17 +501,23 @@ static void tc06_invalid_descriptors(void) {
      * bounds: it is neither standard nor a vendor id. */
     ADD_CASE("feature in the std/vendor gap",
             (d.required_features[0]
+                    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
                     = (rvcl_feature_id_t)(RVCL_FEATURE_VENDOR_FIRST - 1),
                     d.num_required_features = 1));
     ADD_CASE("negative min_m", d.min_m = -1);
     ADD_CASE("min_m above max_m", (d.min_m = 8, d.max_m = 4));
     ADD_CASE("min_n above max_n", (d.min_n = 8, d.max_n = 4));
     ADD_CASE("min_k above max_k", (d.min_k = 8, d.max_k = 4));
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("tier 64", d.vlen_tier = (rvcl_vlen_tier_t)64);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("tier 100", d.vlen_tier = (rvcl_vlen_tier_t)100);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("tier 3", d.vlen_tier = (rvcl_vlen_tier_t)3);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("tier negative", d.vlen_tier = (rvcl_vlen_tier_t)-1);
     ADD_CASE("NULL cost callback", d.cost_fn = NULL);
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     ADD_CASE("assert_level out of range",
             d.assert_level = (rvcl_assert_level_t)99);
 

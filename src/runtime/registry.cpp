@@ -324,12 +324,32 @@ int rvcl_registry_snapshot(
 
 /* ------------------------------------------------------------ invariant */
 
+/* Does every entry of `d`'s datatype tuple sit at order index < before —
+ * i.e. is the tuple purely app-owned, with no built-in entry (registered
+ * during this init pass at index >= before) participating? Such tuples are
+ * exempt from the init fallback check (see verify_fallback_invariant). */
+static int tuple_is_app_owned_locked(const rvcl_kernel_desc_t *d, int before) {
+    for (int i = 0; i < g_count; i++) {
+        const rvcl_kernel_desc_t *o = &g_slots[g_order[i]].desc;
+        if (o->operation != d->operation || o->dtype_a != d->dtype_a
+                || o->dtype_b != d->dtype_b || o->dtype_acc != d->dtype_acc
+                || o->dtype_c != d->dtype_c)
+            continue;
+        if (i >= before) return 0; /* a built-in entry joins this tuple */
+    }
+    return 1;
+}
+
 /* Whole-table fallback check, run once initialization finished (internal
- * symbol, not public API; declared in registry_internal.h). */
-rvcl_status_t rvcl_registry_verify_fallback_invariant(void) {
+ * symbol, not public API; declared in registry_internal.h). Tuples that are
+ * purely app-owned (all entries registered before the built-in pass, i.e.
+ * before `before`) are exempt; every other live tuple must keep an
+ * unbounded kernel. */
+rvcl_status_t rvcl_registry_verify_fallback_invariant(int before) {
     pthread_mutex_lock(&g_mutex);
     for (int i = 0; i < g_count; i++) {
         const rvcl_kernel_desc_t *d = &g_slots[g_order[i]].desc;
+        if (tuple_is_app_owned_locked(d, before)) continue;
         if (!tuple_has_unbounded_locked(d)) {
             pthread_mutex_unlock(&g_mutex);
             return RVCL_ERROR_REGISTRY_INVARIANT;

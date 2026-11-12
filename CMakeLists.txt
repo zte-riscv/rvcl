@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(rvcl
     VERSION 0.1.0
     DESCRIPTION "RISC-V Compute Library — unified kernel abstraction and dispatch runtime"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 # ------------------------------------------------------------------ options
 # Backends are independently buildable (PLAN §4.12).
@@ -352,6 +352,22 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME unit_capability_inject
         COMMAND rvcl_unit_capability --inject)
 
+    # Vendor-probe subsets of the same binary: the capability snapshot is
+    # built at most once per process and the probe window closes after the
+    # first query, so each vendor scenario (probe registered / not /
+    # late / malformed increment / hint pinning) is a fresh-process
+    # invocation of its own ctest.
+    add_test(NAME unit_capability_vendor_probe
+        COMMAND rvcl_unit_capability --vendor-probe)
+    add_test(NAME unit_capability_vendor_probe_noreg
+        COMMAND rvcl_unit_capability --vendor-probe-noreg)
+    add_test(NAME unit_capability_vendor_probe_late
+        COMMAND rvcl_unit_capability --vendor-probe-late)
+    add_test(NAME unit_capability_vendor_probe_sanitize
+        COMMAND rvcl_unit_capability --vendor-probe-sanitize)
+    add_test(NAME unit_capability_vendor_hint
+        COMMAND rvcl_unit_capability --vendor-hint)
+
     # Dispatch unit tests (always registered, independent of
     # RVCL_TEST_SET): six-stage filtering, AUTO resolution, cost-driven
     # selection with registration-order tie-break, cache semantics,
@@ -466,6 +482,13 @@ if(RVCL_BUILD_EXAMPLES)
         add_test(NAME example_multicore_builtin
             COMMAND example_multicore builtin 8 128 128 128)
     endif()
+
+    # Out-of-tree vendor kernel integration walkthrough: demonstrates the
+    # public plugin contract (ABI handshake, probe registration, cost hint,
+    # registration, dispatch visibility, factory self-check).
+    add_executable(example_vendor examples/vendor_kernel.c)
+    target_link_libraries(example_vendor PRIVATE rvcl)
+    add_test(NAME example_vendor COMMAND example_vendor)
 endif()
 
 # -------------------------------------------------------------------- bench

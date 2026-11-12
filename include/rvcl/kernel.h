@@ -46,6 +46,30 @@ extern "C" {
  * callback type can name it before its full definition. */
 typedef union rvcl_op_desc rvcl_op_desc_t;
 
+/* --------------------------------------------------------------- ABI
+ *
+ * Kernel ABI version for out-of-tree kernel/plugin registration. The
+ * descriptor (rvcl_kernel_desc_t) is copied byte-for-byte across the
+ * boundary, so a plugin built against a differently-laid-out header
+ * (e.g. a shorter or reordered struct) would read memory incorrectly —
+ * undefined behavior the C interface cannot verify from a pointer alone.
+ * rvcl_kernel_abi_version() returns the version this library was built
+ * with; a plugin's constructor should compare it against its own
+ * RVCL_KERNEL_ABI_VERSION and refuse to register (reporting to stderr)
+ * when they differ. The check is advisory — the library cannot inspect
+ * the plugin's struct layout — so every plugin is expected to honor it.
+ *
+ * Desc layout discipline: the descriptor only ever grows by appending
+ * fields at the end (offset-preserving additions, like assert_level), and
+ * ANY layout change, including a merely appended field, must bump
+ * RVCL_KERNEL_ABI_VERSION so old plugins stop registering rather than
+ * passing a short struct.
+ */
+#define RVCL_KERNEL_ABI_VERSION 1
+
+/* Returns the kernel ABI version of this library build. */
+RVCL_API unsigned rvcl_kernel_abi_version(void);
+
 /* ------------------------------------------------------------ cost model */
 
 /*
@@ -68,6 +92,24 @@ typedef uint64_t (*rvcl_kernel_cost_fn)(
  */
 RVCL_API uint64_t rvcl_kernel_cost_zero(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
+ * Public cost hint for a matmul backend category, the out-of-tree counterpart
+ * of the internal category wrappers. A vendor kernel with no independent cost
+ * model binds a thin rvcl_kernel_cost_fn that forwards to this helper with a
+ * fixed coefficient, letting the framework own the shape heuristic and the
+ * fixed-point scoring convention while the coefficient stays vendor-owned.
+ *
+ * coeff_256 is a fixed-point multiplier (256 = 1.0x): 256 scores the same as
+ * the built-in cheap vector (rvv) category, below 256 scores no higher than
+ * that category, above 256 scores more expensive. The value only orders
+ * candidates — it never affects correctness — and is clamped to >= 1. `cap`
+ * is currently advisory (no tier gain for a non-VLEN-scaled vendor tile); it
+ * is passed for symmetry so a vendor that needs a VLEN adjustment can read
+ * the host's RVV width itself.
+ */
+RVCL_API uint64_t rvcl_cost_matmul_hint(const rvcl_op_desc_t *desc,
+        const rvcl_capability_t *cap, uint64_t coeff_256);
 
 typedef enum {
     RVCL_QUANT_NONE = 0,
