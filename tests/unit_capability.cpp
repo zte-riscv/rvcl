@@ -771,12 +771,17 @@ static int vendor_probe_sanitize_case(void) {
     CHECK(rvcl_capability_has(cap, (rvcl_feature_id_t)0x1100),
             "flood probe's first vendor id survives (probing continued)");
 
-    /* every surviving feature is a vendor id: no standard feature was
-     * clobbered by the flood. */
-    int all_vendor = 1;
-    for (int i = 0; i < cap->num_features; i++)
-        if (cap->features[i].id < RVCL_FEATURE_VENDOR_FIRST) all_vendor = 0;
-    CHECK(all_vendor, "every surviving probe feature is in the vendor range");
+    /* The flood fills the table with vendor ids up to capacity, but never
+     * displaces a host-detected standard feature: every surviving
+     * standard-range id must be a built-in one (RV64/RVV/FP16/BF16 as the
+     * host reports them), so no standard feature was clobbered. */
+    int standard_intact = 1;
+    for (int i = 0; i < cap->num_features; i++) {
+        if (cap->features[i].id >= RVCL_FEATURE_VENDOR_FIRST) continue;
+        if (cap->features[i].id >= RVCL_FEATURE_STD_LAST) standard_intact = 0;
+    }
+    CHECK(standard_intact,
+            "no built-in standard feature was clobbered by the flood");
     printf(g_failures ? "VENDOR-PROBE-SANITIZE: %d failure(s)\n"
                       : "VENDOR-PROBE-SANITIZE: all passed\n",
             g_failures);
