@@ -15,7 +15,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * examples/vendor_kernel.c — out-of-tree vendor kernel integration walkthrough
+ * examples/vendor_kernel.cpp — out-of-tree vendor kernel integration walkthrough
  *
  * Demonstrates the public contract a plugin uses to hook into rvcl as an
  * out-of-tree backend with the same dispatch semantics as an in-tree one:
@@ -60,7 +60,7 @@
 #include "rvcl/rvcl.h"
 
 /* Vendor feature id this plugin declares and requires (vendor range). */
-#define VENDOR_FEATURE 0x1001
+#define VENDOR_FEATURE ((rvcl_feature_id_t)0x1001)
 #define VENDOR_KERNEL_NAME "vendor_matmul_f32_plugin"
 
 /* ---------------------------------------------------------- vendor probe */

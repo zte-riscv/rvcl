@@ -374,10 +374,8 @@ rvcl_status_t rvcl_capability_register_vendor_probe(
  * pattern; a concurrent csrr elsewhere could share the handler slot. */
 #if defined(__riscv)
 static sigjmp_buf g_csr_jmp;
-static volatile sig_atomic_t g_csr_trapped;
 
 static void csr_trap_handler(int) {
-    g_csr_trapped = 1;
     siglongjmp(g_csr_jmp, 1);
 }
 

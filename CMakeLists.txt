@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(rvcl
     VERSION 0.1.0
     DESCRIPTION "RISC-V Compute Library — unified kernel abstraction and dispatch runtime"
-    LANGUAGES C CXX)
+    LANGUAGES CXX)
 
 # ------------------------------------------------------------------ options
 # Backends are independently buildable (PLAN §4.12).
@@ -486,7 +486,7 @@ if(RVCL_BUILD_EXAMPLES)
     # Out-of-tree vendor kernel integration walkthrough: demonstrates the
     # public plugin contract (ABI handshake, probe registration, cost hint,
     # registration, dispatch visibility, factory self-check).
-    add_executable(example_vendor examples/vendor_kernel.c)
+    add_executable(example_vendor examples/vendor_kernel.cpp)
     target_link_libraries(example_vendor PRIVATE rvcl)
     add_test(NAME example_vendor COMMAND example_vendor)
 endif()
