@@ -47,6 +47,21 @@ extern "C" {
  * uses that order as the deterministic tie-break between equal-cost
  * candidates. Built-in backends register dedicated (high VLEN tier to
  * low), then generic, then unbounded fallbacks last.
+ *
+ * Registration timing contract (out-of-tree kernels/plugins): registration
+ * is expected before the first rvcl_init() — from a plugin constructor
+ * (pre-main, via LD_PRELOAD or direct linking) or from the application's
+ * own init path. Entries registered before rvcl_init() are preserved
+ * across it: a failed init rolls back only the built-ins it registered,
+ * never application entries. Registration is assumed not to be concurrent
+ * with the first rvcl_init(). A plugin registering only shape-bounded
+ * kernels on a datatype tuple no built-in occupies no longer fails the
+ * library init (see init.h); out-of-range shapes on that tuple dispatch to
+ * RVCL_UNSUPPORTED. Two loading forms are officially recognized: LD_PRELOAD
+ * (environment-level load; the plugin's DT_NEEDED pulls in librvcl.so and
+ * its constructor registers) and direct application linking (the
+ * application calls the plugin's registration entry point explicitly);
+ * rvcl does no active dlopen of plugins.
  */
 RVCL_API rvcl_status_t rvcl_register_kernel(
         const rvcl_kernel_desc_t *desc, rvcl_kernel_create_fn create);

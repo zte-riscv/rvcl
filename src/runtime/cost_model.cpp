@@ -137,3 +137,23 @@ RVCL_API uint64_t rvcl_cost_matmul_reference(
     const uint64_t shape = shape_factor(d, 0, 0, 0);
     return score(RVCL_COST_ELEM_MATMUL_REF, shape, RVCL_COST_FP);
 }
+
+/* ------------------------------------------------------------- public hint
+ *
+ * The out-of-tree counterpart of the category wrappers: same shape heuristic
+ * and fixed-point scoring, with the per-element coefficient supplied by the
+ * vendor as a fixed-point multiplier over the built-in cheap vector category.
+ * The gain is pinned to the tie tier (RVCL_COST_FP): a vendor tile machine
+ * has no VLEN dependence, so a vendor hint scores like the built-in rvv
+ * category at tier 128 (coeff_256 == 256) and stays at or below it for
+ * coeff_256 < 256. Ceil division keeps a sub-256 coefficient from rounding
+ * its term to zero. */
+RVCL_API uint64_t rvcl_cost_matmul_hint(const rvcl_op_desc_t *desc,
+        const rvcl_capability_t *cap, uint64_t coeff_256) {
+    (void)cap; /* no tier gain: vendor tile cost is independent of VLEN */
+    const rvcl_matmul_desc_t *d = &desc->matmul;
+    const uint64_t shape = shape_factor(d, 0, 0, 0);
+    const uint64_t product = RVCL_COST_ELEM_MATMUL_RVV * coeff_256;
+    const uint64_t coeff = (product + RVCL_COST_FP - 1) / RVCL_COST_FP;
+    return score(coeff, shape, RVCL_COST_FP);
+}

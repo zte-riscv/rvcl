@@ -30,8 +30,17 @@
 /* Whole-table fallback check (FR1.7): every datatype tuple that has at
  * least one live entry must contain a kernel without shape limits. Run
  * once after built-in registration; returns
- * RVCL_ERROR_REGISTRY_INVARIANT on violation. */
-rvcl_status_t rvcl_registry_verify_fallback_invariant(void);
+ * RVCL_ERROR_REGISTRY_INVARIANT on violation.
+ *
+ * `before` is the registry entry count at the start of the built-in
+ * registration pass (the init-path snapshot of app-owned entries). A
+ * datatype tuple whose every entry was registered before that pass (i.e.
+ * purely app-owned, index < before) is exempt from the check: a plugin's
+ * intentionally shape-bounded kernel on an otherwise-unoccupied tuple must
+ * not fail the library init, and out-of-range shapes on that tuple simply
+ * dispatch to RVCL_UNSUPPORTED. Any tuple a built-in participates in keeps
+ * the original requirement (built-ins always carry an unbounded fallback). */
+rvcl_status_t rvcl_registry_verify_fallback_invariant(int before);
 
 /* Drops every entry registered after the first `count` entries, in
  * reverse registration order. The init path uses this to roll back a
