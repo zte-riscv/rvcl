@@ -368,6 +368,12 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME unit_capability_vendor_hint
         COMMAND rvcl_unit_capability --vendor-hint)
 
+    # Snapshot assembly dedup: the override install is a served-snapshot
+    # path of its own, so a duplicate injected through it must collapse
+    # (one entry per feature id, first entry wins).
+    add_test(NAME unit_capability_snapshot_dedup
+        COMMAND rvcl_unit_capability --snapshot-dedup)
+
     # Dispatch unit tests (always registered, independent of
     # RVCL_TEST_SET): six-stage filtering, AUTO resolution, cost-driven
     # selection with registration-order tie-break, cache semantics,

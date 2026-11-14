@@ -106,6 +106,30 @@ static void run_vendor_probes(rvcl_capability_t *cap) {
     }
 }
 
+/* ------------------------------------------------- snapshot assembly pass
+ *
+ * The served snapshot carries at most one entry per feature id. The
+ * probe sanitizer above enforces the append-only rule inside the probe
+ * channel; this pass extends the same rule to the assembled snapshot as
+ * a whole, so the guarantee holds no matter which channel appended
+ * (compile-time detection, runtime detection, probes, or a future
+ * in-tree vendor detector). Keep-first is the policy: assembly order is
+ * deliberate, with the earlier channels considered the authoritative
+ * source for their ids. Every well-formed channel appends distinct ids,
+ * so the pass is a no-op for today's paths and changes no observable
+ * behavior. */
+static void dedupe_features(rvcl_capability_t *cap) {
+    int n = 0;
+    for (int i = 0; i < cap->num_features; i++) {
+        int dup = 0;
+        for (int j = 0; j < n; j++)
+            if (cap->features[j].id == cap->features[i].id) dup = 1;
+        if (dup) continue;
+        cap->features[n++] = cap->features[i];
+    }
+    cap->num_features = n;
+}
+
 /* Compile-time knowledge of the build target. */
 static void detect_compiletime(rvcl_capability_t *cap) {
     int n = 0;
@@ -293,6 +317,7 @@ static rvcl_capability_t build_capability(void) {
     detect_compiletime(&cap);
     detect_runtime(&cap);
     run_vendor_probes(&cap);
+    dedupe_features(&cap);
     format_description(&cap);
     return cap;
 }
@@ -314,9 +339,12 @@ void rvcl_capability_test_override(const rvcl_capability_t *cap) {
     pthread_mutex_lock(&g_cap_mutex);
     if (cap) {
         g_cap_override = *cap;
-        /* The copy keeps the injected features but gets a
-         * library-generated summary: consumers must not be able to tell
-         * an overridden snapshot from a detected one by its formatting. */
+        /* The copy keeps the injected features — deduplicated like any
+         * assembled snapshot (one entry per id, first entry wins) — and
+         * gets a library-generated summary: consumers must not be able
+         * to tell an overridden snapshot from a detected one by its
+         * formatting. */
+        dedupe_features(&g_cap_override);
         format_description(&g_cap_override);
         g_cap_overridden = 1;
         /* The injected snapshot fixes the process capability view: close

@@ -789,6 +789,59 @@ static int vendor_probe_sanitize_case(void) {
     return g_failures ? 1 : 0;
 }
 
+/* --------------------------------------------------- snapshot assembly dedup
+ *
+ * The served snapshot carries at most one entry per feature id, no
+ * matter which channel appended: the probe channel self-sanitizes (the
+ * case above), and the assembly pass extends the same rule to every
+ * channel together. Exercised through the test-override install, itself
+ * a served-snapshot path: two channels wrote the same vendor id (an
+ * informative value first, a bare presence copy second), and the pass
+ * must collapse them keeping the first entry while the survivors keep
+ * their assembly order.
+ */
+static int snapshot_dedup_case(void) {
+    printf("snapshot assembly: duplicate ids deduplicated, first wins\n");
+    rvcl_capability_t cap;
+    memset(&cap, 0, sizeof(cap));
+    cap.features[0].id = RVCL_FEATURE_RV64;
+    cap.features[0].value = 1;
+    cap.features[1].id = RVCL_FEATURE_RVV;
+    cap.features[1].value = 128;
+    /* vendor-range id (>= RVCL_FEATURE_VENDOR_FIRST) is deliberately not
+     * an enumerator of rvcl_feature_id_t. */
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    cap.features[2].id = (rvcl_feature_id_t)0x1000;
+    cap.features[2].value = 0x20000110u; /* informative: first channel */
+    cap.features[3].id = RVCL_FEATURE_FP16;
+    cap.features[3].value = 1;
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    cap.features[4].id = (rvcl_feature_id_t)0x1000;
+    cap.features[4].value = 1; /* presence: second channel */
+    cap.num_features = 5;
+
+    rvcl_capability_test_override(&cap);
+    const rvcl_capability_t *served = rvcl_get_capability();
+    CHECK(served->num_features == 4, "duplicate id collapsed to one entry");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    const rvcl_feature_t *f
+            = rvcl_capability_get(served, (rvcl_feature_id_t)0x1000);
+    CHECK(f && f->value == 0x20000110u,
+            "first entry (informative) wins over the later presence copy");
+    CHECK(served->features[0].id == RVCL_FEATURE_RV64
+                    && served->features[1].id == RVCL_FEATURE_RVV
+                    && served->features[3].id == RVCL_FEATURE_FP16,
+            "surviving entries keep the assembly order");
+    CHECK(strstr(served->description, "4 feature(s)") != NULL,
+            "description counts the deduplicated snapshot");
+    rvcl_capability_test_override(NULL);
+
+    printf(g_failures ? "SNAPSHOT-DEDUP: %d failure(s)\n"
+                      : "SNAPSHOT-DEDUP: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
 /* ------------------------------------------------------------- hint pinning
  *
  * U-P2-3: the public cost hint must agree with the internal category wrapper
@@ -812,6 +865,7 @@ static int vendor_hint_case(void) {
     rvcl_capability_t t128 = make_snapshot(1, 1, 128);
     rvcl_capability_test_override(&t128);
     int tie_ok = 1;
+    int ref_ok = 1;
     for (size_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); i++) {
         rvcl_matmul_desc_t d = {
                 .m = shapes[i][0],
@@ -843,8 +897,25 @@ static int vendor_hint_case(void) {
             printf("  shape %ldx%ldx%ld: coeff ordering broken\n",
                     (long)shapes[i][0], (long)shapes[i][1], (long)shapes[i][2]);
         tie_ok = tie_ok && (h128 <= hint256 && hint256 < h512 && h512 < h1024);
+
+        /* the VLEN-independent reference category scores through the same
+         * public path: the hint at the reference coefficient (64 x 256,
+         * mirroring the expensive per-element constant) equals the
+         * reference wrapper per shape — exact, because the coefficient is
+         * an exact multiple of the fixed-point scale. */
+        const uint64_t ref = rvcl_cost_matmul_reference(&od, &t128);
+        const uint64_t ref_hint
+                = rvcl_cost_matmul_hint(&od, &t128, (uint64_t)64 * 256);
+        if (ref != ref_hint) {
+            printf("  shape %ldx%ldx%ld: reference=%llu hint=%llu\n",
+                    (long)shapes[i][0], (long)shapes[i][1], (long)shapes[i][2],
+                    (unsigned long long)ref, (unsigned long long)ref_hint);
+        }
+        ref_ok = ref_ok && (ref == ref_hint);
     }
     CHECK(tie_ok, "hint ties the cheap-vector wrapper at the tie tier");
+    CHECK(ref_ok,
+            "reference wrapper equals the hint at the reference coefficient");
 
     /* VLEN independence: the hint is identical across host tiers while the
      * internal wrapper's tier gain changes. */
@@ -902,6 +973,8 @@ int main(int argc, char **argv) {
         return vendor_probe_late_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-sanitize") == 0)
         return vendor_probe_sanitize_case();
+    if (argc > 1 && strcmp(argv[1], "--snapshot-dedup") == 0)
+        return snapshot_dedup_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-hint") == 0)
         return vendor_hint_case();
 
