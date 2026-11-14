@@ -132,10 +132,17 @@ RVCL_API uint64_t rvcl_cost_matmul_rvv(
 
 RVCL_API uint64_t rvcl_cost_matmul_reference(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
-    (void)cap; /* the reference is a scalar loop: no VLEN tier gain */
-    const rvcl_matmul_desc_t *d = &desc->matmul;
-    const uint64_t shape = shape_factor(d, 0, 0, 0);
-    return score(RVCL_COST_ELEM_MATMUL_REF, shape, RVCL_COST_FP);
+    /* The reference category is VLEN-independent (a scalar triple loop),
+     * so its score is exactly the public hint at the reference
+     * coefficient: ceil(64 x 256 / 256) = 64 loses nothing to rounding
+     * and the hint pins the neutral gain the direct computation used,
+     * making the two identical per shape. Forwarding keeps the category
+     * on the one public scoring path instead of a private copy. The
+     * cheap-vector wrapper above cannot do the same: its host-dependent
+     * tier gain has no hint equivalent (the hint pins the tie tier), so
+     * it keeps the direct scoring. */
+    return rvcl_cost_matmul_hint(
+            desc, cap, (uint64_t)RVCL_COST_ELEM_MATMUL_REF * RVCL_COST_FP);
 }
 
 /* ------------------------------------------------------------- public hint

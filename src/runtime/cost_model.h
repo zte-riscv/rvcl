@@ -55,7 +55,11 @@ RVCL_API uint64_t rvcl_cost_matmul_rvv(
  * MatMul, reference backend category: heuristic cost = per-element
  * coefficient (expensive, the correctness-first triple loop) x shape
  * heuristic, no tier gain. Registered last as the unbounded fallback, so
- * it only wins when no matmul-rvv candidate survives filtering.
+ * it only wins when no matmul-rvv candidate survives filtering. The
+ * wrapper forwards to the public cost hint at the reference coefficient
+ * (64 x 256 fixed-point), the same single scoring path out-of-tree
+ * kernels bind; the coefficient is an exact multiple of the fixed-point
+ * scale, so the score stays identical to the direct computation.
  */
 RVCL_API uint64_t rvcl_cost_matmul_reference(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
