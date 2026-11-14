@@ -904,8 +904,8 @@ static int vendor_hint_case(void) {
          * reference wrapper per shape — exact, because the coefficient is
          * an exact multiple of the fixed-point scale. */
         const uint64_t ref = rvcl_cost_matmul_reference(&od, &t128);
-        const uint64_t ref_hint =
-                rvcl_cost_matmul_hint(&od, &t128, (uint64_t)64 * 256);
+        const uint64_t ref_hint
+                = rvcl_cost_matmul_hint(&od, &t128, (uint64_t)64 * 256);
         if (ref != ref_hint) {
             printf("  shape %ldx%ldx%ld: reference=%llu hint=%llu\n",
                     (long)shapes[i][0], (long)shapes[i][1], (long)shapes[i][2],
