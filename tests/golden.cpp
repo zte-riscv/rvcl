@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "../src/backends/rvv/rvv_fp16.hpp"
+#include "../src/backends/rvv/rvv_bf16.hpp"
 
 /* ------------------------------------------------------------- goldens */
 
@@ -49,6 +50,18 @@ void golden_f16(const uint16_t *a, const uint16_t *b, const float *bias,
         }
 }
 
+void golden_bf16(const uint16_t *a, const uint16_t *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k) {
+    for (int64_t i = 0; i < m; i++)
+        for (int64_t j = 0; j < n; j++) {
+            float acc = bias ? bias[j] : 0.0f;
+            for (int64_t p = 0; p < k; p++)
+                acc += rvv_bf16_to_f32(a[i * k + p])
+                        * rvv_bf16_to_f32(b[p * n + j]);
+            c[i * n + j] = acc;
+        }
+}
+
 /* ----------------------------------------------------------- LCG fill */
 
 /* 32-bit LCG (exact in uint32 arithmetic — same stream everywhere). */
@@ -65,6 +78,12 @@ void lcg_fill_f32(float *buf, size_t n, uint32_t seed) {
 void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed) {
     for (size_t i = 0; i < n; i++)
         buf[i] = rvv_f32_to_f16(
+                (float)(lcg_next(&seed) >> 8) / 16777216.0f - 0.5f);
+}
+
+void lcg_fill_bf16(uint16_t *buf, size_t n, uint32_t seed) {
+    for (size_t i = 0; i < n; i++)
+        buf[i] = rvv_f32_to_bf16(
                 (float)(lcg_next(&seed) >> 8) / 16777216.0f - 0.5f);
 }
 

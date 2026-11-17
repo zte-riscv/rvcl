@@ -39,7 +39,7 @@
  * numerics, and stay out of the batch loop by design. With no arguments
  * the behavior is byte-for-byte the Phase 0 run.
  *
- * `--dt=f32|f16` restricts the whole run — fixed sections and corpus
+ * `--dt=f32|f16|bf16` restricts the whole run — fixed sections and corpus
  * cases alike — to one dtype. The forced-path ctest targets use it: a
  * jit-forced f32 run must fail loudly on f16's lack of a JIT path only
  * when f16 is actually in scope, not because the fixed sections ran it.
@@ -212,7 +212,7 @@ static void parse_header(
             c->dt = dt2;
         } else {
             corpus_fatal(file, line,
-                    "bad value for --dt: '%s' (want f32 or f16)", val);
+                    "bad value for --dt: '%s' (want f32, f16 or bf16)", val);
         }
     }
 }
@@ -516,7 +516,7 @@ int main(int argc, char **argv) {
         else {
             fprintf(stderr,
                     "usage: %s [--batch=<corpus-file>] "
-                    "[--dt=f32|f16] [--op=matmul|gemv]\n",
+                    "[--dt=f32|f16|bf16] [--op=matmul|gemv]\n",
                     argv[0]);
             return 2;
         }
@@ -542,15 +542,16 @@ int main(int argc, char **argv) {
     /* --dt overrides a --dt header in the corpus file (the bench --mode
      * override rule) so a forced-path run can pin the dtype from ctest
      * regardless of what the corpus file declares. */
-    int dt_only_f32 = 0, dt_only_f16 = 0;
+    int dt_only_f32 = 0, dt_only_f16 = 0, dt_only_bf16 = 0;
     if (dt_arg) {
         rvcl_dtype_t dt2;
         if (dtype_ops_from_dtstr(dt_arg, &dt2)) {
             dt_only_f32 = dt2 == RVCL_DTYPE_FP32;
             dt_only_f16 = dt2 == RVCL_DTYPE_FP16;
+            dt_only_bf16 = dt2 == RVCL_DTYPE_BF16;
         } else {
             fprintf(stderr,
-                    "error: bad value for --dt: '%s' (want f32 or f16)\n",
+                    "error: bad value for --dt: '%s' (want f32, f16 or bf16)\n",
                     dt_arg);
             return 2;
         }
@@ -562,6 +563,8 @@ int main(int argc, char **argv) {
             = probe_rvv_name("rvcl_matmul_f32_rvv", "rvcl_matmul_f32_rvv_c");
     const char *f16_rvv_name
             = probe_rvv_name("rvcl_matmul_f16_rvv", "rvcl_matmul_f16_rvv_c");
+    const char *bf16_rvv_name
+            = probe_rvv_name("rvcl_matmul_bf16_rvv", "rvcl_matmul_bf16_rvv_c");
 
     CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_reference") != NULL,
             "reference f32 kernel present");
@@ -569,6 +572,8 @@ int main(int argc, char **argv) {
             "rvv f32 kernel present (generic or portable)");
     CHECK(rvcl_registry_find_factory(f16_rvv_name) != NULL,
             "rvv f16 kernel present (generic or portable)");
+    CHECK(rvcl_registry_find_factory(bf16_rvv_name) != NULL,
+            "rvv bf16 kernel present (generic or portable)");
 
     /* The fixed contract block below is matmul-specific: it drives the
      * matmul reference/rvv pair, matmul dispatch and matmul work ranges.
@@ -583,7 +588,7 @@ int main(int argc, char **argv) {
         float *c_ref = (float *)malloc((size_t)M * N * 4),
               *c_rvv = (float *)malloc((size_t)M * N * 4);
         float *golden = (float *)malloc((size_t)M * N * 4);
-        if (!dt_only_f16) {
+        if (!dt_only_f16 && !dt_only_bf16) {
             a = (float *)malloc((size_t)M * K * 4);
             b = (float *)malloc((size_t)K * N * 4);
             for (int i = 0; i < M * K; i++)
@@ -606,7 +611,7 @@ int main(int argc, char **argv) {
                 .quant = {},
         };
 
-        if (!dt_only_f16) {
+        if (!dt_only_f16 && !dt_only_bf16) {
             golden_f32(a, b, bias, golden, M, N, K);
 
             CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, b,
@@ -649,7 +654,7 @@ int main(int argc, char **argv) {
 
         /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
         uint16_t *ah = NULL, *bh = NULL;
-        if (!dt_only_f32) {
+        if (!dt_only_f32 && !dt_only_bf16) {
             const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
             ah = (uint16_t *)malloc((size_t)M * K * 2);
             bh = (uint16_t *)malloc((size_t)K * N * 2);
@@ -680,6 +685,41 @@ int main(int argc, char **argv) {
                     (int64_t)M * N, RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
             CHECK(cmp16.mismatches == 0,
                     "rvv f16 (packed) matches soft-converted golden");
+        }
+
+        /* ---- bf16 differential: rvv bf16 vs golden soft-convert ---- */
+        uint16_t *abh = NULL, *bbh = NULL;
+        if (!dt_only_f32 && !dt_only_f16) {
+            const dtype_ops_t *opb = dtype_ops_for(RVCL_DTYPE_BF16);
+            abh = (uint16_t *)malloc((size_t)M * K * 2);
+            bbh = (uint16_t *)malloc((size_t)K * N * 2);
+            for (int i = 0; i < M * K; i++)
+                abh[i] = opb->f32_to_storage(
+                        (float)((i * 11) % 23) / 23.0f - 0.5f);
+            for (int i = 0; i < K * N; i++)
+                bbh[i] = opb->f32_to_storage(
+                        (float)((i * 5) % 29) / 29.0f - 0.5f);
+
+            rvcl_matmul_desc_t db16 = {
+                    .m = M,
+                    .n = N,
+                    .k = K,
+                    .dtype_a = RVCL_DTYPE_BF16,
+                    .dtype_b = RVCL_DTYPE_BF16,
+                    .dtype_acc = RVCL_DTYPE_AUTO,
+                    .dtype_c = RVCL_DTYPE_FP32,
+                    .dtype_bias = RVCL_DTYPE_FP32,
+                    .quant = {},
+            };
+            golden_bf16(abh, bbh, bias, golden, M, N, K);
+            CHECK(run_matmul_kernel(
+                          bf16_rvv_name, &db16, abh, bbh, bias, c_rvv, -1, -1)
+                            == RVCL_SUCCESS,
+                    "rvv bf16 runs (packed path)");
+            const golden_cmp_t cmpb = opb->compare(c_rvv, golden,
+                    (int64_t)M * N, RVCL_ASSERT_BITEXACT, RVCL_DTYPE_BF16);
+            CHECK(cmpb.mismatches == 0,
+                    "rvv bf16 (packed) matches soft-converted golden");
         }
 
         /* ---- dispatch selection through the full pipeline ---- */
@@ -724,7 +764,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- work-range honoring inside a kernel ---- */
-        if (!dt_only_f16) {
+        if (!dt_only_f16 && !dt_only_bf16) {
             /* run_matmul_kernel uses the full range; exercise a sub-range by
          * passing an explicit row span [4,9). */
             memset(c_rvv, 0, (size_t)M * N * 4);
@@ -768,6 +808,8 @@ int main(int argc, char **argv) {
         free(golden);
         free(ah);
         free(bh);
+        free(abh);
+        free(bbh);
     }
 
     /* ---- corpus batch (shape numerics; contract cases stay above) ---- */
@@ -777,7 +819,11 @@ int main(int argc, char **argv) {
         parse_corpus(batch, &corpus);
         if (dt_arg) {
             corpus.dt_explicit = 1;
-            corpus.dt = dt_only_f32 ? RVCL_DTYPE_FP32 : RVCL_DTYPE_FP16;
+            rvcl_dtype_t d2;
+            if (dtype_ops_from_dtstr(dt_arg, &d2))
+                corpus.dt = d2;
+            else
+                corpus.dt = RVCL_DTYPE_FP32;
         }
 
         int ok = 0, fail = 0, skip = 0, fi = 0;

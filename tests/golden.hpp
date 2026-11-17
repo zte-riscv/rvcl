@@ -42,12 +42,15 @@ void golden_f32(const float *a, const float *b, const float *bias, float *c,
         int64_t m, int64_t n, int64_t k);
 void golden_f16(const uint16_t *a, const uint16_t *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k);
+void golden_bf16(const uint16_t *a, const uint16_t *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k);
 
 /* Deterministic LCG fill in [-0.5, 0.5): identical sequence on every
  * host and libc (no rand()), so differential and bench C mode see the
  * exact same inputs for a given shape. */
 void lcg_fill_f32(float *buf, size_t n, uint32_t seed);
 void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed);
+void lcg_fill_bf16(uint16_t *buf, size_t n, uint32_t seed);
 
 /* Stable per-shape seed (the mix below is part of the data contract:
  * differential and bench C mode derive identical buffers from it). */

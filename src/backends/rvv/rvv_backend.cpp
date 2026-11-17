@@ -25,8 +25,11 @@
  *     rvcl_matmul_f32_rvv         (f32,f32,f32,f32)   generic, requires RVV
  *     rvcl_matmul_f16_rvv_<tier>  (f16,f16,f32,f32)   requires RVV + FP16
  *     rvcl_matmul_f16_rvv         (f16,f16,f32,f32)   generic
+ *     rvcl_matmul_bf16_rvv_<tier> (bf16,bf16,f32,f32) requires RVV
+ *     rvcl_matmul_bf16_rvv        (bf16,bf16,f32,f32) generic
  *   non-vector builds (portable scalar C entries):
- *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c, no feature requirement
+ *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c /
+ *     rvcl_matmul_bf16_rvv_c, no feature requirement
  *
  * Every variant's factory routes through the knob-aware micro-kernel
  * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
@@ -190,6 +193,11 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16_by_name(
     return rvv_path_by_name(&rvv_f16_paths, name);
 }
 
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_bf16_by_name(
+        const char *name) {
+    return rvv_path_by_name(&rvv_bf16_paths, name);
+}
+
 /* Single source of truth for the live micro-kernel per dtype (see
  * rvv_internal.hpp): knob-free auto selection is JIT-when-RVV-else-C;
  * the intrinsics kernels stay reachable only through the by-name
@@ -205,6 +213,12 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_f16(void) {
     const char *knob = rvv_kernel_knob();
     if (knob && *knob) return rvv_pick_gemm_f16_by_name(knob);
     return rvv_pick_gemm_f16_by_name("auto");
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_bf16(void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) return rvv_pick_gemm_bf16_by_name(knob);
+    return rvv_pick_gemm_bf16_by_name("auto");
 }
 
 /* --------------------------------------------------- per-variant factories
@@ -237,6 +251,13 @@ static rvcl_status_t create_f32(
 static rvcl_status_t create_f16(
         rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
     rvv_gemm_fn gemm = rvv_pick_gemm_f16();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel(out, desc, gemm, 2);
+}
+
+static rvcl_status_t create_bf16(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvv_gemm_fn gemm = rvv_pick_gemm_bf16();
     if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
     return make_rvv_kernel(out, desc, gemm, 2);
 }
@@ -296,6 +317,15 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
         if (st != RVCL_SUCCESS) return st; \
     } while (0)
 
+#define RVCL_REG_BF16_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_bf16_rvv_" #tier, RVCL_DTYPE_BF16, \
+                RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, \
+                RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, \
+                create_bf16); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
 /* Dedicated variants high -> low, grouped by dtype tuple, then the
  * generic entry (order = dispatch cost-tie tie-break). */
 RVCL_API rvcl_status_t rvcl_rvv_register(void) {
@@ -329,9 +359,29 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
 #if defined(RVCL_RVV_TIERS_128)
     RVCL_REG_F16_TIER(128);
 #endif
-    return register_one("rvcl_matmul_f16_rvv", RVCL_DTYPE_FP16, RVCL_DTYPE_FP16,
+    st = register_one("rvcl_matmul_f16_rvv", RVCL_DTYPE_FP16, RVCL_DTYPE_FP16,
             RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
             RVCL_FEATURE_RVV, RVCL_FEATURE_FP16, create_f16);
+    if (st != RVCL_SUCCESS) return st;
+
+    /* bf16 dedicated tiers + generic entry: (bf16,bf16,f32,f32), requires
+     * RVV only (the JIT up-converts by integer widen+shift, no Zvfbfmin). */
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_BF16_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_BF16_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_BF16_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_BF16_TIER(128);
+#endif
+    return register_one("rvcl_matmul_bf16_rvv", RVCL_DTYPE_BF16,
+            RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
+            create_bf16);
 }
 
 RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
@@ -352,10 +402,14 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
             create_f32);
     if (st != RVCL_SUCCESS) return st;
-    return register_one("rvcl_matmul_f16_rvv_c", RVCL_DTYPE_FP16,
-            RVCL_DTYPE_FP16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+    st = register_one("rvcl_matmul_f16_rvv_c", RVCL_DTYPE_FP16, RVCL_DTYPE_FP16,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
+            RVCL_FEATURE_NONE, RVCL_FEATURE_NONE, create_f16);
+    if (st != RVCL_SUCCESS) return st;
+    return register_one("rvcl_matmul_bf16_rvv_c", RVCL_DTYPE_BF16,
+            RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
-            create_f16);
+            create_bf16);
 }
 
 #endif /* __riscv_vector */
