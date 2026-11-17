@@ -27,7 +27,7 @@ agnostic.
 corpus_file := { blank | comment | header_opt } case_line { blank | comment | case_line } ;
 blank       := [ \t ]* EOL ;
 comment     := '#' ANY* EOL ;            (* full-line; inline after a case is fine *)
-header_opt  := ( '--mode=' ( 'C' | 'P' | 'S' ) | '--dt=' ( 'f32' | 'f16' ) ) EOL ;
+header_opt  := ( '--mode=' ( 'C' | 'P' | 'S' ) | '--dt=' ( 'f32' | 'f16' | 'bf16' ) ) EOL ;
               (* only before the first case; any '--' line after it is an error *)
 case_line   := shape [ occurrence ] [ sep label ] EOL ;
 shape       := triple | triple ':' triple ;  (* MxNxK; or MxK:KxN, both K must match *)
@@ -55,8 +55,8 @@ lines unmodified).
 | Rule | Meaning |
 | --- | --- |
 | header options | whole-file defaults; bench CLI `--mode` overrides the file header; differential ignores `--mode` (it is inherently correctness) |
-| `--dt` default | no header = run f32 **and** f16; explicit = run only that dtype and **assert** it is served (see exit codes) |
-| `--dt` CLI | differential `--dt=f32\|f16` restricts the whole run — fixed contract sections and corpus cases alike — to one dtype and overrides the file header; the forced-path ctest targets use it |
+| `--dt` default | no header = run f32, f16 **and** bf16; explicit = run only that dtype and **assert** it is served (see exit codes) |
+| `--dt` CLI | differential `--dt=f32\|f16\|bf16` restricts the whole run — fixed contract sections and corpus cases alike — to one dtype and overrides the file header; the forced-path ctest targets use it |
 | label | unique per file (duplicate = parse error); a case without a label gets the normalized `MxNxK` string as its label |
 | double triple | the two K values must be equal, else parse error; normalized to MxNxK |
 | bounds | any dimension outside 1..4096 = parse error (foot-guard against runaway shapes on QEMU) |
@@ -88,10 +88,11 @@ One line in `CMakeLists.txt` per corpus file:
 rvcl_add_corpus(matmul ci test_matmul_ci)   # -> ctest target test_matmul_modeC_ci
 ```
 
-On RISC-V hosts the same line also registers forced f32 micro-kernel-path
+On RISC-V hosts the same line also registers forced micro-kernel-path
 variants of each target (`_jit`, `_c`, plus `_intrinsics` under the vector
-`-march` override), driven through the `RVCL_RVV_KERNEL` environment pin
-and the differential `--dt=f32` restriction.
+`-march` override) per dtype (f32/f16/bf16, target names carry the dtype),
+driven through the `RVCL_RVV_KERNEL` environment pin and the differential
+`--dt=<dtype>` restriction.
 
 `RVCL_TEST_SET` (`smoke` < `ci` < `all`, default `smoke`) selects at
 configure time which tiers become ctest targets; CI raises it explicitly.
