@@ -59,8 +59,8 @@ static void fill_bf16_op(void *buf, size_t n, uint32_t seed) {
 
 /* fp32 storage is the value itself (4 bytes) while the f32_to_storage
  * slot returns a narrow (uint16_t) storage word, so it is only meaningful
- * for narrow dtypes (fp16). The fp32 row keeps it NULL; no consumer
- * dereferences it for fp32 (both call sites guard on fp16). */
+ * for narrow dtypes (fp16, bf16). The fp32 row keeps it NULL; no consumer
+ * dereferences it for fp32 (both call sites guard on the narrow dtypes). */
 
 /* Compare routing driven by the kernel desc assertion level. The
  * tolerance class is read from the LIBRARY trait table by dtype (single

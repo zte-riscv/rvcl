@@ -171,7 +171,7 @@ private:
          * field (bits 19:15 = 6) that the core rejects as a reserved-
          * encoding illegal instruction, so emit the corrected encoding
          * directly: funct6 010010, vm=1, vs1=0, funct3 001. */
-        append4B(0x4a001057u | (vb.getIdx() << 20) | (vb.getIdx() << 7));
+        append4B(0x4a001057u | (vb.getIdx() << 20) | (vw.getIdx() << 7));
         vsetvli(vl, av, SEW::e32, LMUL::m1, VTA::ta, VMA::ma);
         vfmacc_vf(vacc, fa, vw); /* acc += A[i,p] * B[p, j0..j0+vl) */
         addi(acur, acur, 2);

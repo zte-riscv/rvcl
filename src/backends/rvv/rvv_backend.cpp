@@ -364,7 +364,7 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
             RVCL_FEATURE_RVV, RVCL_FEATURE_FP16, create_f16);
     if (st != RVCL_SUCCESS) return st;
 
-    /* bf16 dedicated tiers + generic entry: (bf16,bf16,f32,f32), requires
+        /* bf16 dedicated tiers + generic entry: (bf16,bf16,f32,f32), requires
      * RVV only (the JIT up-converts by integer widen+shift, no Zvfbfmin). */
 #if defined(RVCL_RVV_TIERS_1024)
     RVCL_REG_BF16_TIER(1024);
