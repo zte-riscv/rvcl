@@ -87,11 +87,11 @@ void rvv_gemm_f16_c(const void *a, const void *b_packed, const void *bias,
 void rvv_gemm_bf16_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
-void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed,
-        const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
+void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
-void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed,
-        const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
+void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
 /* Panel packer (rvv_pack.cpp): plain B -> panel layout, dtype-agnostic. */

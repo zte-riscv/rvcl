@@ -621,7 +621,8 @@ static inline uint8_t rvv_f32_to_fp8_e4m3(float f) {
         const uint32_t rem = m & ((1u << shift) - 1u);
         uint32_t out = kept;
         if (rem > half || (rem == half && (kept & 1u))) out++;
-        if (out > 0x7u) out = 0x8u; /* rounded up into min normal (0x08 = 2^-6) */
+        if (out > 0x7u)
+            out = 0x8u; /* rounded up into min normal (0x08 = 2^-6) */
         return (uint8_t)((sign << 7) | out);
     }
 
@@ -664,7 +665,8 @@ static inline uint8_t rvv_f32_to_fp8_e5m2(float f) {
         const uint32_t rem = m & ((1u << shift) - 1u);
         uint32_t out = kept;
         if (rem > half || (rem == half && (kept & 1u))) out++;
-        if (out > 0x3u) out = 0x4u; /* rounded up into min normal (0x04 = 2^-14) */
+        if (out > 0x3u)
+            out = 0x4u; /* rounded up into min normal (0x04 = 2^-14) */
         return (uint8_t)((sign << 7) | out);
     }
 

@@ -565,8 +565,7 @@ int main(int argc, char **argv) {
     const int dt_only_bf16 = dt_only == RVCL_DTYPE_BF16;
     const int dt_only_fp8_e4m3 = dt_only == RVCL_DTYPE_FP8_E4M3;
     const int dt_only_fp8_e5m2 = dt_only == RVCL_DTYPE_FP8_E5M2;
-    const int dt_only_other =
-            dt_only_fp8_e4m3 || dt_only_fp8_e5m2;
+    const int dt_only_other = dt_only_fp8_e4m3 || dt_only_fp8_e5m2;
 
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
 
@@ -773,12 +772,15 @@ int main(int argc, char **argv) {
                     fa[i] = fc.special[i % (int)fc.nspecial];
                 for (int i = 0; i < FK * FN; i++)
                     fb[i] = fc.special[(i * 3 + 1) % (int)fc.nspecial];
-                rvcl_matmul_desc_t df = {
-                        .m = FM, .n = FN, .k = FK,
-                        .dtype_a = fc.dtype, .dtype_b = fc.dtype,
+                rvcl_matmul_desc_t df = {.m = FM,
+                        .n = FN,
+                        .k = FK,
+                        .dtype_a = fc.dtype,
+                        .dtype_b = fc.dtype,
                         .dtype_acc = RVCL_DTYPE_AUTO,
                         .dtype_c = RVCL_DTYPE_FP32,
-                        .dtype_bias = RVCL_DTYPE_FP32, .quant = {}};
+                        .dtype_bias = RVCL_DTYPE_FP32,
+                        .quant = {}};
                 fc.golden(fa, fb, bias, fg, FM, FN, FK);
                 CHECK(run_matmul_kernel(fc.name, &df, fa, fb, bias, fk, -1, -1)
                                 == RVCL_SUCCESS,
@@ -787,7 +789,10 @@ int main(int argc, char **argv) {
                         = golden_cmp_bitexact_bits(fk, fg, (int64_t)FM * FN);
                 CHECK(cmpf.mismatches == 0,
                         "rvv fp8 special values match golden bit-for-bit");
-                free(fa); free(fb); free(fg); free(fk);
+                free(fa);
+                free(fb);
+                free(fg);
+                free(fk);
             }
         }
 
