@@ -586,7 +586,9 @@ static inline float rvv_fp8_e5m2_to_f32(uint8_t v) {
 /* f32 -> FP8 E4M3, round-to-nearest-even. Saturates at the max finite
  * value 448 (0x7E) — E4M3 has no infinity — and maps every NaN input to
  * the canonical NaN 0x7F. The subnormal window is [2^-9, 2^-6): the
- * smallest encoding 0x01 is exactly 2^-9, and below it flushes to zero. */
+ * smallest encoding 0x01 is exactly 2^-9. Values below it flush to signed
+ * zero by design (deliberate flush-to-zero, no rounding up of the gap just
+ * below the smallest subnormal). */
 static inline uint8_t rvv_f32_to_fp8_e4m3(float f) {
     uint32_t x;
     __builtin_memcpy(&x, &f, 4);
@@ -619,7 +621,7 @@ static inline uint8_t rvv_f32_to_fp8_e4m3(float f) {
         const uint32_t rem = m & ((1u << shift) - 1u);
         uint32_t out = kept;
         if (rem > half || (rem == half && (kept & 1u))) out++;
-        if (out > 0x7u) out = 0x7u; /* rounded up into min normal */
+        if (out > 0x7u) out = 0x8u; /* rounded up into min normal (0x08 = 2^-6) */
         return (uint8_t)((sign << 7) | out);
     }
 
@@ -635,8 +637,9 @@ static inline uint8_t rvv_f32_to_fp8_e4m3(float f) {
 
 /* f32 -> FP8 E5M2, round-to-nearest-even. Overflow rounds to +/-inf,
  * NaN inputs map to the canonical NaN 0x7F. The subnormal window is
- * [2^-16, 2^-14): the smallest encoding 0x01 is exactly 2^-16, and below
- * it flushes to zero. */
+ * [2^-16, 2^-14): the smallest encoding 0x01 is exactly 2^-16. Values below
+ * it flush to signed zero by design (deliberate flush-to-zero, no rounding
+ * up of the gap just below the smallest subnormal). */
 static inline uint8_t rvv_f32_to_fp8_e5m2(float f) {
     uint32_t x;
     __builtin_memcpy(&x, &f, 4);
@@ -661,7 +664,7 @@ static inline uint8_t rvv_f32_to_fp8_e5m2(float f) {
         const uint32_t rem = m & ((1u << shift) - 1u);
         uint32_t out = kept;
         if (rem > half || (rem == half && (kept & 1u))) out++;
-        if (out > 0x3u) out = 0x3u; /* rounded up into min normal */
+        if (out > 0x3u) out = 0x4u; /* rounded up into min normal (0x04 = 2^-14) */
         return (uint8_t)((sign << 7) | out);
     }
 
