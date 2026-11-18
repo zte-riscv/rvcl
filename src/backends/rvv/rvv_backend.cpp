@@ -434,10 +434,9 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
 #if defined(RVCL_RVV_TIERS_128)
     RVCL_REG_BF16_TIER(128);
 #endif
-    st = register_one("rvcl_matmul_bf16_rvv", RVCL_DTYPE_BF16,
-            RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
-            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
-            create_bf16);
+    st = register_one("rvcl_matmul_bf16_rvv", RVCL_DTYPE_BF16, RVCL_DTYPE_BF16,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
+            RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, create_bf16);
     if (st != RVCL_SUCCESS) return st;
 
 #if defined(RVCL_RVV_TIERS_1024)

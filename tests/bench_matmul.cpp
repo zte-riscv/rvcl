@@ -502,7 +502,7 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     g->num_ws = num_ws;
 
     /* narrow (2-byte) storage lives in the ah/bh buffers; fp32 in a/b. */
-/* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
+    /* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
      * fp32 in a/b. */
     const int narrow = cs->slot->op == RVCL_OP_MATMUL
             && cs->od.matmul.dtype_a != RVCL_DTYPE_FP32;
@@ -678,8 +678,7 @@ int main(int argc, char **argv) {
         for (int di = 0; slot->dtypes[di] != RVCL_DTYPE_AUTO; di++) {
             const dtype_ops_t *dop = dtype_ops_for(slot->dtypes[di]);
             if (!dop) continue; /* missing test row (never happens today) */
-            const int dt = dop->dtype != RVCL_DTYPE_FP32; /* 0 f32, 1 narrow */
-const int narrow = dop->dtype != RVCL_DTYPE_FP32;
+            const int narrow = dop->dtype != RVCL_DTYPE_FP32;
             if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
             const char *dtstr = dop->dtstr;
 
@@ -812,7 +811,7 @@ const int narrow = dop->dtype != RVCL_DTYPE_FP32;
             }
             if (path) {
                 kc.gemm = pick_by_name(path);
-kc.gemm = pick_gemm(dop->dtype, path);
+                kc.gemm = pick_gemm(dop->dtype, path);
                 if (!kc.gemm) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",
                             path, dtstr);
@@ -822,7 +821,7 @@ kc.gemm = pick_gemm(dop->dtype, path);
                 }
             } else {
                 kc.gemm = pick_auto();
-kc.gemm = pick_gemm(dop->dtype, NULL);
+                kc.gemm = pick_gemm(dop->dtype, NULL);
             }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)
