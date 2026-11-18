@@ -84,6 +84,12 @@ void rvv_gemm_f32_c(const void *a, const void *b_packed, const void *bias,
 void rvv_gemm_f16_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
+void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
+        const rvcl_work_range_t *r);
+void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
+        const rvcl_work_range_t *r);
 
 /* Panel packer (rvv_pack.cpp): plain B -> panel layout, dtype-agnostic. */
 rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
@@ -130,6 +136,10 @@ typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,
 #if defined(RVCL_HAVE_JIT)
 int rvv_gemm_f32_jit_available(void);
 rvv_gemm_fn rvv_gemm_f32_jit_entry(void);
+int rvv_gemm_fp8_e4m3_jit_available(void);
+rvv_gemm_fn rvv_gemm_fp8_e4m3_jit_entry(void);
+int rvv_gemm_fp8_e5m2_jit_available(void);
+rvv_gemm_fn rvv_gemm_fp8_e5m2_jit_entry(void);
 #endif
 
 /* Micro-kernel selection — single source of truth for "which kernel is
@@ -149,6 +159,8 @@ rvv_gemm_fn rvv_gemm_f32_jit_entry(void);
  * backend/tests; not public API. */
 rvv_gemm_fn rvv_pick_gemm_f32(void);
 rvv_gemm_fn rvv_pick_gemm_f16(void);
+rvv_gemm_fn rvv_pick_gemm_fp8_e4m3(void);
+rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(void);
 
 /* Explicit path resolution: name is "auto", "c", "jit" or "intrinsics".
  * The bench --path knob and RVCL_RVV_KERNEL resolve through the same
@@ -157,5 +169,7 @@ rvv_gemm_fn rvv_pick_gemm_f16(void);
  * run cannot serve. */
 rvv_gemm_fn rvv_pick_gemm_f32_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_f16_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_fp8_e4m3_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_fp8_e5m2_by_name(const char *name);
 
 #endif /* RVCL_RVV_INTERNAL_H */

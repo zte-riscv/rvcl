@@ -203,6 +203,19 @@ three below leaves the pipeline body untouched.
    forks the dispatch path.
 2. Add the matching test facts (golden / fill / compare) to
    `tests/dtype_ops.cpp` and extend the corpus `--dt` set.
+3. Add the backend micro-kernels: a C-portable kernel (table-lookup
+   upconversion for FP8, soft conversion for FP16) plus a JIT kernel under
+   `RVCL_HAVE_JIT`, a row in the per-dtype path table
+   `src/backends/rvv/rvv_paths.hpp` (name / getter / probe / auto priority),
+   the pick functions in `rvv_internal.hpp` / `rvv_backend.cpp`, and a
+   registry entry (`create_<dt>` + `register_one`, RVV-required on vector
+   builds and portable `_rvv_c` elsewhere).
+
+FP8 (E4M3 / E5M2) is the worked example of the full-chain pattern: both
+dtypes upconvert every byte through a shared 256-entry f32 lookup table in
+`src/backends/rvv/rvv_fp8.hpp`, so the golden, the C kernel and the JIT
+kernel agree bit-for-bit — including NaN / Inf propagation through the
+fp32 accumulation.
 
 ### Add an operator
 

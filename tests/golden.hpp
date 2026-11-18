@@ -42,12 +42,18 @@ void golden_f32(const float *a, const float *b, const float *bias, float *c,
         int64_t m, int64_t n, int64_t k);
 void golden_f16(const uint16_t *a, const uint16_t *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k);
+void golden_fp8_e4m3(const uint8_t *a, const uint8_t *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k);
+void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k);
 
 /* Deterministic LCG fill in [-0.5, 0.5): identical sequence on every
  * host and libc (no rand()), so differential and bench C mode see the
  * exact same inputs for a given shape. */
 void lcg_fill_f32(float *buf, size_t n, uint32_t seed);
 void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed);
+void lcg_fill_fp8_e4m3(uint8_t *buf, size_t n, uint32_t seed);
+void lcg_fill_fp8_e5m2(uint8_t *buf, size_t n, uint32_t seed);
 
 /* Stable per-shape seed (the mix below is part of the data contract:
  * differential and bench C mode derive identical buffers from it). */
@@ -67,6 +73,11 @@ typedef struct {
 } golden_cmp_t;
 
 golden_cmp_t golden_cmp_bitexact(const float *got, const float *exp, int64_t n);
+/* Bit-exact compare that treats identical NaN bit patterns as equal
+ * (fp32 `!=` flags every NaN as a mismatch). Used by the fp8 rows, whose
+ * NaN-laden accumulations must match the golden bit-for-bit. */
+golden_cmp_t golden_cmp_bitexact_bits(
+        const float *got, const float *exp, int64_t n);
 golden_cmp_t golden_cmp_tol(
         const float *got, const float *exp, int64_t n, float rel_tol);
 

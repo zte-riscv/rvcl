@@ -123,6 +123,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_pack.cpp
         src/backends/rvv/rvv_gemm_f32.cpp
         src/backends/rvv/rvv_gemm_f16.cpp
+        src/backends/rvv/rvv_gemm_fp8.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
     # The JIT micro-kernel compiles on RISC-V hosts only, always at the
@@ -133,7 +134,8 @@ if(RVCL_ENABLE_RVV)
     # all (see the rvcl_jit_probe target below for analysis coverage).
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
         list(APPEND RVCL_RUNTIME_SOURCES
-            src/backends/rvv/jit/rvv_gemm_f32_jit.cpp)
+            src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+            src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp)
     endif()
 endif()
 
@@ -199,7 +201,9 @@ if(RVCL_ENABLE_RVV)
     # only the JIT translation unit resolves includes against them — both
     # when it compiles on RISC-V hosts and in its compile-database entry
     # elsewhere.
-    set_source_files_properties(src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+    set_source_files_properties(
+        src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
         PROPERTIES INCLUDE_DIRECTORIES
                     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbyak_riscv")
 endif()
@@ -212,7 +216,8 @@ endif()
 # rides on the source-file property above.
 if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
     add_library(rvcl_jit_probe EXCLUDE_FROM_ALL
-        src/backends/rvv/jit/rvv_gemm_f32_jit.cpp)
+        src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp)
     set_target_properties(rvcl_jit_probe PROPERTIES
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED YES)
@@ -237,6 +242,7 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
             src/backends/rvv/rvv_pack.cpp
             src/backends/rvv/rvv_gemm_f32.cpp
             src/backends/rvv/rvv_gemm_f16.cpp
+            src/backends/rvv/rvv_gemm_fp8.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
         # The GEMV C-portable kernel is the operator's only compute path and
         # the differential oracle. Under the vector -march override the cross
