@@ -21,10 +21,19 @@
 #include "dtype_traits.hpp"
 #include "rvcl/types.h"
 
+size_t rvcl_dtype_bits(rvcl_dtype_t dt) {
+    /* Sub-byte dtype: INT4 packs two elements per byte, so its per-element
+     * width is 4 bits rather than size*8. Every other dtype stores one
+     * element per size bytes, so its width derives from the trait size. */
+    if (dt == RVCL_DTYPE_INT4) return 4;
+    return rvcl_dtype_traits(dt).size * 8;
+}
+
 size_t rvcl_dtype_size(rvcl_dtype_t dt) {
-    /* Table-backed: the element size is a dtype fact owned by the trait
-     * table (dtype_traits.hpp), so a new dtype only adds a table row. */
-    return rvcl_dtype_traits(dt).size;
+    /* ceil(bits/8): derived from rvcl_dtype_bits so the two accessors can
+     * never contradict. For byte-multiple dtypes this equals the element
+     * byte size; for sub-byte dtypes 1 byte is the storage granularity. */
+    return (rvcl_dtype_bits(dt) + 7) / 8;
 }
 
 /* Block-scale attributes are exposed through these accessors rather than

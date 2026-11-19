@@ -50,6 +50,16 @@ static void check_size(rvcl_dtype_t dt, size_t expected, const char *label) {
     CHECK(rvcl_dtype_size(dt) == expected, msg);
 }
 
+/* bits fact + the ceil(bits/8) storage contract: rvcl_dtype_size must equal
+ * ceil(rvcl_dtype_bits/8), so the two accessors can never contradict. */
+static void check_bits(rvcl_dtype_t dt, size_t expected, const char *label) {
+    char msg[96];
+    snprintf(msg, sizeof(msg), "%s rvcl_dtype_bits = %zu", label, expected);
+    CHECK(rvcl_dtype_bits(dt) == expected, msg);
+    snprintf(msg, sizeof(msg), "%s size == ceil(bits/8)", label);
+    CHECK(rvcl_dtype_size(dt) == (expected + 7) / 8, msg);
+}
+
 static void tc01_trait_table(void) {
     printf("TC-01 trait table facts\n");
 
@@ -64,6 +74,18 @@ static void tc01_trait_table(void) {
     check_size(RVCL_DTYPE_FP8_E4M3, 1, "fp8e4m3");
     check_size(RVCL_DTYPE_FP8_E5M2, 1, "fp8e5m2");
 
+    /* Per-element bit widths: size*8 for byte-multiple dtypes, INT4 = 4. */
+    check_bits(RVCL_DTYPE_AUTO, 0, "auto");
+    check_bits(RVCL_DTYPE_FP32, 32, "f32");
+    check_bits(RVCL_DTYPE_FP16, 16, "f16");
+    check_bits(RVCL_DTYPE_BF16, 16, "bf16");
+    check_bits(RVCL_DTYPE_INT8, 8, "int8");
+    check_bits(RVCL_DTYPE_UINT8, 8, "uint8");
+    check_bits(RVCL_DTYPE_INT4, 4, "int4");
+    check_bits(RVCL_DTYPE_INT32, 32, "int32");
+    check_bits(RVCL_DTYPE_FP8_E4M3, 8, "fp8e4m3");
+    check_bits(RVCL_DTYPE_FP8_E5M2, 8, "fp8e5m2");
+
     /* out-of-range datatypes resolve to a zero row (size 0), matching the
      * pre-table rvcl_dtype_size contract. The out-of-range casts are the
      * point of the assertion (contract test). */
@@ -71,6 +93,10 @@ static void tc01_trait_table(void) {
     CHECK(rvcl_dtype_size((rvcl_dtype_t)99) == 0, "out-of-range size = 0");
     // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     CHECK(rvcl_dtype_size((rvcl_dtype_t)-1) == 0, "negative size = 0");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_dtype_bits((rvcl_dtype_t)99) == 0, "out-of-range bits = 0");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_dtype_bits((rvcl_dtype_t)-1) == 0, "negative bits = 0");
 
     /* AUTO accumulation habit (resolve_acc facts): int8/uint8 -> INT32,
      * floating family -> FP32 */
@@ -101,6 +127,8 @@ static void tc05_block_scale_dtypes(void) {
         CHECK(rvcl_dtype_traits(block_dtypes[i]).size == 1, msg);
         snprintf(msg, sizeof(msg), "%s rvcl_dtype_size = 1", labels[i]);
         CHECK(rvcl_dtype_size(block_dtypes[i]) == 1, msg);
+        snprintf(msg, sizeof(msg), "%s rvcl_dtype_bits = 8", labels[i]);
+        CHECK(rvcl_dtype_bits(block_dtypes[i]) == 8, msg);
         snprintf(msg, sizeof(msg), "%s family = FP", labels[i]);
         CHECK(rvcl_dtype_traits(block_dtypes[i]).family == RVCL_DTYPE_FAMILY_FP,
                 msg);
@@ -218,6 +246,59 @@ static void tc04_dispatch_routing(void) {
     }
 }
 
+/* TC-06: rvcl_tensor_bytes is ceil(numel*bits/8). For sub-byte dtypes this
+ * is exact and coarser than numel*size: odd element counts round up to the
+ * byte that packs the trailing nibble (see README nibble packing). */
+static void tc06_tensor_bytes_subbyte(void) {
+    printf("TC-06 rvcl_tensor_bytes sub-byte boundaries\n");
+
+    rvcl_tensor_desc_t td = {
+            .ndims = 1, .dims = {0}, .strides = {1}, .dtype = RVCL_DTYPE_INT4};
+    rvcl_tensor_t t;
+    char buf[8];
+
+    /* INT4: 4 bits/element -> 1 byte holds 2 elements. Re-init after each
+     * desc edit, since init copies the desc into the tensor. */
+    struct {
+        int64_t n;
+        int64_t bytes;
+        const char *label;
+    } cases[] = {
+            {0, 0, "int4 n=0 -> 0 bytes"},
+            {1, 1, "int4 n=1 -> 1 byte"},
+            {2, 1, "int4 n=2 -> 1 byte"},
+            {3, 2, "int4 n=3 -> 2 bytes"},
+            {4, 2, "int4 n=4 -> 2 bytes"},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        td.dims[0] = cases[i].n;
+        CHECK(rvcl_tensor_init(&t, &td, buf) == RVCL_SUCCESS, "int4 init ok");
+        CHECK(rvcl_tensor_bytes(&t) == cases[i].bytes, cases[i].label);
+    }
+
+    /* Byte-multiple dtypes stay numel*size (ceil is a no-op). */
+    td = (rvcl_tensor_desc_t) {
+            .ndims = 1, .dims = {3}, .strides = {1}, .dtype = RVCL_DTYPE_FP32};
+    CHECK(rvcl_tensor_init(&t, &td, buf) == RVCL_SUCCESS, "f32 init ok");
+    CHECK(rvcl_tensor_bytes(&t) == (int64_t)3 * 4, "f32 n=3 -> 12 bytes");
+
+    /* Multi-dim product feeds the element count. */
+    td = (rvcl_tensor_desc_t) {.ndims = 2,
+            .dims = {2, 3},
+            .strides = {3, 1},
+            .dtype = RVCL_DTYPE_FP32};
+    CHECK(rvcl_tensor_init(&t, &td, buf) == RVCL_SUCCESS, "f32 2x3 init ok");
+    CHECK(rvcl_tensor_bytes(&t) == (int64_t)2 * 3 * 4, "f32 2x3 -> 24 bytes");
+
+    /* NULL / empty guard. */
+    CHECK(rvcl_tensor_bytes(NULL) == 0, "null tensor -> 0 bytes");
+    rvcl_tensor_t empty;
+    rvcl_tensor_desc_t empty_td = {
+            .ndims = 0, .dims = {0}, .strides = {0}, .dtype = RVCL_DTYPE_FP32};
+    CHECK(rvcl_tensor_init(&empty, &empty_td, NULL) != RVCL_SUCCESS,
+            "empty desc rejected by init");
+}
+
 int main(void) {
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
     tc01_trait_table();
@@ -225,6 +306,7 @@ int main(void) {
     tc03_registry_assert_level();
     tc04_dispatch_routing();
     tc05_block_scale_dtypes();
+    tc06_tensor_bytes_subbyte();
 
     printf(g_failures ? "UNIT-DTYPE-TRAITS: %d failure(s)\n"
                       : "UNIT-DTYPE-TRAITS: all passed\n",

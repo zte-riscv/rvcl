@@ -41,7 +41,9 @@ static constexpr rvcl_dtype_traits_t k_dtype_traits[] = {
         /* RVCL_DTYPE_UINT8 */
         {1, RVCL_DTYPE_FAMILY_INT, RVCL_DTYPE_INT32, RVCL_ASSERT_BITEXACT,
                 0.0f},
-        /* RVCL_DTYPE_INT4 */
+        /* RVCL_DTYPE_INT4: sub-byte — 4 bits/element, 1 byte packs a pair.
+         * The trait stores the 1-byte storage granularity; the per-element
+         * bit width (4) is registered in rvcl_dtype_bits (types.cpp). */
         {1, RVCL_DTYPE_FAMILY_INT, RVCL_DTYPE_FP32, RVCL_ASSERT_BITEXACT, 0.0f},
         /* RVCL_DTYPE_INT32 */
         {4, RVCL_DTYPE_FAMILY_INT, RVCL_DTYPE_FP32, RVCL_ASSERT_BITEXACT, 0.0f},
