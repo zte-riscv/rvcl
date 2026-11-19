@@ -198,6 +198,16 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_bf16_by_name(
     return rvv_path_by_name(&rvv_bf16_paths, name);
 }
 
+__attribute__((visibility("default"))) rvv_gemm_fn
+rvv_pick_gemm_fp8_e4m3_by_name(const char *name) {
+    return rvv_path_by_name(&rvv_fp8_e4m3_paths, name);
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn
+rvv_pick_gemm_fp8_e5m2_by_name(const char *name) {
+    return rvv_path_by_name(&rvv_fp8_e5m2_paths, name);
+}
+
 /* Single source of truth for the live micro-kernel per dtype (see
  * rvv_internal.hpp): knob-free auto selection is JIT-when-RVV-else-C;
  * the intrinsics kernels stay reachable only through the by-name
@@ -219,6 +229,20 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_bf16(void) {
     const char *knob = rvv_kernel_knob();
     if (knob && *knob) return rvv_pick_gemm_bf16_by_name(knob);
     return rvv_pick_gemm_bf16_by_name("auto");
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_fp8_e4m3(
+        void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) return rvv_pick_gemm_fp8_e4m3_by_name(knob);
+    return rvv_pick_gemm_fp8_e4m3_by_name("auto");
+}
+
+__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(
+        void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) return rvv_pick_gemm_fp8_e5m2_by_name(knob);
+    return rvv_pick_gemm_fp8_e5m2_by_name("auto");
 }
 
 /* --------------------------------------------------- per-variant factories
@@ -260,6 +284,20 @@ static rvcl_status_t create_bf16(
     rvv_gemm_fn gemm = rvv_pick_gemm_bf16();
     if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
     return make_rvv_kernel(out, desc, gemm, 2);
+}
+
+static rvcl_status_t create_fp8_e4m3(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvv_gemm_fn gemm = rvv_pick_gemm_fp8_e4m3();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel(out, desc, gemm, 1);
+}
+
+static rvcl_status_t create_fp8_e5m2(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvv_gemm_fn gemm = rvv_pick_gemm_fp8_e5m2();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel(out, desc, gemm, 1);
 }
 
 /* ------------------------------------------------------- registration */
@@ -326,6 +364,24 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
         if (st != RVCL_SUCCESS) return st; \
     } while (0)
 
+#define RVCL_REG_FP8_E4M3_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_fp8_e4m3_rvv_" #tier, \
+                RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP32, \
+                RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
+                RVCL_FEATURE_NONE, create_fp8_e4m3); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
+#define RVCL_REG_FP8_E5M2_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_fp8_e5m2_rvv_" #tier, \
+                RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, \
+                RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
+                RVCL_FEATURE_NONE, create_fp8_e5m2); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
 /* Dedicated variants high -> low, grouped by dtype tuple, then the
  * generic entry (order = dispatch cost-tie tie-break). */
 RVCL_API rvcl_status_t rvcl_rvv_register(void) {
@@ -378,10 +434,45 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
 #if defined(RVCL_RVV_TIERS_128)
     RVCL_REG_BF16_TIER(128);
 #endif
-    return register_one("rvcl_matmul_bf16_rvv", RVCL_DTYPE_BF16,
-            RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+    st = register_one("rvcl_matmul_bf16_rvv", RVCL_DTYPE_BF16, RVCL_DTYPE_BF16,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
+            RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, create_bf16);
+    if (st != RVCL_SUCCESS) return st;
+
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_FP8_E4M3_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_FP8_E4M3_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_FP8_E4M3_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_FP8_E4M3_TIER(128);
+#endif
+    st = register_one("rvcl_matmul_fp8_e4m3_rvv", RVCL_DTYPE_FP8_E4M3,
+            RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
-            create_bf16);
+            create_fp8_e4m3);
+    if (st != RVCL_SUCCESS) return st;
+
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_FP8_E5M2_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_FP8_E5M2_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_FP8_E5M2_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_FP8_E5M2_TIER(128);
+#endif
+    return register_one("rvcl_matmul_fp8_e5m2_rvv", RVCL_DTYPE_FP8_E5M2,
+            RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
+            create_fp8_e5m2);
 }
 
 RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
@@ -406,10 +497,20 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
             RVCL_DTYPE_FP32, RVCL_DTYPE_FP32, RVCL_VLEN_TIER_ANY,
             RVCL_FEATURE_NONE, RVCL_FEATURE_NONE, create_f16);
     if (st != RVCL_SUCCESS) return st;
-    return register_one("rvcl_matmul_bf16_rvv_c", RVCL_DTYPE_BF16,
+    st = register_one("rvcl_matmul_bf16_rvv_c", RVCL_DTYPE_BF16,
             RVCL_DTYPE_BF16, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
             create_bf16);
+    if (st != RVCL_SUCCESS) return st;
+    st = register_one("rvcl_matmul_fp8_e4m3_rvv_c", RVCL_DTYPE_FP8_E4M3,
+            RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_fp8_e4m3);
+    if (st != RVCL_SUCCESS) return st;
+    return register_one("rvcl_matmul_fp8_e5m2_rvv_c", RVCL_DTYPE_FP8_E5M2,
+            RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_fp8_e5m2);
 }
 
 #endif /* __riscv_vector */

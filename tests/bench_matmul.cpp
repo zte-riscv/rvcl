@@ -197,7 +197,9 @@ static void bparse_header(
             c->dt = dt2;
         } else {
             bcorpus_fatal(file, line,
-                    "bad value for --dt: '%s' (want f32, f16 or bf16)", val);
+                    "bad value for --dt: '%s' "
+                    "(want f32, f16, f8_e4m3 or f8_e5m2)",
+                    val);
         }
     }
 }
@@ -408,6 +410,30 @@ typedef enum { MODE_C, MODE_P, MODE_S } bench_mode_t;
  * narrow-from-f32 for P (legacy data path), direct narrow fill for C/S
  * (S skips the fill optimization by design; C shares data with the
  * differential run) */
+/* Kernel-only timing goes through the same per-dtype selector the backend
+ * binds (rvv_pick_*); --path=NAME forces a specific micro-kernel through
+ * the shared by-name resolver. */
+static rvv_gemm_fn pick_gemm(rvcl_dtype_t dt, const char *path) {
+    switch (dt) {
+        case RVCL_DTYPE_FP32:
+            return path ? rvv_pick_gemm_f32_by_name(path) : rvv_pick_gemm_f32();
+        case RVCL_DTYPE_FP16:
+            return path ? rvv_pick_gemm_f16_by_name(path) : rvv_pick_gemm_f16();
+        case RVCL_DTYPE_FP8_E4M3:
+            return path ? rvv_pick_gemm_fp8_e4m3_by_name(path)
+                        : rvv_pick_gemm_fp8_e4m3();
+        case RVCL_DTYPE_FP8_E5M2:
+            return path ? rvv_pick_gemm_fp8_e5m2_by_name(path)
+                        : rvv_pick_gemm_fp8_e5m2();
+        default: return NULL;
+    }
+}
+
+/* fills a/b(/ah/bh)/bias deterministically; narrow dtypes narrow-from-f32
+ * for P (legacy data path), direct fill for C/S (S skips the fill
+ * optimization by design; C shares data with the differential run). The
+ * narrow ah/bh buffers are byte-packed at op->elt bytes per element (2
+ * for f16, 1 for fp8), read as a plain void* by the micro-kernels. */
 static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
     const int narrow = op->dtype != RVCL_DTYPE_FP32;
     const uint32_t seed = golden_case_seed(cs->m, cs->n, cs->k);
@@ -425,19 +451,23 @@ static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
     if (!narrow) return;
 
     if (mode == MODE_P) {
-        cs->ah = (uint16_t *)calloc((size_t)a_elems, 2);
-        cs->bh = (uint16_t *)calloc((size_t)b_elems, 2);
-        for (int64_t i = 0; i < a_elems; i++)
-            cs->ah[i] = op->f32_to_storage(cs->a[i]);
-        for (int64_t i = 0; i < b_elems; i++)
-            cs->bh[i] = op->f32_to_storage(cs->b[i]);
+        cs->ah = (uint16_t *)calloc((size_t)a_elems, op->elt);
+        cs->bh = (uint16_t *)calloc((size_t)b_elems, op->elt);
+        for (int64_t i = 0; i < a_elems; i++) {
+            const uint16_t v = op->f32_to_storage(cs->a[i]);
+            memcpy((uint8_t *)cs->ah + i * op->elt, &v, op->elt);
+        }
+        for (int64_t i = 0; i < b_elems; i++) {
+            const uint16_t v = op->f32_to_storage(cs->b[i]);
+            memcpy((uint8_t *)cs->bh + i * op->elt, &v, op->elt);
+        }
     } else {
         free(cs->a);
         free(cs->b);
         cs->a = NULL;
         cs->b = NULL;
-        cs->ah = (uint16_t *)calloc((size_t)a_elems, 2);
-        cs->bh = (uint16_t *)calloc((size_t)b_elems, 2);
+        cs->ah = (uint16_t *)calloc((size_t)a_elems, op->elt);
+        cs->bh = (uint16_t *)calloc((size_t)b_elems, op->elt);
         op->fill(cs->ah, (size_t)a_elems, seed);
         op->fill(cs->bh, (size_t)b_elems, seed ^ 0x9e3779b9u);
     }
@@ -472,6 +502,8 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     g->num_ws = num_ws;
 
     /* narrow (2-byte) storage lives in the ah/bh buffers; fp32 in a/b. */
+    /* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
+     * fp32 in a/b. */
     const int narrow = cs->slot->op == RVCL_OP_MATMUL
             && cs->od.matmul.dtype_a != RVCL_DTYPE_FP32;
     const void *a = narrow ? (const void *)cs->ah : (const void *)cs->a;
@@ -646,7 +678,7 @@ int main(int argc, char **argv) {
         for (int di = 0; slot->dtypes[di] != RVCL_DTYPE_AUTO; di++) {
             const dtype_ops_t *dop = dtype_ops_for(slot->dtypes[di]);
             if (!dop) continue; /* missing test row (never happens today) */
-            const int dt = dop->dtype != RVCL_DTYPE_FP32; /* 0 f32, 1 narrow */
+            const int narrow = dop->dtype != RVCL_DTYPE_FP32;
             if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
             const char *dtstr = dop->dtstr;
 
@@ -683,8 +715,10 @@ int main(int argc, char **argv) {
                     } else {
                         float *golden = (float *)malloc((size_t)out_elems * 4);
                         slot->golden(&cs.od,
-                                dt ? (const void *)cs.ah : (const void *)cs.a,
-                                dt ? (const void *)cs.bh : (const void *)cs.b,
+                                narrow ? (const void *)cs.ah
+                                       : (const void *)cs.a,
+                                narrow ? (const void *)cs.bh
+                                       : (const void *)cs.b,
                                 cs.bias, golden);
                         const rvcl_kernel_t *k = rvcl_dispatch_kernel(rig.r);
                         golden_cmp_t cmp = dop->compare(cs.c, golden, out_elems,
@@ -735,7 +769,7 @@ int main(int argc, char **argv) {
             }
 
             /* ---- P / S: the four metric classes ---- */
-            size_t elt = dt ? 2 : 4;
+            size_t elt = dop->elt;
             void *packed = NULL;
             size_t pbytes = rvv_packed_b_bytes(cs.k, cs.n, elt);
             if (posix_memalign(&packed, 64, pbytes) != 0) {
@@ -750,7 +784,7 @@ int main(int argc, char **argv) {
                         .strides = {cs.n, 1},
                         .dtype = cs.od.matmul.dtype_b};
                 rvcl_tensor_init(
-                        &b_src, &td, dt ? (void *)cs.bh : (void *)cs.b);
+                        &b_src, &td, narrow ? (void *)cs.bh : (void *)cs.b);
                 rvcl_tensor_desc_t pd = {.ndims = 1,
                         .dims = {(int64_t)pbytes},
                         .strides = {1},
@@ -777,6 +811,7 @@ int main(int argc, char **argv) {
             }
             if (path) {
                 kc.gemm = pick_by_name(path);
+                kc.gemm = pick_gemm(dop->dtype, path);
                 if (!kc.gemm) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",
                             path, dtstr);
@@ -786,6 +821,7 @@ int main(int argc, char **argv) {
                 }
             } else {
                 kc.gemm = pick_auto();
+                kc.gemm = pick_gemm(dop->dtype, NULL);
             }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)

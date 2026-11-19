@@ -79,6 +79,14 @@ static rvv_gemm_fn rvv_path_bf16_c(void) {
     return rvv_gemm_bf16_c;
 }
 
+static rvv_gemm_fn rvv_path_fp8_e4m3_c(void) {
+    return rvv_gemm_fp8_e4m3_c;
+}
+
+static rvv_gemm_fn rvv_path_fp8_e5m2_c(void) {
+    return rvv_gemm_fp8_e5m2_c;
+}
+
 #if defined(RVCL_HAVE_JIT)
 static int rvv_path_f32_jit_ok(void) {
     return rvv_gemm_f32_jit_available();
@@ -102,6 +110,22 @@ static int rvv_path_bf16_jit_ok(void) {
 
 static rvv_gemm_fn rvv_path_bf16_jit(void) {
     return rvv_gemm_bf16_jit_entry();
+}
+
+static int rvv_path_fp8_e4m3_jit_ok(void) {
+    return rvv_gemm_fp8_e4m3_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_fp8_e4m3_jit(void) {
+    return rvv_gemm_fp8_e4m3_jit_entry();
+}
+
+static int rvv_path_fp8_e5m2_jit_ok(void) {
+    return rvv_gemm_fp8_e5m2_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_fp8_e5m2_jit(void) {
+    return rvv_gemm_fp8_e5m2_jit_entry();
 }
 #endif
 
@@ -201,6 +225,42 @@ static const rvv_path_table_t rvv_bf16_paths = {
         "(want auto, c or jit)\n",
         rvv_bf16_path_entries,
         sizeof(rvv_bf16_path_entries) / sizeof(rvv_bf16_path_entries[0]),
+};
+
+/* ------------------------------------------------------------- fp8 */
+
+static const rvv_path_entry_t rvv_fp8_e4m3_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_fp8_e4m3_jit, rvv_path_fp8_e4m3_jit_ok, 0,
+                "rvcl: forced JIT fp8_e4m3 path requires the vector "
+                "extension\n"},
+#endif
+        {"c", rvv_path_fp8_e4m3_c, NULL, 1, NULL},
+};
+
+static const rvv_path_table_t rvv_fp8_e4m3_paths = {
+        "rvcl: fp8_e4m3 kernel path '%s' is unavailable "
+        "(want auto, c or jit)\n",
+        rvv_fp8_e4m3_path_entries,
+        sizeof(rvv_fp8_e4m3_path_entries)
+                / sizeof(rvv_fp8_e4m3_path_entries[0]),
+};
+
+static const rvv_path_entry_t rvv_fp8_e5m2_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_fp8_e5m2_jit, rvv_path_fp8_e5m2_jit_ok, 0,
+                "rvcl: forced JIT fp8_e5m2 path requires the vector "
+                "extension\n"},
+#endif
+        {"c", rvv_path_fp8_e5m2_c, NULL, 1, NULL},
+};
+
+static const rvv_path_table_t rvv_fp8_e5m2_paths = {
+        "rvcl: fp8_e5m2 kernel path '%s' is unavailable "
+        "(want auto, c or jit)\n",
+        rvv_fp8_e5m2_path_entries,
+        sizeof(rvv_fp8_e5m2_path_entries)
+                / sizeof(rvv_fp8_e5m2_path_entries[0]),
 };
 
 #endif /* RVCL_RVV_PATHS_H */
