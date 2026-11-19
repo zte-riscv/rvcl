@@ -217,6 +217,20 @@ dtypes upconvert every byte through a shared 256-entry f32 lookup table in
 kernel agree bit-for-bit — including NaN / Inf propagation through the
 fp32 accumulation.
 
+**Block-scale dtypes** (MX / NV formats) carry a per-block exponent or
+scale, exposed through two accessors rather than trait-struct fields
+(`rvcl_dtype_traits_t` is returned by value, so appending a field would
+shift the caller stack frame): `rvcl_dtype_block_size()` reports the block
+width (0 for non-block-scale dtypes) and `rvcl_dtype_scale_dtype()` the
+scale dtype (`E8M0` for MXFP8_E4M3 / MXFP8_E5M2 / MXFP4, `E4M3` for NVFP4).
+`rvcl_dtype_t` now includes `RVCL_DTYPE_E8M0` and the four block-scale
+formats. A block-scale request must have K divisible by its block size
+(the scale tensors are `[·, K/blk]`); dispatch rejects a non-divisible K
+with `RVCL_ERROR_INVALID_ARGUMENT`. The scaled one-shot
+`rvcl_matmul_scaled()` takes the scale tensors `sa[m][K/blk_a]` /
+`sb[n][K/blk_b]` row-major and requires a non-NULL scale exactly when the
+input dtype is block-scale.
+
 ### Add an operator
 
 An operator is a dispatch-table row plus a kernel contract. Its framework

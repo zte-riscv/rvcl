@@ -150,6 +150,39 @@ static rvcl_status_t test_create_k32(
     return RVCL_SUCCESS;
 }
 
+/* Block-scale placeholder: run() records whether a scale tensor reached
+ * the pack through the SRC_SCALE_A slot, proving dispatch connectivity for
+ * the scaled path (no real block-scale kernel exists yet). */
+static std::atomic<int> g_scale_seen(0);
+
+static rvcl_status_t test_run_scale(rvcl_kernel_t *k,
+        const rvcl_tensor_pack_t *pack, const rvcl_work_range_t *range) {
+    (void)k;
+    (void)range;
+    g_run_calls.fetch_add(1);
+    if (rvcl_tensor_pack_get(pack, RVCL_TENSOR_SRC_SCALE_A) != NULL)
+        g_scale_seen.fetch_add(1);
+    return RVCL_SUCCESS;
+}
+
+static const rvcl_kernel_vtable_t g_vtable_scale = {
+        .validate = test_validate,
+        .configure = test_configure,
+        .pack_a = NULL,
+        .pack_b = NULL,
+        .run = test_run_scale,
+        .destroy = test_destroy,
+};
+
+static rvcl_status_t test_create_scale(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    *out = (rvcl_kernel_t *)calloc(1, sizeof(rvcl_kernel_t));
+    if (!*out) return RVCL_ERROR_OUT_OF_MEMORY;
+    (*out)->vt = &g_vtable_scale;
+    (*out)->desc = *desc;
+    return RVCL_SUCCESS;
+}
+
 /* ------------------------------------------------------------ cost stubs */
 
 static uint64_t cost_zero(
@@ -1341,6 +1374,109 @@ static void tc19_op_table(void) {
     rvcl_dispatch_cache_clear();
 }
 
+/* TC-AC3-21: block-scale framework rules. No real block-scale kernel
+ * exists yet, so the framework behavior is locked with a registered
+ * placeholder kernel and the scaled one-shot path: slot round-trip, E8M0
+ * compute-role rejection, K divisibility, and scale matching. */
+static void tc21_block_scale(void) {
+    printf("TC-AC3-21 block-scale framework rules\n");
+    rvcl_dispatch_cache_clear();
+
+    /* (a) Slot round-trip: SRC_SCALE_A/B add + get read back the pointer. */
+    rvcl_tensor_pack_t p;
+    rvcl_tensor_pack_init(&p);
+    const rvcl_tensor_desc_t sd = {.ndims = 2,
+            .dims = {2, 1},
+            .strides = {1, 1},
+            .dtype = RVCL_DTYPE_E8M0};
+    rvcl_tensor_t tsa, tsb;
+    rvcl_tensor_init(&tsa, &sd, (void *)0x1);
+    rvcl_tensor_init(&tsb, &sd, (void *)0x2);
+    CHECK(rvcl_tensor_pack_add(&p, RVCL_TENSOR_SRC_SCALE_A, &tsa)
+                    == RVCL_SUCCESS,
+            "scale A slot add ok");
+    CHECK(rvcl_tensor_pack_add(&p, RVCL_TENSOR_SRC_SCALE_B, &tsb)
+                    == RVCL_SUCCESS,
+            "scale B slot add ok");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_SRC_SCALE_A) == &tsa,
+            "scale A slot round-trips");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_SRC_SCALE_B) == &tsb,
+            "scale B slot round-trips");
+
+    /* (b) E8M0 role filter: it cannot be a compute-tuple member. */
+    const rvcl_matmul_desc_t e8 = make_request(16, 16, 32, RVCL_DTYPE_E8M0,
+            RVCL_DTYPE_E8M0, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    rvcl_dispatch_result_t *r = NULL;
+    CHECK(rvcl_dispatch_matmul(&e8, &r) == RVCL_UNSUPPORTED_DTYPE_COMBO,
+            "E8M0 compute role is rejected as a tuple member");
+    CHECK(r == NULL, "no result leaked for an E8M0 tuple");
+
+    /* (c) K divisibility for a block-scale tuple. */
+    rvcl_kernel_desc_t kd = make_desc("t21_mx", RVCL_DTYPE_MXFP8_E4M3,
+            RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    CHECK(rvcl_register_kernel(&kd, test_create) == RVCL_SUCCESS,
+            "mxfp8e4m3 placeholder kernel registered");
+    rvcl_dispatch_cache_clear();
+
+    const rvcl_matmul_desc_t bad_k
+            = make_request(16, 16, 33, RVCL_DTYPE_MXFP8_E4M3,
+                    RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    rvcl_dispatch_result_t *rb = NULL;
+    CHECK(rvcl_dispatch_matmul(&bad_k, &rb) == RVCL_ERROR_INVALID_ARGUMENT,
+            "K not divisible by block size -> INVALID_ARGUMENT");
+    CHECK(rb == NULL, "no result leaked for a non-divisible K");
+
+    const rvcl_matmul_desc_t good_k
+            = make_request(16, 16, 32, RVCL_DTYPE_MXFP8_E4M3,
+                    RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    rvcl_dispatch_result_t *rg = NULL;
+    CHECK(rvcl_dispatch_matmul(&good_k, &rg) == RVCL_SUCCESS,
+            "K divisible by block size dispatches");
+    CHECK(rvcl_dispatch_kernel_name(rg)
+                    && strcmp(rvcl_dispatch_kernel_name(rg), "t21_mx") == 0,
+            "block-scale placeholder kernel selected");
+    rvcl_dispatch_release(rg);
+    unregister_quiet("t21_mx");
+    rvcl_dispatch_cache_clear();
+
+    /* (d) rvcl_matmul_scaled scale matching. */
+    float a[16 * 32], b[32 * 16], c[16 * 16];
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+    memset(c, 0, sizeof(c));
+    const rvcl_matmul_desc_t plain = make_request(16, 16, 32, RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    CHECK(rvcl_matmul_scaled(&plain, a, (const void *)0x1, b, NULL, NULL, c)
+                    == RVCL_ERROR_INVALID_ARGUMENT,
+            "plain dtype with a non-NULL scale -> INVALID_ARGUMENT");
+    CHECK(rvcl_matmul_scaled(&plain, a, NULL, b, (const void *)0x1, NULL, c)
+                    == RVCL_ERROR_INVALID_ARGUMENT,
+            "plain dtype with a non-NULL sb -> INVALID_ARGUMENT");
+
+    const rvcl_matmul_desc_t mx
+            = make_request(16, 16, 32, RVCL_DTYPE_MXFP8_E4M3,
+                    RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    CHECK(rvcl_matmul_scaled(&mx, a, NULL, b, NULL, NULL, c)
+                    == RVCL_ERROR_INVALID_ARGUMENT,
+            "block dtype with a NULL scale -> INVALID_ARGUMENT");
+
+    uint8_t sa[16], sb[16];
+    memset(sa, 0, sizeof(sa));
+    memset(sb, 0, sizeof(sb));
+    rvcl_kernel_desc_t sk = make_desc("t21_scale", RVCL_DTYPE_MXFP8_E4M3,
+            RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    CHECK(rvcl_register_kernel(&sk, test_create_scale) == RVCL_SUCCESS,
+            "scale-reading placeholder kernel registered");
+    rvcl_dispatch_cache_clear();
+    g_scale_seen.store(0);
+    CHECK(rvcl_matmul_scaled(&mx, a, sa, b, sb, NULL, c) == RVCL_SUCCESS,
+            "scaled matmul with scales succeeds");
+    CHECK(g_scale_seen.load() >= 1,
+            "scale tensor reached the kernel run via SRC_SCALE_A");
+    unregister_quiet("t21_scale");
+    rvcl_dispatch_cache_clear();
+}
+
 /* ------------------------------------------------- capability injection */
 
 static rvcl_capability_t make_snapshot(
@@ -1721,6 +1857,7 @@ int main(int argc, char **argv) {
     tc18_concurrent();
     tc19_op_table();
     tc20_cost_scoring();
+    tc21_block_scale();
 
     if (g_failures) printf("FAILURES: %d\n", g_failures);
     return g_failures ? 1 : 0;

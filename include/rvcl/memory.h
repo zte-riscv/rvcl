@@ -75,12 +75,16 @@ typedef enum {
     RVCL_TENSOR_AUX_1,
     RVCL_TENSOR_AUX_2,
     RVCL_TENSOR_AUX_3,
+    RVCL_TENSOR_SRC_SCALE_A, /* block scale tensor for SRC_A */
+    RVCL_TENSOR_SRC_SCALE_B, /* block scale tensor for SRC_B */
     RVCL_TENSOR_SLOT_COUNT,
 } rvcl_tensor_slot_t;
 
-/* AUX slots a pack can carry (AUX_0 .. AUX_3): the bound for mapping
- * configure()-reported workspaces into the pack. */
-#define RVCL_TENSOR_AUX_COUNT (RVCL_TENSOR_SLOT_COUNT - RVCL_TENSOR_AUX_0)
+/* AUX slots a pack can carry: AUX_0..AUX_3 are a contiguous group of 4
+ * slots at the head of the enum, so workspace mapping walks AUX_0+i and
+ * the bound is the group width (not SLOT_COUNT - AUX_0, which drifts once
+ * scale slots trail the enum). */
+#define RVCL_TENSOR_AUX_COUNT (RVCL_TENSOR_AUX_3 - RVCL_TENSOR_AUX_0 + 1)
 
 typedef struct {
     const rvcl_tensor_t *slots[RVCL_TENSOR_SLOT_COUNT];

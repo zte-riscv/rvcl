@@ -46,7 +46,20 @@ static void run_task(
 
 rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
         const void *b, const void *bias, void *c) {
+    return rvcl_matmul_scaled(desc, a, NULL, b, NULL, bias, c);
+}
+
+rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
+        const void *sa, const void *b, const void *sb, const void *bias,
+        void *c) {
     if (!desc || !a || !b || !c) return RVCL_ERROR_INVALID_ARGUMENT;
+
+    /* A block-scale input dtype must come with a scale tensor and a plain
+     * dtype must not (D-6). */
+    const size_t blk_a = rvcl_dtype_block_size(desc->dtype_a);
+    const size_t blk_b = rvcl_dtype_block_size(desc->dtype_b);
+    if ((blk_a == 0) != (sa == NULL)) return RVCL_ERROR_INVALID_ARGUMENT;
+    if ((blk_b == 0) != (sb == NULL)) return RVCL_ERROR_INVALID_ARGUMENT;
 
     /* 1. Dispatch (stages 1-4 + validate + configure). */
     rvcl_dispatch_result_t *r = NULL;
@@ -58,7 +71,7 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
             .dims = {desc->m, desc->k},
             .strides = {desc->k, 1},
             .dtype = desc->dtype_a};
-    rvcl_tensor_t ta, tb, tc, tbias;
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
     rvcl_tensor_init(&ta, &td2, (void *)a);
 
     td2.dims[0] = desc->k;
@@ -85,6 +98,25 @@ rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc, const void *a,
                 .dtype = desc->dtype_bias};
         rvcl_tensor_init(&tbias, &bd, (void *)bias);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
+    }
+
+    /* Scale tensors: row-major sa[m][K/blk_a] and sb[n][K/blk_b], dtype
+     * from the block-scale dtype (D-6). */
+    if (blk_a > 0) {
+        rvcl_tensor_desc_t sd = {.ndims = 2,
+                .dims = {desc->m, desc->k / (int64_t)blk_a},
+                .strides = {desc->k / (int64_t)blk_a, 1},
+                .dtype = rvcl_dtype_scale_dtype(desc->dtype_a)};
+        rvcl_tensor_init(&tsa, &sd, (void *)sa);
+        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_SCALE_A, &tsa);
+    }
+    if (blk_b > 0) {
+        rvcl_tensor_desc_t sd = {.ndims = 2,
+                .dims = {desc->n, desc->k / (int64_t)blk_b},
+                .strides = {desc->k / (int64_t)blk_b, 1},
+                .dtype = rvcl_dtype_scale_dtype(desc->dtype_b)};
+        rvcl_tensor_init(&tsb, &sd, (void *)sb);
+        rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_SCALE_B, &tsb);
     }
 
     /* 3. Workspace: caller of the semantic API is the caller here, so we
