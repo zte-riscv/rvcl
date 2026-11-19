@@ -79,18 +79,20 @@ def check_pr_title(title, pr_number):
     squash_status = "Squash subject: "
     print(squash_status + squash)
     # Appending " (#<number>)" cannot break a subject that already matched
-    # SUBJECT_RE, so the format branch inside check_subject is only a
-    # defensive assertion here; the length check is the reachable one.
-    if len(squash) > SUBJECT_MAX_LEN:
-        print(
-            f"{squash_status}FAILED: exceeds {SUBJECT_MAX_LEN} characters "
-            f"({len(squash)}) once ' (#{pr_number})' is appended; "
-            "shorten the PR title"
-        )
+    # SUBJECT_RE, so only the length can still fail here; a bare title that
+    # already failed is reported as FAILED rather than checked again.
+    if not is_ok or len(squash) > SUBJECT_MAX_LEN:
+        if len(squash) > SUBJECT_MAX_LEN:
+            print(
+                f"{squash_status}FAILED: exceeds {SUBJECT_MAX_LEN} characters "
+                f"({len(squash)}) once ' (#{pr_number})' is appended; "
+                "shorten the PR title"
+            )
+        else:
+            print(f"{squash_status}FAILED: the PR title is not a valid subject")
         return False
-    if not check_subject(squash, squash_status):
-        return False
-    return is_ok
+    print(squash_status + "OK")
+    return True
 
 
 def main():

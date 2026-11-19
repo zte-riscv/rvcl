@@ -113,13 +113,14 @@ class CheckPrTitleTest(unittest.TestCase):
         self.assertIn("exceeds 72 characters (73)", out)
 
     def test_bare_title_failure_is_not_masked(self):
-        # The squash subject of these titles also fails the format check, but
-        # the bare-title verdict alone must already be False.
+        # The bare-title verdict alone must be FAILED, and the squash subject
+        # must not be reported OK for these titles either.
         for title in ("add fp8 dtype support", "Merge feat: x", " feat: x"):
             with self.subTest(title=title):
                 ok, out = run_quietly(check.check_pr_title, title, 36)
                 self.assertFalse(ok)
-                self.assertIn("PR title: ", out)
+                self.assertIn("PR title: FAILED", out)
+                self.assertNotIn("Squash subject: OK", out)
 
     def test_bare_title_only_without_number(self):
         ok, _ = run_quietly(check.check_pr_title, "feat: ok", None)
