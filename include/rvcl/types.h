@@ -85,7 +85,12 @@ typedef enum {
     RVCL_DTYPE_MXFP4, /* MX: 32-element block + E8M0 scale */
 } rvcl_dtype_t;
 
-/* Element size in bytes; 0 for RVCL_DTYPE_AUTO / unknown. */
+/* Per-element storage size in bits; 0 for RVCL_DTYPE_AUTO / unknown. */
+RVCL_API size_t rvcl_dtype_bits(rvcl_dtype_t dt);
+
+/* Per-element storage size in bytes: ceil(rvcl_dtype_bits(dt) / 8). For a
+ * sub-byte dtype (e.g. INT4) this is 1 byte = the storage granularity that
+ * packs several elements; 0 for RVCL_DTYPE_AUTO / unknown. */
 RVCL_API size_t rvcl_dtype_size(rvcl_dtype_t dt);
 
 /* Block-scale attribute of a datatype: 0 = not a block-scale dtype. */

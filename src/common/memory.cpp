@@ -43,7 +43,11 @@ int64_t rvcl_tensor_bytes(const rvcl_tensor_t *t) {
     int64_t els = 1;
     for (int i = 0; i < t->desc.ndims; i++)
         els *= t->desc.dims[i];
-    return els * (int64_t)rvcl_dtype_size(t->desc.dtype);
+    /* ceil(els*bits/8): exact backing-buffer size even for sub-byte dtypes
+     * (e.g. 3 INT4 elements = 2 bytes). int64 keeps the bit product from
+     * overflowing the element count alone. */
+    const int64_t bits = (int64_t)rvcl_dtype_bits(t->desc.dtype);
+    return (int64_t)((els * bits + 7) / 8);
 }
 
 void rvcl_tensor_pack_init(rvcl_tensor_pack_t *p) {
