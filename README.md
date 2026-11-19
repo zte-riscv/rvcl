@@ -231,6 +231,17 @@ with `RVCL_ERROR_INVALID_ARGUMENT`. The scaled one-shot
 `sb[n][K/blk_b]` row-major and requires a non-NULL scale exactly when the
 input dtype is block-scale.
 
+**Sub-byte storage contract** (`rvcl_dtype_bits`, `rvcl_dtype_size`,
+`rvcl_tensor_bytes`): `rvcl_dtype_bits()` reports the per-element storage
+width in bits (`INT4` = 4, byte-multiple dtypes = `size*8`, `AUTO` = 0).
+`rvcl_dtype_size()` is documented as `ceil(bits/8)`: for a sub-byte dtype a
+byte is the storage granularity that packs several elements (`INT4` = 1 byte
+= a pair of elements). `rvcl_tensor_bytes()` returns `ceil(numel*bits/8)`,
+the exact backing-buffer size, so an odd element count rounds up to the byte
+holding its trailing nibble (`3` `INT4` elements = `2` bytes). Nibble packing
+order is OCP-aligned: element at even index `2k` occupies the low nibble of
+byte `k`, element at odd index `2k+1` the high nibble.
+
 ### Add an operator
 
 An operator is a dispatch-table row plus a kernel contract. Its framework
