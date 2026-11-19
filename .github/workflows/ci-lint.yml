@@ -5,7 +5,9 @@ name: ci-lint
 # check the whole tree on main pushes so a stray unformatted file or finding
 # never lands. The commit-msg job validates every commit regardless of which
 # files changed, so this workflow deliberately carries no `paths` filter — a
-# docs-only PR must still pass the Conventional Commits gate.
+# docs-only PR must still pass the Conventional Commits gate. On a PR it also
+# validates the PR title as the squash subject (`<title> (#<number>)`), since
+# that string becomes the mainline commit subject once the PR is merged.
 on:
   push:
     branches: [main]
@@ -99,6 +101,10 @@ jobs:
   # so only the latest commit is checked while the branch is being updated.
   # The script and the rules it applies are documented in CONTRIBUTING.md
   # ("Commit message conventions").
+  # On a PR the title is checked as well: the repository squash-merges with
+  # the PR title as the commit title, so the title becomes the mainline
+  # subject and must satisfy the same rule (including the 72-character limit
+  # measured together with the appended ` (#<number>)`).
   commit-msg:
     name: commit-msg
     runs-on: ubuntu-24.04
@@ -116,11 +122,25 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
 
       - name: Check commit messages
+        # Passed through `env` rather than interpolated into the script: a PR
+        # title is untrusted input and `${{ }}` inside `run` would splice it
+        # into the shell command (script injection). Both variables are empty
+        # on push/workflow_dispatch, so only the commit is checked there.
+        env:
+          PR_TITLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.title || '' }}
+          PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
         run: |
           # Validate only the newest commit (HEAD~1..HEAD). This works for both
           # pull_request and push events and avoids PR-history churn from
           # pre-existing non-conforming commits.
-          python3 .github/automation/commit-msg-check.py HEAD HEAD~1
+          # On a PR also validate the squash subject `<title> (#<number>)`.
+          # Arguments go through a bash array so titles with spaces or shell
+          # metacharacters stay a single argv entry (no word splitting).
+          args=(HEAD HEAD~1)
+          if [ -n "${PR_TITLE}" ]; then
+            args+=(--pr-title "${PR_TITLE}" --pr-number "${PR_NUMBER}")
+          fi
+          python3 .github/automation/commit-msg-check.py "${args[@]}"
 
   # Static analysis with clang-tidy-18. The check set is defined in
   # .clang-tidy (bugprone-*, cert-*, readability-* minus the exclusions that

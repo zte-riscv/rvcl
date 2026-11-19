@@ -116,7 +116,17 @@ RVCL merges with **squash merge**: the PR title becomes the mainline commit
 subject, so the title must satisfy the same rule and the history stays
 linear — every mainline entry is one Conventional Commit. Intermediate
 commits inside a PR are not separately gated, but keeping them in the same
-style makes the squashed subject easy to write.
+style makes the squashed subject easy to write. CI therefore checks the PR
+title as well, as the full squash subject `<title> (#<number>)`, so the
+72-character limit applies to the title plus the PR-number suffix.
+
+## Merging into main
+
+- `main` only accepts squash merges, with the PR title as the commit title.
+- The `ci-lint` status check (the aggregate job of the `ci-lint` workflow) is required on `main`.
+- With both rules in place a PR whose title is not a valid Conventional Commit subject cannot be merged.
+- Configuring them is a one-time step for a repository administrator under Settings → Rules (rulesets).
+- Maintainers review this configuration whenever the workflow job names change.
 
 ## Workflow
 
