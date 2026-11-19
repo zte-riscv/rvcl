@@ -228,8 +228,23 @@ formats. A block-scale request must have K divisible by its block size
 (the scale tensors are `[·, K/blk]`); dispatch rejects a non-divisible K
 with `RVCL_ERROR_INVALID_ARGUMENT`. The scaled one-shot
 `rvcl_matmul_scaled()` takes the scale tensors `sa[m][K/blk_a]` /
-`sb[n][K/blk_b]` row-major and requires a non-NULL scale exactly when the
-input dtype is block-scale.
+`sb[K/blk_b][n]` row-major (the B scale is indexed by K-block then output
+column — the oneDNN MX convention) and requires a non-NULL scale exactly
+when the input dtype is block-scale.
+
+**MXFP8 (E4M3 / E5M2) full chain** is the worked example of a block-scale
+dtype: the E8M0 scale bytes upconvert through the 256-entry lookup table in
+`src/backends/rvv/rvv_e8m0.hpp` (`0x00 -> 2^-127` subnormal, `0xFF -> NaN`,
+else `2^(e-127)`), and the scale is an exact power of two, so folding it
+into the product never rounds a finite term — golden, C and JIT kernels
+stay bit-identical (NaN is the one exception and is covered by an `isnan`
+smoke rather than a bit-compare). The micro-kernels take a distinct
+signature carrying the scale tensors
+(`rvv_gemm_mxfp8_fn(a, b_packed, sa, sb, bias, c, m, n, k, blk, r)`, `blk`
+hard-coded to 32); the JIT kernel is a second xbyak_riscv gemm that embeds
+both the FP8 and E8M0 tables. Dispatch auto-selects via the trait
+`acc_default`; the corpus, differential (boundary `0x00`/`0xFE`/`0xFF`
+smoke) and bench `kernel` attribution all cover it.
 
 **Sub-byte storage contract** (`rvcl_dtype_bits`, `rvcl_dtype_size`,
 `rvcl_tensor_bytes`): `rvcl_dtype_bits()` reports the per-element storage
