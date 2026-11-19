@@ -125,6 +125,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_f16.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp
         src/backends/rvv/rvv_gemm_fp8.cpp
+        src/backends/rvv/rvv_gemm_mxfp8.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the
@@ -140,7 +141,8 @@ if(RVCL_ENABLE_RVV)
         list(APPEND RVCL_RUNTIME_SOURCES
             src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
             src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
-            src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp)
+            src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
+            src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp)
     endif()
 endif()
 
@@ -212,6 +214,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
         src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
         src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp
         PROPERTIES INCLUDE_DIRECTORIES
                     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbyak_riscv")
@@ -230,6 +233,7 @@ if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
         src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
         src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
         src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp)
     set_target_properties(rvcl_jit_probe PROPERTIES
         CXX_STANDARD 17
@@ -476,8 +480,8 @@ if(RVCL_BUILD_TESTS)
         endif()
     endfunction()
 
-    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2")
-    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2")
+    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2")
+    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2")
     rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32")
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32")
 endif()

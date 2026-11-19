@@ -27,9 +27,19 @@
  *     rvcl_matmul_f16_rvv         (f16,f16,f32,f32)   generic
  *     rvcl_matmul_bf16_rvv_<tier> (bf16,bf16,f32,f32) requires RVV
  *     rvcl_matmul_bf16_rvv        (bf16,bf16,f32,f32) generic
+ *     rvcl_matmul_fp8_e4m3_rvv[_<tier>] (fp8_e4m3,fp8_e4m3,f32,f32) requires
+ *         RVV
+ *     rvcl_matmul_fp8_e5m2_rvv[_<tier>] (fp8_e5m2,fp8_e5m2,f32,f32) requires
+ *         RVV
+ *     rvcl_matmul_mxfp8_e4m3_rvv[_<tier>] (mxfp8_e4m3,mxfp8_e4m3,f32,f32)
+ *         block-scale (E8M0), requires RVV
+ *     rvcl_matmul_mxfp8_e5m2_rvv[_<tier>] (mxfp8_e5m2,mxfp8_e5m2,f32,f32)
+ *         block-scale (E8M0), requires RVV
  *   non-vector builds (portable scalar C entries):
  *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c /
- *     rvcl_matmul_bf16_rvv_c, no feature requirement
+ *     rvcl_matmul_bf16_rvv_c / rvcl_matmul_fp8_e4m3_rvv_c /
+ *     rvcl_matmul_fp8_e5m2_rvv_c / rvcl_matmul_mxfp8_e4m3_rvv_c /
+ *     rvcl_matmul_mxfp8_e5m2_rvv_c, no feature requirement
  *
  * Every variant's factory routes through the knob-aware micro-kernel
  * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
@@ -61,6 +71,11 @@ typedef struct {
     int64_t m, n, k;
     rvv_gemm_fn gemm; /* dtype-specific micro-kernel entry */
     size_t elt; /* element size of A/B */
+    /* Block-scale (MXFP8) path: when gemm_mxfp8 is set the kernel is a
+     * block-scale micro-kernel carrying the E8M0 scale tensors, and blk is
+     * the block width (32). Only one of gemm / gemm_mxfp8 is non-NULL. */
+    rvv_gemm_mxfp8_fn gemm_mxfp8;
+    int64_t blk;
 } rvv_matmul_t;
 
 /* ------------------------------------------------------------- lifecycle */
@@ -123,6 +138,21 @@ static rvcl_status_t rvv_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
         rvcl_status_t st = rvv_pack_b_panel(
                 b, (rvcl_tensor_t *)ws, rk->m, rk->n, rk->k, rk->elt);
         if (st != RVCL_SUCCESS) return st;
+    }
+
+    if (rk->gemm_mxfp8) {
+        /* Block-scale path: the scale tensors ride the pack slots and are
+         * mandatory for a block-scale input dtype (the semantic layer
+         * enforces sa/sb non-NULL). */
+        const rvcl_tensor_t *sa
+                = rvcl_tensor_pack_get(pack, RVCL_TENSOR_SRC_SCALE_A);
+        const rvcl_tensor_t *sb
+                = rvcl_tensor_pack_get(pack, RVCL_TENSOR_SRC_SCALE_B);
+        if (!sa || !sb) return RVCL_ERROR_INVALID_ARGUMENT;
+        rk->gemm_mxfp8(a->data, ws->data, sa->data, sb->data,
+                bias ? bias->data : NULL, c->data, rk->m, rk->n, rk->k, rk->blk,
+                r);
+        return RVCL_SUCCESS;
     }
 
     rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data, rk->m, rk->n,
@@ -208,6 +238,18 @@ rvv_pick_gemm_fp8_e5m2_by_name(const char *name) {
     return rvv_path_by_name(&rvv_fp8_e5m2_paths, name);
 }
 
+__attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
+rvv_pick_gemm_mxfp8_e4m3_by_name(const char *name) {
+    return rvv_path_by_name_t<rvv_gemm_mxfp8_fn, rvv_path_mxfp8_entry_t>(
+            &rvv_mxfp8_e4m3_paths, name);
+}
+
+__attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
+rvv_pick_gemm_mxfp8_e5m2_by_name(const char *name) {
+    return rvv_path_by_name_t<rvv_gemm_mxfp8_fn, rvv_path_mxfp8_entry_t>(
+            &rvv_mxfp8_e5m2_paths, name);
+}
+
 /* Single source of truth for the live micro-kernel per dtype (see
  * rvv_internal.hpp): knob-free auto selection is JIT-when-RVV-else-C;
  * the intrinsics kernels stay reachable only through the by-name
@@ -245,6 +287,20 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(
     return rvv_pick_gemm_fp8_e5m2_by_name("auto");
 }
 
+__attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
+rvv_pick_gemm_mxfp8_e4m3(void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) return rvv_pick_gemm_mxfp8_e4m3_by_name(knob);
+    return rvv_pick_gemm_mxfp8_e4m3_by_name("auto");
+}
+
+__attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
+rvv_pick_gemm_mxfp8_e5m2(void) {
+    const char *knob = rvv_kernel_knob();
+    if (knob && *knob) return rvv_pick_gemm_mxfp8_e5m2_by_name(knob);
+    return rvv_pick_gemm_mxfp8_e5m2_by_name("auto");
+}
+
 /* --------------------------------------------------- per-variant factories
  *
  * Variant identity lives in the descriptor (name, tier, features); one
@@ -261,6 +317,24 @@ static rvcl_status_t make_rvv_kernel(rvcl_kernel_t **out,
     rvv_matmul_t *rk = (rvv_matmul_t *)*out;
     rk->base.vt = &g_rvv_vtable;
     rk->gemm = gemm;
+    rk->gemm_mxfp8 = NULL;
+    rk->blk = 0;
+    rk->elt = elt;
+    return RVCL_SUCCESS;
+}
+
+/* Block-scale variant of the factory: binds an rvv_gemm_mxfp8_fn plus the
+ * block width instead of the plain gemm entry. */
+static rvcl_status_t make_rvv_kernel_mxfp8(rvcl_kernel_t **out,
+        const rvcl_kernel_desc_t *desc, rvv_gemm_mxfp8_fn gemm, size_t elt,
+        int64_t blk) {
+    rvcl_status_t st = rvcl_kernel_alloc(out, desc, sizeof(rvv_matmul_t));
+    if (st != RVCL_SUCCESS) return st;
+    rvv_matmul_t *rk = (rvv_matmul_t *)*out;
+    rk->base.vt = &g_rvv_vtable;
+    rk->gemm = NULL;
+    rk->gemm_mxfp8 = gemm;
+    rk->blk = blk;
     rk->elt = elt;
     return RVCL_SUCCESS;
 }
@@ -298,6 +372,22 @@ static rvcl_status_t create_fp8_e5m2(
     rvv_gemm_fn gemm = rvv_pick_gemm_fp8_e5m2();
     if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
     return make_rvv_kernel(out, desc, gemm, 1);
+}
+
+/* MXFP8 factories: bind the block-scale micro-kernel (block width 32,
+ * the OCP MX block size) and 1-byte A/B element storage. */
+static rvcl_status_t create_mxfp8_e4m3(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvv_gemm_mxfp8_fn gemm = rvv_pick_gemm_mxfp8_e4m3();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel_mxfp8(out, desc, gemm, 1, 32);
+}
+
+static rvcl_status_t create_mxfp8_e5m2(
+        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
+    rvv_gemm_mxfp8_fn gemm = rvv_pick_gemm_mxfp8_e5m2();
+    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
+    return make_rvv_kernel_mxfp8(out, desc, gemm, 1, 32);
 }
 
 /* ------------------------------------------------------- registration */
@@ -379,6 +469,24 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
                 RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, \
                 RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
                 RVCL_FEATURE_NONE, create_fp8_e5m2); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
+#define RVCL_REG_MXFP8_E4M3_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_mxfp8_e4m3_rvv_" #tier, \
+                RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, \
+                RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
+                RVCL_FEATURE_NONE, create_mxfp8_e4m3); \
+        if (st != RVCL_SUCCESS) return st; \
+    } while (0)
+
+#define RVCL_REG_MXFP8_E5M2_TIER(tier) \
+    do { \
+        st = register_one("rvcl_matmul_mxfp8_e5m2_rvv_" #tier, \
+                RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_FP32, \
+                RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
+                RVCL_FEATURE_NONE, create_mxfp8_e5m2); \
         if (st != RVCL_SUCCESS) return st; \
     } while (0)
 
@@ -469,10 +577,49 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
 #if defined(RVCL_RVV_TIERS_128)
     RVCL_REG_FP8_E5M2_TIER(128);
 #endif
-    return register_one("rvcl_matmul_fp8_e5m2_rvv", RVCL_DTYPE_FP8_E5M2,
+    st = register_one("rvcl_matmul_fp8_e5m2_rvv", RVCL_DTYPE_FP8_E5M2,
             RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
             create_fp8_e5m2);
+    if (st != RVCL_SUCCESS) return st;
+
+        /* mxfp8 dedicated tiers + generic entries: (mxfp8_e4m3,mxfp8_e4m3,
+     * f32,f32) and (mxfp8_e5m2,mxfp8_e5m2,f32,f32), requires RVV only (the
+     * JIT up-converts FP8 and E8M0 by integer widen+shift, no fp8 hw). */
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_MXFP8_E4M3_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_MXFP8_E4M3_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_MXFP8_E4M3_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_MXFP8_E4M3_TIER(128);
+#endif
+    st = register_one("rvcl_matmul_mxfp8_e4m3_rvv", RVCL_DTYPE_MXFP8_E4M3,
+            RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
+            create_mxfp8_e4m3);
+    if (st != RVCL_SUCCESS) return st;
+
+#if defined(RVCL_RVV_TIERS_1024)
+    RVCL_REG_MXFP8_E5M2_TIER(1024);
+#endif
+#if defined(RVCL_RVV_TIERS_512)
+    RVCL_REG_MXFP8_E5M2_TIER(512);
+#endif
+#if defined(RVCL_RVV_TIERS_256)
+    RVCL_REG_MXFP8_E5M2_TIER(256);
+#endif
+#if defined(RVCL_RVV_TIERS_128)
+    RVCL_REG_MXFP8_E5M2_TIER(128);
+#endif
+    return register_one("rvcl_matmul_mxfp8_e5m2_rvv", RVCL_DTYPE_MXFP8_E5M2,
+            RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE,
+            create_mxfp8_e5m2);
 }
 
 RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
@@ -507,10 +654,20 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
             create_fp8_e4m3);
     if (st != RVCL_SUCCESS) return st;
-    return register_one("rvcl_matmul_fp8_e5m2_rvv_c", RVCL_DTYPE_FP8_E5M2,
+    st = register_one("rvcl_matmul_fp8_e5m2_rvv_c", RVCL_DTYPE_FP8_E5M2,
             RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
             create_fp8_e5m2);
+    if (st != RVCL_SUCCESS) return st;
+    st = register_one("rvcl_matmul_mxfp8_e4m3_rvv_c", RVCL_DTYPE_MXFP8_E4M3,
+            RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_mxfp8_e4m3);
+    if (st != RVCL_SUCCESS) return st;
+    return register_one("rvcl_matmul_mxfp8_e5m2_rvv_c", RVCL_DTYPE_MXFP8_E5M2,
+            RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
+            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
+            create_mxfp8_e5m2);
 }
 
 #endif /* __riscv_vector */
