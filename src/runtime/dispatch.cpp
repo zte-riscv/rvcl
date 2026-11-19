@@ -311,7 +311,13 @@ static int dtype_is_request_valid(rvcl_dtype_t dt) {
         case RVCL_DTYPE_INT8:
         case RVCL_DTYPE_UINT8:
         case RVCL_DTYPE_INT4:
-        case RVCL_DTYPE_INT32: return 1;
+        case RVCL_DTYPE_INT32:
+        case RVCL_DTYPE_MXFP8_E4M3:
+        case RVCL_DTYPE_MXFP8_E5M2:
+        case RVCL_DTYPE_NVFP4:
+        case RVCL_DTYPE_MXFP4: return 1;
+        /* RVCL_DTYPE_E8M0 is a scale-only role (D-2): it stays illegal as
+         * a compute-tuple member and is rejected here as such. */
         default: return 0;
     }
 }
@@ -357,6 +363,13 @@ static rvcl_status_t matmul_dims_validate(
     if (d->m <= 0 || d->n <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_status_t st = validate_request(d);
     if (st != RVCL_SUCCESS) return st;
+    /* Block-scale input dtypes require K divisible by their block size: the
+     * scale tensors are [·, K/blk], so a non-divisible K has no scale
+     * shape (D-5). */
+    const size_t blk_a = rvcl_dtype_block_size(d->dtype_a);
+    const size_t blk_b = rvcl_dtype_block_size(d->dtype_b);
+    if ((blk_a && (size_t)d->k % blk_a) || (blk_b && (size_t)d->k % blk_b))
+        return RVCL_ERROR_INVALID_ARGUMENT;
     out->m = d->m;
     out->n = d->n;
     out->k = d->k;

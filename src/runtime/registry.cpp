@@ -71,8 +71,10 @@ RVCL_API uint64_t rvcl_kernel_cost_zero(
 /* ------------------------------------------------------------ validation */
 
 static int dtype_is_concrete(rvcl_dtype_t dt) {
-    /* Descriptors are match keys: AUTO is a request-side marker only. */
-    return dt > RVCL_DTYPE_AUTO && dt <= RVCL_DTYPE_FP8_E5M2;
+    /* Descriptors are match keys: AUTO is a request-side marker only.
+     * Block-scale dtypes (E8M0 / MX / NV formats) are concrete dtypes,
+     * so a kernel may declare them in its tuple. */
+    return dt > RVCL_DTYPE_AUTO && dt <= RVCL_DTYPE_MXFP4;
 }
 
 static int feature_id_is_valid(rvcl_feature_id_t id) {

@@ -45,6 +45,18 @@ extern "C" {
 RVCL_API rvcl_status_t rvcl_matmul(const rvcl_matmul_desc_t *desc,
         const void *a, const void *b, const void *bias, void *c);
 
+/*
+ * Scaled one-shot: C[m,n] = A[m,k] × B[k,n] (+ bias) with per-block scale
+ * tensors for block-scale input dtypes (MX/NV formats). sa/sb are the
+ * scale tensors, row-major sa[m][K/blk_a] and sb[n][K/blk_b]; their dtype
+ * is the block-scale dtype's scale dtype (E8M0 / E4M3). A block-scale
+ * input dtype requires a non-NULL scale, a plain dtype requires NULL;
+ * violation returns RVCL_ERROR_INVALID_ARGUMENT.
+ */
+RVCL_API rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc,
+        const void *a, const void *sa, const void *b, const void *sb,
+        const void *bias, void *c);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
