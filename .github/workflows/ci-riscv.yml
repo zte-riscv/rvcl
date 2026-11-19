@@ -9,23 +9,27 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/**"
+      - ".github/workflows/ci-riscv.yml"
+      - ".github/automation/riscv/**"
       - "cmake/**"
       - "include/**"
       - "src/**"
       - "tests/**"
       - "examples/**"
       - "CMakeLists.txt"
+      - "!**.md"
   pull_request:
     branches: [main]
     paths:
-      - ".github/**"
+      - ".github/workflows/ci-riscv.yml"
+      - ".github/automation/riscv/**"
       - "cmake/**"
       - "include/**"
       - "src/**"
       - "tests/**"
       - "examples/**"
       - "CMakeLists.txt"
+      - "!**.md"
   workflow_dispatch:
 
 # Stop stale runs when a PR is updated; never cancel main's own runs.
@@ -60,10 +64,30 @@ jobs:
           content="${content//[$'\t\r\n$ ']}"
           echo "output=$content" >> $GITHUB_OUTPUT
 
+      # The deb archive is carried across runs so `apt-get install` resolves
+      # from the local cache instead of the mirror; the key follows the
+      # pinned cross gcc minor and the runner image generation.
+      - name: Restore apt package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apt-debs.tar
+          key: apt-riscv-gcc${{ fromJson(steps.get-versions.outputs.output).dependencies.gcc }}-${{ env.ImageOS }}-v1
+
       - name: Install build tools
         run: |
+          if [ -f apt-debs.tar ]; then
+            sudo tar -C /var/cache/apt -xf apt-debs.tar
+          fi
           sudo apt-get update
           sudo apt-get install -y ninja-build g++-${{ fromJson(steps.get-versions.outputs.output).dependencies.gcc }}-riscv64-linux-gnu
+
+      # QEMU_LD_PREFIX guest runtime (loader + glibc + libstdc++ and their
+      # dependencies) rides along with the build so the qemu jobs need no
+      # toolchain of their own.
+      - name: Package cross sysroot
+        run: |
+          sudo tar -czf sysroot.tar.gz -C /usr/riscv64-linux-gnu \
+            $(cd /usr/riscv64-linux-gnu && ls lib/*.so*)
 
       - name: Configure rvcl
         run: ${{ github.workspace }}/.github/automation/riscv/build.sh
@@ -81,11 +105,18 @@ jobs:
       - name: Create archive with preserved permissions
         run: tar -czf build.tar.gz build
 
+      # Hand the deb archive to the cache action's post step.
+      - name: Stash apt package cache
+        if: always()
+        run: sudo tar -cf apt-debs.tar --exclude=partial --exclude=lock -C /var/cache/apt archives
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-${{ matrix.config.tier }}
-          path: build.tar.gz
+          path: |
+            build.tar.gz
+            sysroot.tar.gz
           retention-days: 1
 
   test:
@@ -123,13 +154,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Read version file
-        id: get-versions
-        run: |
-          content=`cat ${{ github.workspace }}/.github/automation/riscv/ci.json`
-          content="${content//[$'\t\r\n$ ']}"
-          echo "output=$content" >> $GITHUB_OUTPUT
-
       # Register binfmt for riscv64 (ships QEMU >= 8.2: hwprobe syscall
       # emulation, verified combo with the cross gcc above).
       - name: Set up QEMU
@@ -137,21 +161,18 @@ jobs:
         with:
           platforms: riscv64
 
-      # The cross toolchain provides the sysroot (guest loader + glibc)
-      # that QEMU_LD_PREFIX points at.
-      - name: Install cross toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-${{ fromJson(steps.get-versions.outputs.output).dependencies.gcc }}-riscv64-linux-gnu
-
       - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: build-${{ matrix.config.tier }}
           path: ${{ github.workspace }}
 
+      # The sysroot (guest loader + glibc) that QEMU_LD_PREFIX points at
+      # comes from the build job instead of a second toolchain install.
       - name: Extract archive
-        run: tar -xzf build.tar.gz
+        run: |
+          tar -xzf build.tar.gz
+          sudo tar -C /usr/riscv64-linux-gnu -xzf sysroot.tar.gz
 
       - name: Run rvcl tests
         run: ${{ github.workspace }}/.github/automation/riscv/test.sh

@@ -39,7 +39,10 @@ jobs:
       # base branch ref (origin/main for a PR) already present. Collect the
       # file list up front and bail out early when no C/C++ files changed (e.g.
       # a docs-only main push) so we skip installing the toolchain for nothing.
+      # The `has_files` output gates the remaining steps: exiting early from
+      # this step alone would not skip them.
       - name: Collect changed files
+        id: collect
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             BASE="${GITHUB_BASE_REF}"
@@ -58,16 +61,21 @@ jobs:
                 \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) > files.txt
           fi
           if [ ! -s files.txt ]; then
-            echo "no C/C++ files to check"; exit 0
+            echo "no C/C++ files to check"
+            echo "has_files=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          echo "has_files=true" >> $GITHUB_OUTPUT
           echo "Checking:"; cat files.txt
 
       - name: Install clang-format-18
+        if: steps.collect.outputs.has_files == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-format-18
 
       - name: Check formatting
+        if: steps.collect.outputs.has_files == 'true'
         run: |
           # Iterate one path per line so file names containing spaces (or other
           # whitespace) are passed as a single argument rather than word-split.
@@ -168,8 +176,10 @@ jobs:
       # Collect the C/C++ files to analyze before configuring the build, so a
       # docs-only main push (no C/C++ changes) exits early without spending
       # ~30s generating a compile database. On a PR this is the diff; on a main
-      # push it is the whole tree.
+      # push it is the whole tree. The `has_files` output gates the remaining
+      # steps: exiting early from this step alone would not skip them.
       - name: Collect changed files
+        id: collect
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             BASE="${GITHUB_BASE_REF}"
@@ -188,11 +198,15 @@ jobs:
                 \( -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) > files.txt
           fi
           if [ ! -s files.txt ]; then
-            echo "no C/C++ files to analyze"; exit 0
+            echo "no C/C++ files to analyze"
+            echo "has_files=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          echo "has_files=true" >> $GITHUB_OUTPUT
           echo "Analyzing:"; cat files.txt
 
       - name: Install clang-tidy-18
+        if: steps.collect.outputs.has_files == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-tidy-18 clang-18 ninja-build libomp-18-dev
@@ -204,6 +218,7 @@ jobs:
       # OpenMP scheduler TU and its test (with -fopenmp), letting clang-tidy
       # analyze them; libomp-18-dev above supplies the omp.h they include.
       - name: Configure (compile database)
+        if: steps.collect.outputs.has_files == 'true'
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_CXX_COMPILER=clang++-18 \
@@ -212,6 +227,7 @@ jobs:
             -DRVCL_ENABLE_OMP=ON
 
       - name: Run clang-tidy-18
+        if: steps.collect.outputs.has_files == 'true'
         run: |
           # One path per line so file names with spaces are passed as a single
           # argument. `--quiet` keeps the log to findings only; the `|| exit 1`
