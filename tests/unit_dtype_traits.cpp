@@ -293,7 +293,8 @@ static void tc06_tensor_bytes_subbyte(void) {
     /* NULL / empty guard. */
     CHECK(rvcl_tensor_bytes(NULL) == 0, "null tensor -> 0 bytes");
     rvcl_tensor_t empty;
-    rvcl_tensor_desc_t empty_td = {.ndims = 0, .dtype = RVCL_DTYPE_FP32};
+    rvcl_tensor_desc_t empty_td = {
+            .ndims = 0, .dims = {0}, .strides = {0}, .dtype = RVCL_DTYPE_FP32};
     CHECK(rvcl_tensor_init(&empty, &empty_td, NULL) != RVCL_SUCCESS,
             "empty desc rejected by init");
 }
