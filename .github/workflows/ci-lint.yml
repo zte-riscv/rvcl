@@ -121,6 +121,12 @@ jobs:
           # checkout falls back to the event's default ref.
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || '' }}
 
+      # Exercise the checker's own table-driven tests before relying on it, so
+      # an edit that silently drops a branch (e.g. the squash-subject path)
+      # fails here instead of letting a bad title through.
+      - name: Test commit message checker
+        run: python3 .github/automation/test_commit_msg_check.py
+
       - name: Check commit messages
         # Passed through `env` rather than interpolated into the script: a PR
         # title is untrusted input and `${{ }}` inside `run` would splice it

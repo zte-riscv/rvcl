@@ -122,10 +122,10 @@ title as well, as the full squash subject `<title> (#<number>)`, so the
 
 ## Merging into main
 
-- `main` only accepts squash merges, with the PR title as the commit title.
-- The `ci-lint` status check (the aggregate job of the `ci-lint` workflow) is required on `main`.
-- With both rules in place a PR whose title is not a valid Conventional Commit subject cannot be merged.
-- Configuring them is a one-time step for a repository administrator under Settings → Rules (rulesets).
+- `main` only accepts squash merges, with the PR title as the commit title (repository setting, already enabled).
+- `main` is intended to require the `ci-lint` status check (the aggregate job of the `ci-lint` workflow).
+- Until that ruleset is configured the title gate is **advisory**: a red PR can still be merged, so reviewers must not merge one.
+- Configuring the ruleset is a one-time step for a repository administrator under Settings → Rules (rulesets).
 - Maintainers review this configuration whenever the workflow job names change.
 
 ## Workflow

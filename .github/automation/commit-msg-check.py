@@ -43,7 +43,7 @@ SUBJECT_RE = re.compile(
 SUBJECT_MAX_LEN = 72
 
 
-def check_subject(subject, status="Commit subject: ", max_len=SUBJECT_MAX_LEN):
+def check_subject(subject, status="Commit subject: "):
     if subject.startswith("Merge "):
         print(f"{status}FAILED: merge commits are not allowed")
         return False
@@ -57,8 +57,8 @@ def check_subject(subject, status="Commit subject: ", max_len=SUBJECT_MAX_LEN):
                 "feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
             )
         return False
-    if len(subject) > max_len:
-        print(f"{status}FAILED: subject exceeds {max_len} characters")
+    if len(subject) > SUBJECT_MAX_LEN:
+        print(f"{status}FAILED: subject exceeds {SUBJECT_MAX_LEN} characters")
         return False
     print(f"{status}OK")
     return True
@@ -78,13 +78,9 @@ def check_pr_title(title, pr_number):
     squash = f"{title} (#{pr_number})"
     squash_status = "Squash subject: "
     print(squash_status + squash)
-    if not SUBJECT_RE.match(squash):
-        print(
-            f"{squash_status}FAILED: '{squash}' does not match "
-            "'<type>(<scope>)?(!)?: <description>' after appending "
-            f"' (#{pr_number})'"
-        )
-        return False
+    # Appending " (#<number>)" cannot break a subject that already matched
+    # SUBJECT_RE, so the format branch inside check_subject is only a
+    # defensive assertion here; the length check is the reachable one.
     if len(squash) > SUBJECT_MAX_LEN:
         print(
             f"{squash_status}FAILED: exceeds {SUBJECT_MAX_LEN} characters "
@@ -92,7 +88,8 @@ def check_pr_title(title, pr_number):
             "shorten the PR title"
         )
         return False
-    print(f"{squash_status}OK")
+    if not check_subject(squash, squash_status):
+        return False
     return is_ok
 
 
