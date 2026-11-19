@@ -94,6 +94,16 @@ void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
+/* MXFP8 block-scale C kernels (rvv_gemm_mxfp8.cpp): A/B are FP8 bytes and
+ * carry the 1-byte E8M0 per-32-block exponent scales sa/sb. sa is [m][K/blk]
+ * row-major; sb is [K/blk][n] row-major (oneDNN-aligned). */
+void rvv_gemm_mxfp8_e4m3_c(const void *a, const void *b_packed, const void *sa,
+        const void *sb, const void *bias, void *c, int64_t m, int64_t n,
+        int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
+void rvv_gemm_mxfp8_e5m2_c(const void *a, const void *b_packed, const void *sa,
+        const void *sb, const void *bias, void *c, int64_t m, int64_t n,
+        int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
+
 /* Panel packer (rvv_pack.cpp): plain B -> panel layout, dtype-agnostic. */
 rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
         int64_t m, int64_t n, int64_t k_dim, size_t elt);
@@ -132,6 +142,12 @@ typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,
         const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
+/* Block-scale (MXFP8) micro-kernel function type: adds the E8M0 scale
+ * tensors sa/sb and the block width blk. sa[m][K/blk], sb[K/blk][n]. */
+typedef void (*rvv_gemm_mxfp8_fn)(const void *a, const void *b_packed,
+        const void *sa, const void *sb, const void *bias, void *c, int64_t m,
+        int64_t n, int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
+
 /* JIT host-side entries (rvv_gemm_f32_jit.cpp / rvv_gemm_f16_jit.cpp /
  * rvv_gemm_bf16.cpp): only present when the JIT translation units are
  * compiled in, which callers detect through RVCL_HAVE_JIT (a private
@@ -147,6 +163,10 @@ int rvv_gemm_fp8_e4m3_jit_available(void);
 rvv_gemm_fn rvv_gemm_fp8_e4m3_jit_entry(void);
 int rvv_gemm_fp8_e5m2_jit_available(void);
 rvv_gemm_fn rvv_gemm_fp8_e5m2_jit_entry(void);
+int rvv_gemm_mxfp8_e4m3_jit_available(void);
+rvv_gemm_mxfp8_fn rvv_gemm_mxfp8_e4m3_jit_entry(void);
+int rvv_gemm_mxfp8_e5m2_jit_available(void);
+rvv_gemm_mxfp8_fn rvv_gemm_mxfp8_e5m2_jit_entry(void);
 #endif
 
 /* Micro-kernel selection — single source of truth for "which kernel is
@@ -170,6 +190,13 @@ rvv_gemm_fn rvv_pick_gemm_bf16(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(void);
 
+/* Block-scale (MXFP8) selectors: resolve the same RVCL_RVV_KERNEL knob
+ * against the mxfp8 path tables. Distinct function type (the mxfp8 kernel
+ * takes the scale tensors), so they live alongside but apart from the
+ * rvv_gemm_fn selectors above. */
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e4m3(void);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e5m2(void);
+
 /* Explicit path resolution: name is "auto", "c", "jit" or "intrinsics".
  * The bench --path knob and RVCL_RVV_KERNEL resolve through the same
  * functions, so there is a single set of path semantics. Returns NULL
@@ -180,5 +207,7 @@ rvv_gemm_fn rvv_pick_gemm_f16_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_bf16_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2_by_name(const char *name);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e4m3_by_name(const char *name);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e5m2_by_name(const char *name);
 
 #endif /* RVCL_RVV_INTERNAL_H */

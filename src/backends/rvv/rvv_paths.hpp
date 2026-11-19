@@ -47,8 +47,12 @@
  * ever run here" (compile-time macros + the JIT run-time capability
  * probe); NULL means always available. auto_rank orders the auto chain
  * (lowest wins); -1 excludes the path from it. forced_msg is printed when
- * a forced (non-auto) request hits an unavailable path. */
+ * a forced (non-auto) request hits an unavailable path. The helpers are
+ * templated on the function-pointer type so the same table machinery serves
+ * both the rvv_gemm_fn (plain) and the rvv_gemm_mxfp8_fn (block-scale)
+ * path families. */
 typedef rvv_gemm_fn (*rvv_path_fn_t)(void);
+typedef rvv_gemm_mxfp8_fn (*rvv_path_mxfp8_fn_t)(void);
 typedef int (*rvv_path_probe_t)(void);
 
 typedef struct {
@@ -64,6 +68,20 @@ typedef struct {
     const rvv_path_entry_t *paths;
     size_t npaths;
 } rvv_path_table_t;
+
+typedef struct {
+    const char *name;
+    rvv_path_mxfp8_fn_t getter;
+    rvv_path_probe_t probe;
+    int auto_rank;
+    const char *forced_msg;
+} rvv_path_mxfp8_entry_t;
+
+typedef struct {
+    const char *unknown_fmt;
+    const rvv_path_mxfp8_entry_t *paths;
+    size_t npaths;
+} rvv_path_mxfp8_table_t;
 
 /* ------------------------------------------------------------- getters */
 
@@ -85,6 +103,14 @@ static rvv_gemm_fn rvv_path_fp8_e4m3_c(void) {
 
 static rvv_gemm_fn rvv_path_fp8_e5m2_c(void) {
     return rvv_gemm_fp8_e5m2_c;
+}
+
+static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e4m3_c(void) {
+    return rvv_gemm_mxfp8_e4m3_c;
+}
+
+static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e5m2_c(void) {
+    return rvv_gemm_mxfp8_e5m2_c;
 }
 
 #if defined(RVCL_HAVE_JIT)
@@ -127,6 +153,22 @@ static int rvv_path_fp8_e5m2_jit_ok(void) {
 static rvv_gemm_fn rvv_path_fp8_e5m2_jit(void) {
     return rvv_gemm_fp8_e5m2_jit_entry();
 }
+
+static int rvv_path_mxfp8_e4m3_jit_ok(void) {
+    return rvv_gemm_mxfp8_e4m3_jit_available();
+}
+
+static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e4m3_jit(void) {
+    return rvv_gemm_mxfp8_e4m3_jit_entry();
+}
+
+static int rvv_path_mxfp8_e5m2_jit_ok(void) {
+    return rvv_gemm_mxfp8_e5m2_jit_available();
+}
+
+static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e5m2_jit(void) {
+    return rvv_gemm_mxfp8_e5m2_jit_entry();
+}
 #endif
 
 #if defined(__riscv_vector)
@@ -141,10 +183,15 @@ static rvv_gemm_fn rvv_path_f16_rvv(void) {
 
 /* ----------------------------------------------------------- resolver */
 
-static inline rvv_gemm_fn rvv_path_auto(const rvv_path_table_t *t) {
-    const rvv_path_entry_t *best = NULL;
+/* Templated auto/by-name resolution over a path table; the callers below
+ * instantiate it for the plain rvv_gemm_fn tables and the block-scale
+ * rvv_gemm_mxfp8_fn tables alike (the two differ only in the getter return
+ * type). */
+template <typename GETTER, typename ENTRY, typename TABLE>
+static inline GETTER rvv_path_auto_t(const TABLE *t) {
+    const ENTRY *best = NULL;
     for (size_t i = 0; i < t->npaths; i++) {
-        const rvv_path_entry_t *e = &t->paths[i];
+        const ENTRY *e = &t->paths[i];
         if (e->auto_rank < 0) continue;
         if (e->probe && !e->probe()) continue;
         if (!e->getter || !e->getter()) continue;
@@ -153,11 +200,11 @@ static inline rvv_gemm_fn rvv_path_auto(const rvv_path_table_t *t) {
     return best ? best->getter() : NULL;
 }
 
-static inline rvv_gemm_fn rvv_path_by_name(
-        const rvv_path_table_t *t, const char *name) {
-    if (!strcmp(name, "auto")) return rvv_path_auto(t);
+template <typename GETTER, typename ENTRY, typename TABLE>
+static inline GETTER rvv_path_by_name_t(const TABLE *t, const char *name) {
+    if (!strcmp(name, "auto")) return rvv_path_auto_t<GETTER, ENTRY>(t);
     for (size_t i = 0; i < t->npaths; i++) {
-        const rvv_path_entry_t *e = &t->paths[i];
+        const ENTRY *e = &t->paths[i];
         if (strcmp(e->name, name) != 0) continue;
         if (e->probe && !e->probe()) {
             if (e->forced_msg) fprintf(stderr, "%s", e->forced_msg);
@@ -167,6 +214,15 @@ static inline rvv_gemm_fn rvv_path_by_name(
     }
     fprintf(stderr, t->unknown_fmt, name);
     return NULL;
+}
+
+static inline rvv_gemm_fn rvv_path_auto(const rvv_path_table_t *t) {
+    return rvv_path_auto_t<rvv_gemm_fn, rvv_path_entry_t>(t);
+}
+
+static inline rvv_gemm_fn rvv_path_by_name(
+        const rvv_path_table_t *t, const char *name) {
+    return rvv_path_by_name_t<rvv_gemm_fn, rvv_path_entry_t>(t, name);
 }
 
 /* --------------------------------------------------------------- f32 */
@@ -261,6 +317,42 @@ static const rvv_path_table_t rvv_fp8_e5m2_paths = {
         rvv_fp8_e5m2_path_entries,
         sizeof(rvv_fp8_e5m2_path_entries)
                 / sizeof(rvv_fp8_e5m2_path_entries[0]),
+};
+
+/* ------------------------------------------------------------ mxfp8 */
+
+static const rvv_path_mxfp8_entry_t rvv_mxfp8_e4m3_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_mxfp8_e4m3_jit, rvv_path_mxfp8_e4m3_jit_ok, 0,
+                "rvcl: forced JIT mxfp8_e4m3 path requires the vector "
+                "extension\n"},
+#endif
+        {"c", rvv_path_mxfp8_e4m3_c, NULL, 1, NULL},
+};
+
+static const rvv_path_mxfp8_table_t rvv_mxfp8_e4m3_paths = {
+        "rvcl: mxfp8_e4m3 kernel path '%s' is unavailable "
+        "(want auto, c or jit)\n",
+        rvv_mxfp8_e4m3_path_entries,
+        sizeof(rvv_mxfp8_e4m3_path_entries)
+                / sizeof(rvv_mxfp8_e4m3_path_entries[0]),
+};
+
+static const rvv_path_mxfp8_entry_t rvv_mxfp8_e5m2_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_mxfp8_e5m2_jit, rvv_path_mxfp8_e5m2_jit_ok, 0,
+                "rvcl: forced JIT mxfp8_e5m2 path requires the vector "
+                "extension\n"},
+#endif
+        {"c", rvv_path_mxfp8_e5m2_c, NULL, 1, NULL},
+};
+
+static const rvv_path_mxfp8_table_t rvv_mxfp8_e5m2_paths = {
+        "rvcl: mxfp8_e5m2 kernel path '%s' is unavailable "
+        "(want auto, c or jit)\n",
+        rvv_mxfp8_e5m2_path_entries,
+        sizeof(rvv_mxfp8_e5m2_path_entries)
+                / sizeof(rvv_mxfp8_e5m2_path_entries[0]),
 };
 
 #endif /* RVCL_RVV_PATHS_H */

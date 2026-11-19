@@ -42,9 +42,12 @@ typedef struct {
     rvcl_dtype_t dtype;
     /* Storage element size in bytes (buffer sizing). */
     size_t elt;
-    /* Golden matmul: dtype-stored A/B buffers, fp32 output. */
-    void (*golden)(const void *a, const void *b, const float *bias, float *c,
-            int64_t m, int64_t n, int64_t k);
+    /* Golden matmul: dtype-stored A/B buffers (+ the E8M0 scale tensors
+     * sa/sb for block-scale dtypes, NULL otherwise) -> fp32 output. blk is
+     * the block width (32 for mxfp8, 0/unused for non-block-scale). */
+    void (*golden)(const void *a, const void *sa, const void *b, const void *sb,
+            const float *bias, float *c, int64_t m, int64_t n, int64_t k,
+            int64_t blk);
     /* Deterministic LCG fill of a dtype-storage buffer. */
     void (*fill)(void *buf, size_t n, uint32_t seed);
     /* Compare routing, driven by the kernel desc assertion level; the

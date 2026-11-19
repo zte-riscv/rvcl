@@ -31,29 +31,63 @@
  * The golden/fill callbacks adapt the golden.hpp helpers to the void*
  * storage the table carries. */
 
-static void golden_f32_op(const void *a, const void *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+static void golden_f32_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
     golden_f32((const float *)a, (const float *)b, bias, c, m, n, k);
 }
 
-static void golden_f16_op(const void *a, const void *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+static void golden_f16_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
     golden_f16((const uint16_t *)a, (const uint16_t *)b, bias, c, m, n, k);
 }
 
-static void golden_bf16_op(const void *a, const void *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+static void golden_bf16_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
     golden_bf16((const uint16_t *)a, (const uint16_t *)b, bias, c, m, n, k);
 }
 
-static void golden_fp8_e4m3_op(const void *a, const void *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+static void golden_fp8_e4m3_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
     golden_fp8_e4m3((const uint8_t *)a, (const uint8_t *)b, bias, c, m, n, k);
 }
 
-static void golden_fp8_e5m2_op(const void *a, const void *b, const float *bias,
-        float *c, int64_t m, int64_t n, int64_t k) {
+static void golden_fp8_e5m2_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
     golden_fp8_e5m2((const uint8_t *)a, (const uint8_t *)b, bias, c, m, n, k);
+}
+
+static void golden_mxfp8_e4m3_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_mxfp8_e4m3((const uint8_t *)a, (const uint8_t *)sa,
+            (const uint8_t *)b, (const uint8_t *)sb, bias, c, m, n, k, blk);
+}
+
+static void golden_mxfp8_e5m2_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_mxfp8_e5m2((const uint8_t *)a, (const uint8_t *)sa,
+            (const uint8_t *)b, (const uint8_t *)sb, bias, c, m, n, k, blk);
 }
 
 static void fill_f32_op(void *buf, size_t n, uint32_t seed) {
@@ -113,8 +147,8 @@ static golden_cmp_t compare_op_bits(const float *got, const float *exp,
 
 /* ------------------------------------------------------------------ table */
 
-/* The currently supported test dtypes (f32, f16, bf16). A new dtype adds
- * one row here plus its golden/fill wrappers. */
+/* The currently supported test dtypes (f32, f16, bf16, fp8, mxfp8). A new
+ * dtype adds one row here plus its golden/fill wrappers. */
 static const dtype_ops_t k_dtype_ops[] = {
         {
                 .dtstr = "f32",
@@ -157,6 +191,24 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .dtype = RVCL_DTYPE_FP8_E5M2,
                 .elt = 1,
                 .golden = golden_fp8_e5m2_op,
+                .fill = fill_fp8_e5m2_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = f32_to_fp8_e5m2_slot,
+        },
+        {
+                .dtstr = "mxfp8e4m3",
+                .dtype = RVCL_DTYPE_MXFP8_E4M3,
+                .elt = 1,
+                .golden = golden_mxfp8_e4m3_op,
+                .fill = fill_fp8_e4m3_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = f32_to_fp8_e4m3_slot,
+        },
+        {
+                .dtstr = "mxfp8e5m2",
+                .dtype = RVCL_DTYPE_MXFP8_E5M2,
+                .elt = 1,
+                .golden = golden_mxfp8_e5m2_op,
                 .fill = fill_fp8_e5m2_op,
                 .compare = compare_op_bits,
                 .f32_to_storage = f32_to_fp8_e5m2_slot,

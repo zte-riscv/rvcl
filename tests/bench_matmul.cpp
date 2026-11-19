@@ -335,6 +335,8 @@ typedef struct {
     float *a, *b, *c;
     float *bias;
     uint16_t *ah, *bh;
+    /* E8M0 block-scale tensors for MXFP8 dtypes (NULL otherwise). */
+    uint8_t *sa, *sb;
     const op_slot_t *slot;
     rvcl_op_desc_t od;
 } case_t;
@@ -343,12 +345,21 @@ typedef struct {
     const case_t *cs;
     void *packed;
     rvv_gemm_fn gemm;
+    rvv_gemm_mxfp8_fn gemm_mxfp8; /* set for mxfp8 dtypes (else NULL) */
 } konly_ctx_t;
 
 static void bench_kernel_only(void *p) {
     konly_ctx_t *kc = (konly_ctx_t *)p;
     const case_t *cs = kc->cs;
     rvcl_work_range_t full = rvcl_work_range_full(cs->m, cs->n, cs->k);
+    if (kc->gemm_mxfp8) {
+        const void *a = cs->od.matmul.dtype_a == RVCL_DTYPE_FP32
+                ? (const void *)cs->a
+                : (const void *)cs->ah;
+        kc->gemm_mxfp8(a, kc->packed, cs->sa, cs->sb, cs->bias, cs->c, cs->m,
+                cs->n, cs->k, 32, &full);
+        return;
+    }
     kc->gemm(cs->od.matmul.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
                                                       : (const void *)cs->ah,
             kc->packed, cs->bias, cs->c, cs->m, cs->n, cs->k, &full);
@@ -387,6 +398,10 @@ static void bench_e2e(void *p) {
     const case_t *cs = ec->cs;
     if (cs->od.matmul.dtype_a == RVCL_DTYPE_FP32)
         rvcl_matmul(&cs->od.matmul, cs->a, cs->b, cs->bias, cs->c);
+    else if (cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP8_E4M3
+            || cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP8_E5M2)
+        rvcl_matmul_scaled(&cs->od.matmul, cs->ah, cs->sa, cs->bh, cs->sb,
+                cs->bias, cs->c);
     else
         rvcl_matmul(&cs->od.matmul, cs->ah, cs->bh, cs->bias, cs->c);
 }
@@ -419,12 +434,30 @@ static rvv_gemm_fn pick_gemm(rvcl_dtype_t dt, const char *path) {
             return path ? rvv_pick_gemm_f32_by_name(path) : rvv_pick_gemm_f32();
         case RVCL_DTYPE_FP16:
             return path ? rvv_pick_gemm_f16_by_name(path) : rvv_pick_gemm_f16();
+        case RVCL_DTYPE_BF16:
+            return path ? rvv_pick_gemm_bf16_by_name(path)
+                        : rvv_pick_gemm_bf16();
         case RVCL_DTYPE_FP8_E4M3:
             return path ? rvv_pick_gemm_fp8_e4m3_by_name(path)
                         : rvv_pick_gemm_fp8_e4m3();
         case RVCL_DTYPE_FP8_E5M2:
             return path ? rvv_pick_gemm_fp8_e5m2_by_name(path)
                         : rvv_pick_gemm_fp8_e5m2();
+        default: return NULL;
+    }
+}
+
+/* Block-scale (MXFP8) micro-kernel picker: distinct function type (the
+ * kernel takes the E8M0 scale tensors), so it resolves against the mxfp8
+ * path tables. */
+static rvv_gemm_mxfp8_fn pick_gemm_mxfp8(rvcl_dtype_t dt, const char *path) {
+    switch (dt) {
+        case RVCL_DTYPE_MXFP8_E4M3:
+            return path ? rvv_pick_gemm_mxfp8_e4m3_by_name(path)
+                        : rvv_pick_gemm_mxfp8_e4m3();
+        case RVCL_DTYPE_MXFP8_E5M2:
+            return path ? rvv_pick_gemm_mxfp8_e5m2_by_name(path)
+                        : rvv_pick_gemm_mxfp8_e5m2();
         default: return NULL;
     }
 }
@@ -471,6 +504,19 @@ static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
         op->fill(cs->ah, (size_t)a_elems, seed);
         op->fill(cs->bh, (size_t)b_elems, seed ^ 0x9e3779b9u);
     }
+
+    /* Block-scale (MXFP8) dtypes carry E8M0 scales: sa[m][K/blk] and
+     * sb[K/blk][n], filled with the boundary-aware scale LCG. */
+    const int64_t blk = (int64_t)rvcl_dtype_block_size(op->dtype);
+    cs->sa = NULL;
+    cs->sb = NULL;
+    if (blk > 0) {
+        const int64_t nblk = cs->k / blk;
+        cs->sa = (uint8_t *)malloc((size_t)(cs->m * nblk));
+        cs->sb = (uint8_t *)malloc((size_t)(nblk * cs->n));
+        lcg_fill_e8m0(cs->sa, (size_t)(cs->m * nblk), seed ^ 0xa5a5a5a5u);
+        lcg_fill_e8m0(cs->sb, (size_t)(nblk * cs->n), seed ^ 0x5f5f5f5fu);
+    }
 }
 
 static void free_case(case_t *cs) {
@@ -480,12 +526,14 @@ static void free_case(case_t *cs) {
     free(cs->bias);
     free(cs->ah);
     free(cs->bh);
+    free(cs->sa);
+    free(cs->sb);
 }
 
 /* dispatch-result run rig: pack + workspace, ready for kernel_run */
 typedef struct {
     rvcl_dispatch_result_t *r;
-    rvcl_tensor_t ta, tb, tc, tbias;
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
     rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
     void *ws_buf[RVCL_MAX_WORKSPACES];
     int num_ws;
@@ -508,8 +556,9 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
             && cs->od.matmul.dtype_a != RVCL_DTYPE_FP32;
     const void *a = narrow ? (const void *)cs->ah : (const void *)cs->a;
     const void *b = narrow ? (const void *)cs->bh : (const void *)cs->b;
-    op_slot_pack_setup(cs->slot, &g->pack, &cs->od, a, b, cs->bias, cs->c,
-            &g->ta, &g->tb, &g->tc, &g->tbias);
+    op_slot_pack_setup(cs->slot, &g->pack, &cs->od, a, cs->sa, b, cs->sb,
+            cs->bias, cs->c, &g->ta, &g->tsa, &g->tb, &g->tsb, &g->tc,
+            &g->tbias);
 
     if (op_slot_pack_ws(ws, num_ws, g->ws_buf, g->ws_t, &g->pack)
             != RVCL_SUCCESS) {
@@ -717,9 +766,10 @@ int main(int argc, char **argv) {
                         slot->golden(&cs.od,
                                 narrow ? (const void *)cs.ah
                                        : (const void *)cs.a,
+                                cs.sa,
                                 narrow ? (const void *)cs.bh
                                        : (const void *)cs.b,
-                                cs.bias, golden);
+                                cs.sb, cs.bias, golden);
                         const rvcl_kernel_t *k = rvcl_dispatch_kernel(rig.r);
                         golden_cmp_t cmp = dop->compare(cs.c, golden, out_elems,
                                 k->desc.assert_level, dop->dtype);
@@ -793,24 +843,27 @@ int main(int argc, char **argv) {
                 rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
             }
 
-            konly_ctx_t kc = {.cs = &cs, .packed = packed, .gemm = NULL};
-            /* kernel-only goes through the same selector the backend
-             * binds (rvv_pick_*); --path=NAME forces a specific
-             * micro-kernel through the shared by-name resolver */
-            rvv_gemm_fn (*pick_by_name)(const char *) = NULL;
-            rvv_gemm_fn (*pick_auto)(void) = NULL;
-            if (dop->dtype == RVCL_DTYPE_FP32) {
-                pick_by_name = rvv_pick_gemm_f32_by_name;
-                pick_auto = rvv_pick_gemm_f32;
-            } else if (dop->dtype == RVCL_DTYPE_FP16) {
-                pick_by_name = rvv_pick_gemm_f16_by_name;
-                pick_auto = rvv_pick_gemm_f16;
+            konly_ctx_t kc = {.cs = &cs,
+                    .packed = packed,
+                    .gemm = NULL,
+                    .gemm_mxfp8 = NULL};
+            /* kernel-only goes through the same selectors the backend binds
+             * (rvv_pick_*); --path=NAME forces a specific micro-kernel
+             * through the shared by-name resolver. mxfp8 uses the
+             * block-scale selector (distinct function type carrying the
+             * E8M0 scale tensors). */
+            const int is_mxfp8 = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
+                    || dop->dtype == RVCL_DTYPE_MXFP8_E5M2;
+            if (is_mxfp8) {
+                kc.gemm_mxfp8 = pick_gemm_mxfp8(dop->dtype, path);
+                if (!kc.gemm_mxfp8) {
+                    fprintf(stderr, "error: --path=%s is unavailable for %s\n",
+                            path, dtstr);
+                    free(packed);
+                    free_case(&cs);
+                    return 2;
+                }
             } else {
-                pick_by_name = rvv_pick_gemm_bf16_by_name;
-                pick_auto = rvv_pick_gemm_bf16;
-            }
-            if (path) {
-                kc.gemm = pick_by_name(path);
                 kc.gemm = pick_gemm(dop->dtype, path);
                 if (!kc.gemm) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",
@@ -819,9 +872,6 @@ int main(int argc, char **argv) {
                     free_case(&cs);
                     return 2;
                 }
-            } else {
-                kc.gemm = pick_auto();
-                kc.gemm = pick_gemm(dop->dtype, NULL);
             }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)

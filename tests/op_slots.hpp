@@ -42,9 +42,11 @@
 /* Element count of an input/output tensor for a built descriptor. */
 typedef int64_t (*op_slot_elems_fn)(const rvcl_op_desc_t *od);
 
-/* Golden: dtype-stored a/b (+ bias) -> fp32 output buffer c. */
+/* Golden: dtype-stored a/b (+ scale tensors sa/sb for block-scale dtypes,
+ * NULL otherwise) -> fp32 output buffer c. */
 typedef void (*op_slot_golden_fn)(const rvcl_op_desc_t *od, const void *a,
-        const void *b, const float *bias, float *c);
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c);
 
 /* Build the operator descriptor for a case. dacc is RVCL_DTYPE_AUTO unless
  * the caller pins it. */
@@ -54,13 +56,15 @@ typedef void (*op_slot_build_desc_fn)(rvcl_op_desc_t *od, int64_t m, int64_t n,
 
 /* Run the dispatch-selected kernel via rvcl_dispatch_op into fp32 c. */
 typedef rvcl_status_t (*op_slot_run_dispatch_fn)(const rvcl_op_desc_t *od,
-        const void *a, const void *b, const float *bias, float *c);
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c);
 
 /* Run one named kernel by factory bypass into fp32 c; r_m0/r_m1 restrict
  * the executed row range (negative = full range). */
 typedef rvcl_status_t (*op_slot_run_named_fn)(const char *name,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c, int64_t r_m0, int64_t r_m1);
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1);
 
 typedef struct {
     /* Corpus directory / CLI operator name ("matmul", "gemv"). */
@@ -97,10 +101,13 @@ const op_slot_t *op_slot_default(void);
 /* Tensor-pack helpers for a dispatch rig (the bench harness builds and
  * keeps a pack so the dispatched kernel can be run repeatedly for timing;
  * op_slots owns the op-specific tensor layout so the harness stays free of
- * operator branches). bias may be NULL. */
+ * operator branches). bias may be NULL. sa/sb are the E8M0 scale tensors
+ * (NULL for non-block-scale dtypes); tsa/tsb carry the descriptors the
+ * pack references and must outlive the pack. */
 void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c, rvcl_tensor_t *ta, rvcl_tensor_t *tb,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
         rvcl_tensor_t *tc, rvcl_tensor_t *tbias);
 rvcl_status_t op_slot_pack_ws(const rvcl_workspace_req_t *ws, int num_ws,
         void *ws_buf[], rvcl_tensor_t ws_t[], rvcl_tensor_pack_t *pack);

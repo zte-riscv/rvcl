@@ -49,6 +49,21 @@ void golden_fp8_e4m3(const uint8_t *a, const uint8_t *b, const float *bias,
 void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k);
 
+/* MXFP8 block-scale goldens: A/B are FP8 bytes and carry the 1-byte E8M0
+ * per-32-block exponent scales sa (m x K/blk, row-major) and sb
+ * (K/blk x n, row-major — oneDNN-aligned), exactly the layouts the C/JIT
+ * kernels consume. Dequant = element * 2^(e-127). blk is the block width
+ * (32). Each term folds both scales into the B value and accumulates with a
+ * single fused multiply-add (acc = fma(A, B*ascale*bscale, acc)),
+ * bit-identical to the kernels on finite data: the combined E8M0 scale is an
+ * exact power of two, so the multiply never rounds a finite product. */
+void golden_mxfp8_e4m3(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk);
+void golden_mxfp8_e5m2(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk);
+
 /* Deterministic LCG fill in [-0.5, 0.5): identical sequence on every
  * host and libc (no rand()), so differential and bench C mode see the
  * exact same inputs for a given shape. */
@@ -57,6 +72,19 @@ void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed);
 void lcg_fill_bf16(uint16_t *buf, size_t n, uint32_t seed);
 void lcg_fill_fp8_e4m3(uint8_t *buf, size_t n, uint32_t seed);
 void lcg_fill_fp8_e5m2(uint8_t *buf, size_t n, uint32_t seed);
+
+/* Deterministic E8M0 scale fill: uniform bytes in a finite-safe exponent
+ * range (2^-126 .. 2^33) plus the 0x00 subnormal boundary at buf[0] — a
+ * corpus case always exercises the special subnormal conversion, while the
+ * bounded exponents keep every product and sum finite so the bit-exact
+ * compare (via the shared fma grouping) holds on any compiler. The extreme
+ * boundary bytes (0xFE = 2^127,
+ * 0xFF = NaN) are NOT injected here: a 2^127 scale overflows an f32 product
+ * with a full-magnitude fp8 element and the resulting Inf/NaN pattern is
+ * compiler-dependent, so those conversions are covered by the dedicated
+ * differential smoke on rvv_e8m0_to_f32 instead. Uses the same LCG stream
+ * as the element fills. */
+void lcg_fill_e8m0(uint8_t *buf, size_t n, uint32_t seed);
 
 /* Stable per-shape seed (the mix below is part of the data contract:
  * differential and bench C mode derive identical buffers from it). */

@@ -100,8 +100,9 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_BIAS, &tbias);
     }
 
-    /* Scale tensors: row-major sa[m][K/blk_a] and sb[n][K/blk_b], dtype
-     * from the block-scale dtype (D-6). */
+    /* Scale tensors: row-major sa[m][K/blk_a] and sb[K/blk_b][n], dtype
+     * from the block-scale dtype (D-6). sb keeps K-blocks on the outer axis
+     * (oneDNN-aligned); the micro-kernels read it as sb[(p/blk)*n + j]. */
     if (blk_a > 0) {
         rvcl_tensor_desc_t sd = {.ndims = 2,
                 .dims = {desc->m, desc->k / (int64_t)blk_a},
@@ -112,8 +113,8 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
     }
     if (blk_b > 0) {
         rvcl_tensor_desc_t sd = {.ndims = 2,
-                .dims = {desc->n, desc->k / (int64_t)blk_b},
-                .strides = {desc->k / (int64_t)blk_b, 1},
+                .dims = {desc->k / (int64_t)blk_b, desc->n},
+                .strides = {desc->n, 1},
                 .dtype = rvcl_dtype_scale_dtype(desc->dtype_b)};
         rvcl_tensor_init(&tsb, &sd, (void *)sb);
         rvcl_tensor_pack_add(&pack, RVCL_TENSOR_SRC_SCALE_B, &tsb);

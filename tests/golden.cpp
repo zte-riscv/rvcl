@@ -20,11 +20,13 @@
 
 #include "golden.hpp"
 
+#include <math.h>
 #include <string.h>
 
 #include "../src/backends/rvv/rvv_fp16.hpp"
 #include "../src/backends/rvv/rvv_bf16.hpp"
 #include "../src/backends/rvv/rvv_fp8.hpp"
+#include "../src/backends/rvv/rvv_e8m0.hpp"
 
 /* ------------------------------------------------------------- goldens */
 
@@ -86,6 +88,43 @@ void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
     golden_fp8_impl<rvv_fp8_e5m2_to_f32>(a, b, bias, c, m, n, k);
 }
 
+/* MXFP8 goldens share one body parameterized by the FP8 dtype upconversion.
+ * Each K term folds both E8M0 scales into the B value (the combined scale is
+ * an exact power of two, so B*ascale*bscale never rounds a finite term) and
+ * accumulates with a single fused multiply-add, acc = fma(A, B*ascale*bscale,
+ * acc) — the exact grouping of the C and JIT kernels, so the accumulate
+ * order (bias first, ascending k) is bit-identical on finite data. */
+template <float (*UP)(uint8_t)>
+static void golden_mxfp8_impl(const uint8_t *a, const uint8_t *sa,
+        const uint8_t *b, const uint8_t *sb, const float *bias, float *c,
+        int64_t m, int64_t n, int64_t k, int64_t blk) {
+    const int64_t nblk = k / blk;
+    for (int64_t i = 0; i < m; i++)
+        for (int64_t j = 0; j < n; j++) {
+            float acc = bias ? bias[j] : 0.0f;
+            for (int64_t p = 0; p < k; p++) {
+                const int64_t pblk = p / blk;
+                const float ascale = rvv_e8m0_to_f32(sa[i * nblk + pblk]);
+                const float bscale = rvv_e8m0_to_f32(sb[pblk * n + j]);
+                const float bscl = ascale * bscale;
+                acc = fmaf(UP(a[i * k + p]), UP(b[p * n + j]) * bscl, acc);
+            }
+            c[i * n + j] = acc;
+        }
+}
+
+void golden_mxfp8_e4m3(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_mxfp8_impl<rvv_fp8_e4m3_to_f32>(a, sa, b, sb, bias, c, m, n, k, blk);
+}
+
+void golden_mxfp8_e5m2(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_mxfp8_impl<rvv_fp8_e5m2_to_f32>(a, sa, b, sb, bias, c, m, n, k, blk);
+}
+
 /* ----------------------------------------------------------- LCG fill */
 
 /* 32-bit LCG (exact in uint32 arithmetic — same stream everywhere). */
@@ -121,6 +160,29 @@ void lcg_fill_fp8_e5m2(uint8_t *buf, size_t n, uint32_t seed) {
     for (size_t i = 0; i < n; i++)
         buf[i] = rvv_f32_to_fp8_e5m2(
                 (float)(lcg_next(&seed) >> 8) / 16777216.0f - 0.5f);
+}
+
+void lcg_fill_e8m0(uint8_t *buf, size_t n, uint32_t seed) {
+    for (size_t i = 0; i < n; i++) {
+        /* Bounded exponent range so a corpus scale byte can never overflow
+         * the f32 GEMM accumulation when combined with a full-magnitude fp8
+         * element: with E5M2's largest element (57344) and two scale bytes
+         * the per-term magnitude is 57344^2 * 2^(2*(e8m0-127)); capping the
+         * byte at 0xA0 (2^33) keeps even a K-wide sum well inside f32 range.
+         * This preserves the bit-exactness guarantee — E8M0 scales are exact
+         * powers of two, so with the shared fma grouping every *finite*
+         * product and sum is bit-identical across golden/C/JIT on any
+         * compiler. An unbounded random byte (or
+         * the 0xFE maximum exponent) can overflow to Inf, and the resulting
+         * Inf/NaN pattern is compiler-dependent (0*Inf, Inf+(-Inf)), which
+         * is why the extreme boundary exponents are exercised by the
+         * conversion smoke in the differential instead. */
+        buf[i] = (uint8_t)(0x01 + (lcg_next(&seed) >> 24) % 0xA0);
+    }
+    /* Subnormal boundary: 0x00 -> 2^-127. Underflow to 0/subnormal is
+     * bit-exact, so keeping it in the corpus stays arch-stable and always
+     * exercises the special subnormal conversion. */
+    if (n >= 1) buf[0] = 0x00;
 }
 
 void golden_sentinel(void *buf, size_t bytes) {

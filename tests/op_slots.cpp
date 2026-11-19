@@ -62,14 +62,20 @@ static int64_t gemv_out_elems(const rvcl_op_desc_t *od) {
 /* ---------------------------------------------------------------- golden */
 
 static void matmul_golden(const rvcl_op_desc_t *od, const void *a,
-        const void *b, const float *bias, float *c) {
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c) {
     const dtype_ops_t *op = dtype_ops_for(od->matmul.dtype_a);
-    op->golden(a, b, bias, c, od->matmul.m, od->matmul.n, od->matmul.k);
+    const int64_t blk = (int64_t)rvcl_dtype_block_size(od->matmul.dtype_a);
+    op->golden(a, sa, b, sb, bias, c, od->matmul.m, od->matmul.n, od->matmul.k,
+            blk);
 }
 
-/* Naive GEMV: y[i] = bias[i] + sum_p a[i][p] * x[p]. */
-static void gemv_golden(const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c) {
+/* Naive GEMV: y[i] = bias[i] + sum_p a[i][p] * x[p]. sa/sb are NULL (gemv
+ * serves fp32 only). */
+static void gemv_golden(const rvcl_op_desc_t *od, const void *a, const void *sa,
+        const void *b, const void *sb, const float *bias, float *c) {
+    (void)sa;
+    (void)sb;
     const int64_t m = od->gemv.m, k = od->gemv.k;
     const float *pa = (const float *)a;
     const float *px = (const float *)b;
@@ -116,11 +122,16 @@ static void gemv_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n, int64_t k,
 /* Builds the tensor pack for the operator's descriptor. The B and C
  * tensors are 2D for matmul (k x n, m x n) and 1D vectors for gemv
  * (k, m); bias is a vector of the output length (n for matmul, m for
- * gemv). All tensors are imported zero-copy. */
+ * gemv). For block-scale (MXFP8) matmul dtypes the E8M0 scale tensors
+ * sa (m x K/blk) and sb (K/blk x n) ride the SRC_SCALE_A/B pack slots,
+ * with the oneDNN-aligned sb layout {n,1}. All tensors are imported
+ * zero-copy. */
 void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c, rvcl_tensor_t *ta, rvcl_tensor_t *tb,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
         rvcl_tensor_t *tc, rvcl_tensor_t *tbias) {
+    rvcl_tensor_pack_init(pack); /* must precede every pack_add below */
     rvcl_tensor_desc_t td = {.ndims = 2,
             .dims = {0, 0},
             .strides = {0, 1},
@@ -138,6 +149,17 @@ void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
                                           : od->gemv.dtype_a;
     rvcl_tensor_init(ta, &td, (void *)a);
 
+    /* A-block scale: m x K/blk row-major, dtype = scale dtype of A. */
+    if (slot->op == RVCL_OP_MATMUL && sa) {
+        const int64_t blk = (int64_t)rvcl_dtype_block_size(od->matmul.dtype_a);
+        rvcl_tensor_desc_t sd = {.ndims = 2,
+                .dims = {m, k / blk},
+                .strides = {k / blk, 1},
+                .dtype = rvcl_dtype_scale_dtype(od->matmul.dtype_a)};
+        rvcl_tensor_init(tsa, &sd, (void *)sa);
+        rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_SCALE_A, tsa);
+    }
+
     /* B: matmul k x n; gemv k-vector */
     if (slot->op == RVCL_OP_MATMUL) {
         td.ndims = 2;
@@ -152,6 +174,18 @@ void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
         td.dtype = od->gemv.dtype_b;
     }
     rvcl_tensor_init(tb, &td, (void *)b);
+
+    /* B-block scale: K/blk x n row-major (oneDNN-aligned), dtype = scale
+     * dtype of B. */
+    if (slot->op == RVCL_OP_MATMUL && sb) {
+        const int64_t blk = (int64_t)rvcl_dtype_block_size(od->matmul.dtype_b);
+        rvcl_tensor_desc_t sd = {.ndims = 2,
+                .dims = {k / blk, n},
+                .strides = {n, 1},
+                .dtype = rvcl_dtype_scale_dtype(od->matmul.dtype_b)};
+        rvcl_tensor_init(tsb, &sd, (void *)sb);
+        rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_SCALE_B, tsb);
+    }
 
     /* C: matmul m x n; gemv m-vector */
     if (slot->op == RVCL_OP_MATMUL) {
@@ -168,7 +202,6 @@ void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
     }
     rvcl_tensor_init(tc, &td, c);
 
-    rvcl_tensor_pack_init(pack);
     rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_A, ta);
     rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_B, tb);
     rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
@@ -215,8 +248,8 @@ void op_slot_pack_free_ws(void *ws_buf[], int num_ws) {
  * rvcl_dispatch_op so the test drives exactly what the library pipeline
  * selects (bench C mode and the differential dispatch check). */
 static rvcl_status_t run_dispatch_impl(const op_slot_t *slot,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c) {
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c) {
     rvcl_dispatch_result_t *r = NULL;
     rvcl_status_t st = rvcl_dispatch_op(slot->op, od, &r);
     if (st != RVCL_SUCCESS || !r) return st;
@@ -225,9 +258,10 @@ static rvcl_status_t run_dispatch_impl(const op_slot_t *slot,
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
     void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
     rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
-    rvcl_tensor_t ta, tb, tc, tbias;
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
     rvcl_tensor_pack_t pack;
-    op_slot_pack_setup(slot, &pack, od, a, b, bias, c, &ta, &tb, &tc, &tbias);
+    op_slot_pack_setup(slot, &pack, od, a, sa, b, sb, bias, c, &ta, &tsa, &tb,
+            &tsb, &tc, &tbias);
     st = op_slot_pack_ws(ws, num_ws, ws_buf, ws_t, &pack);
     if (st != RVCL_SUCCESS) {
         op_slot_pack_free_ws(ws_buf, num_ws);
@@ -245,13 +279,19 @@ static rvcl_status_t run_dispatch_impl(const op_slot_t *slot,
 }
 
 static rvcl_status_t matmul_run_dispatch(const rvcl_op_desc_t *od,
-        const void *a, const void *b, const float *bias, float *c) {
-    return run_dispatch_impl(op_slot_for(RVCL_OP_MATMUL), od, a, b, bias, c);
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c) {
+    return run_dispatch_impl(
+            op_slot_for(RVCL_OP_MATMUL), od, a, sa, b, sb, bias, c);
 }
 
 static rvcl_status_t gemv_run_dispatch(const rvcl_op_desc_t *od, const void *a,
-        const void *b, const float *bias, float *c) {
-    return run_dispatch_impl(op_slot_for(RVCL_OP_GEMV), od, a, b, bias, c);
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c) {
+    (void)sa;
+    (void)sb;
+    return run_dispatch_impl(
+            op_slot_for(RVCL_OP_GEMV), od, a, sa, b, sb, bias, c);
 }
 
 /* ----------------------------------------------------------- run named */
@@ -260,8 +300,9 @@ static rvcl_status_t gemv_run_dispatch(const rvcl_op_desc_t *od, const void *a,
  * so every registered kernel can be exercised, not just the selected one).
  * r_m0/r_m1 restrict the executed row range (negative = full). */
 static rvcl_status_t run_named_impl(const op_slot_t *slot, const char *name,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c, int64_t r_m0, int64_t r_m1) {
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1) {
     rvcl_kernel_create_fn create = rvcl_registry_find_factory(name);
     if (!create) return RVCL_ERROR_NOT_FOUND;
 
@@ -293,9 +334,10 @@ static rvcl_status_t run_named_impl(const op_slot_t *slot, const char *name,
         return st;
     }
 
-    rvcl_tensor_t ta, tb, tc, tbias;
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
     rvcl_tensor_pack_t pack;
-    op_slot_pack_setup(slot, &pack, od, a, b, bias, c, &ta, &tb, &tc, &tbias);
+    op_slot_pack_setup(slot, &pack, od, a, sa, b, sb, bias, c, &ta, &tsa, &tb,
+            &tsb, &tc, &tbias);
     void *ws_buf[RVCL_MAX_WORKSPACES] = {0};
     rvcl_tensor_t ws_t[RVCL_MAX_WORKSPACES];
     st = op_slot_pack_ws(ws, num_ws, ws_buf, ws_t, &pack);
@@ -321,24 +363,27 @@ static rvcl_status_t run_named_impl(const op_slot_t *slot, const char *name,
 }
 
 static rvcl_status_t matmul_run_named(const char *name,
-        const rvcl_op_desc_t *od, const void *a, const void *b,
-        const float *bias, float *c, int64_t r_m0, int64_t r_m1) {
-    return run_named_impl(
-            op_slot_for(RVCL_OP_MATMUL), name, od, a, b, bias, c, r_m0, r_m1);
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1) {
+    return run_named_impl(op_slot_for(RVCL_OP_MATMUL), name, od, a, sa, b, sb,
+            bias, c, r_m0, r_m1);
 }
 
 static rvcl_status_t gemv_run_named(const char *name, const rvcl_op_desc_t *od,
-        const void *a, const void *b, const float *bias, float *c, int64_t r_m0,
-        int64_t r_m1) {
-    return run_named_impl(
-            op_slot_for(RVCL_OP_GEMV), name, od, a, b, bias, c, r_m0, r_m1);
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c, int64_t r_m0, int64_t r_m1) {
+    (void)sa;
+    (void)sb;
+    return run_named_impl(op_slot_for(RVCL_OP_GEMV), name, od, a, sa, b, sb,
+            bias, c, r_m0, r_m1);
 }
 
 /* ---------------------------------------------------------------- table */
 
-static const rvcl_dtype_t k_matmul_dtypes[]
-        = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16,
-                RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_AUTO};
+static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
+        RVCL_DTYPE_BF16, RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP8_E5M2,
+        RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_gemv_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO};
 

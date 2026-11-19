@@ -55,6 +55,7 @@
 #include <string.h>
 
 #include "../src/common/dtype_traits.hpp"
+#include "../src/backends/rvv/rvv_e8m0.hpp"
 #include "dtype_ops.hpp"
 #include "golden.hpp"
 #include "op_slots.hpp"
@@ -78,12 +79,13 @@ static int g_failures;
  * test op table's named-run path (the same factory-bypass the differential
  * corpus loop uses), so the tensor rig lives in op_slots, not here. */
 static rvcl_status_t run_matmul_kernel(const char *name,
-        const rvcl_matmul_desc_t *d, const void *a, const void *b,
-        const void *bias, void *c, int64_t r_m0, int64_t r_m1) {
+        const rvcl_matmul_desc_t *d, const void *a, const void *sa,
+        const void *b, const void *sb, const void *bias, void *c, int64_t r_m0,
+        int64_t r_m1) {
     const rvcl_op_desc_t od = {.matmul = *d};
     return op_slot_for(RVCL_OP_MATMUL)
-            ->run_named(name, &od, a, b, (const float *)bias, (float *)c, r_m0,
-                    r_m1);
+            ->run_named(name, &od, a, sa, b, sb, (const float *)bias,
+                    (float *)c, r_m0, r_m1);
 }
 
 /* ------------------------------------------------- corpus: parser (own)
@@ -213,7 +215,8 @@ static void parse_header(
         } else {
             corpus_fatal(file, line,
                     "bad value for --dt: '%s' "
-                    "(want f32, f16, bf16, f8_e4m3 or f8_e5m2)",
+                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3 or "
+                    "mxfp8e5m2)",
                     val);
         }
     }
@@ -409,6 +412,17 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
     slot->build_desc(&od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO,
             RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
 
+    /* A block-scale (MXFP8) dtype requires K divisible by its block size;
+     * a corpus shape whose K is not is invalid for that dtype, so skip it
+     * rather than fail (the shared fixed-shape set is not all
+     * block-scale-valid). */
+    const int64_t blk = (int64_t)rvcl_dtype_block_size(dt);
+    if (blk > 0 && cc->k % blk != 0) {
+        printf("skip: %s (K=%lld not divisible by blk=%lld)\n", cc->label,
+                (long long)cc->k, (long long)blk);
+        return -1;
+    }
+
     const int64_t a_elems = slot->a_elems(&od);
     const int64_t b_elems = slot->b_elems(&od);
     const int64_t bias_elems = slot->bias_elems(&od);
@@ -426,12 +440,26 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
     void *b = malloc((size_t)b_elems * op->elt);
     op->fill(a, (size_t)a_elems, seed);
     op->fill(b, (size_t)b_elems, seed ^ 0x9e3779b9u);
-    slot->golden(&od, a, b, bias, golden);
+
+    /* Block-scale (MXFP8) dtypes carry E8M0 scale tensors: sa[m][K/blk]
+     * and sb[K/blk][n] (oneDNN-aligned), filled with the boundary-aware
+     * scale LCG so 0x00/0xFE/0xFF conversions are always exercised. */
+    void *sa = NULL, *sb = NULL;
+    if (blk > 0) {
+        const int64_t nblk = cc->k / blk;
+        sa = malloc((size_t)(cc->m * nblk));
+        sb = malloc((size_t)(nblk * cc->n));
+        lcg_fill_e8m0(
+                (uint8_t *)sa, (size_t)(cc->m * nblk), seed ^ 0xa5a5a5a5u);
+        lcg_fill_e8m0(
+                (uint8_t *)sb, (size_t)(nblk * cc->n), seed ^ 0x5f5f5f5fu);
+    }
+    slot->golden(&od, a, sa, b, sb, bias, golden);
 
     for (int i = 0; i < nk; i++) {
         golden_sentinel(c, (size_t)elems * 4);
         rvcl_status_t st
-                = slot->run_named(names[i], &od, a, b, bias, c, -1, -1);
+                = slot->run_named(names[i], &od, a, sa, b, sb, bias, c, -1, -1);
         if (st != RVCL_SUCCESS) {
             printf("FAIL %s (%s, %s): kernel %s run status %d\n", cc->label,
                     shape_s, dtstr, names[i], (int)st);
@@ -454,6 +482,8 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
     }
     free(a);
     free(b);
+    free(sa);
+    free(sb);
     free(bias);
     free(golden);
     free(c);
@@ -518,7 +548,7 @@ int main(int argc, char **argv) {
         else {
             fprintf(stderr,
                     "usage: %s [--batch=<corpus-file>] "
-                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2] "
+                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2] "
                     "[--op=matmul|gemv]\n",
                     argv[0]);
             return 2;
@@ -555,7 +585,8 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr,
                     "error: bad value for --dt: '%s' "
-                    "(want f32, f16, bf16, f8_e4m3 or f8_e5m2)\n",
+                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3 or "
+                    "mxfp8e5m2)\n",
                     dt_arg);
             return 2;
         }
@@ -565,7 +596,10 @@ int main(int argc, char **argv) {
     const int dt_only_bf16 = dt_only == RVCL_DTYPE_BF16;
     const int dt_only_fp8_e4m3 = dt_only == RVCL_DTYPE_FP8_E4M3;
     const int dt_only_fp8_e5m2 = dt_only == RVCL_DTYPE_FP8_E5M2;
-    const int dt_only_other = dt_only_fp8_e4m3 || dt_only_fp8_e5m2;
+    const int dt_only_mxfp8_e4m3 = dt_only == RVCL_DTYPE_MXFP8_E4M3;
+    const int dt_only_mxfp8_e5m2 = dt_only == RVCL_DTYPE_MXFP8_E5M2;
+    const int dt_only_other = dt_only_fp8_e4m3 || dt_only_fp8_e5m2
+            || dt_only_mxfp8_e4m3 || dt_only_mxfp8_e5m2;
 
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
 
@@ -579,6 +613,10 @@ int main(int argc, char **argv) {
             "rvcl_matmul_fp8_e4m3_rvv", "rvcl_matmul_fp8_e4m3_rvv_c");
     const char *fp8_e5m2_rvv_name = probe_rvv_name(
             "rvcl_matmul_fp8_e5m2_rvv", "rvcl_matmul_fp8_e5m2_rvv_c");
+    const char *mxfp8_e4m3_rvv_name = probe_rvv_name(
+            "rvcl_matmul_mxfp8_e4m3_rvv", "rvcl_matmul_mxfp8_e4m3_rvv_c");
+    const char *mxfp8_e5m2_rvv_name = probe_rvv_name(
+            "rvcl_matmul_mxfp8_e5m2_rvv", "rvcl_matmul_mxfp8_e5m2_rvv_c");
 
     CHECK(rvcl_registry_find_factory("rvcl_matmul_f32_reference") != NULL,
             "reference f32 kernel present");
@@ -592,6 +630,10 @@ int main(int argc, char **argv) {
             "rvv fp8_e4m3 kernel present (generic or portable)");
     CHECK(rvcl_registry_find_factory(fp8_e5m2_rvv_name) != NULL,
             "rvv fp8_e5m2 kernel present (generic or portable)");
+    CHECK(rvcl_registry_find_factory(mxfp8_e4m3_rvv_name) != NULL,
+            "rvv mxfp8_e4m3 kernel present (generic or portable)");
+    CHECK(rvcl_registry_find_factory(mxfp8_e5m2_rvv_name) != NULL,
+            "rvv mxfp8_e5m2 kernel present (generic or portable)");
 
     /* The fixed contract block below is matmul-specific: it drives the
      * matmul reference/rvv pair, matmul dispatch and matmul work ranges.
@@ -632,12 +674,12 @@ int main(int argc, char **argv) {
         if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
             golden_f32(a, b, bias, golden, M, N, K);
 
-            CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, b,
-                          bias, c_ref, -1, -1)
+            CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, NULL,
+                          b, NULL, bias, c_ref, -1, -1)
                             == RVCL_SUCCESS,
                     "reference f32 runs");
-            CHECK(run_matmul_kernel(
-                          f32_rvv_name, &d32, a, b, bias, c_rvv, -1, -1)
+            CHECK(run_matmul_kernel(f32_rvv_name, &d32, a, NULL, b, NULL, bias,
+                          c_rvv, -1, -1)
                             == RVCL_SUCCESS,
                     "rvv f32 runs (packed path)");
 
@@ -659,8 +701,8 @@ int main(int argc, char **argv) {
 
             /* ---- fp32 without bias: NULL-bias branch of the same kernels ---- */
             golden_f32(a, b, NULL, golden, M, N, K);
-            CHECK(run_matmul_kernel(
-                          f32_rvv_name, &d32, a, b, NULL, c_rvv, -1, -1)
+            CHECK(run_matmul_kernel(f32_rvv_name, &d32, a, NULL, b, NULL, NULL,
+                          c_rvv, -1, -1)
                             == RVCL_SUCCESS,
                     "rvv f32 runs without bias");
             int bad_nobias = 0;
@@ -695,8 +737,8 @@ int main(int argc, char **argv) {
                     .quant = {},
             };
             golden_f16(ah, bh, bias, golden, M, N, K);
-            CHECK(run_matmul_kernel(
-                          f16_rvv_name, &d16, ah, bh, bias, c_rvv, -1, -1)
+            CHECK(run_matmul_kernel(f16_rvv_name, &d16, ah, NULL, bh, NULL,
+                          bias, c_rvv, -1, -1)
                             == RVCL_SUCCESS,
                     "rvv f16 runs (packed path)");
             const golden_cmp_t cmp16 = op16->compare(c_rvv, golden,
@@ -730,8 +772,8 @@ int main(int argc, char **argv) {
                     .quant = {},
             };
             golden_bf16(abh, bbh, bias, golden, M, N, K);
-            CHECK(run_matmul_kernel(
-                          bf16_rvv_name, &db16, abh, bbh, bias, c_rvv, -1, -1)
+            CHECK(run_matmul_kernel(bf16_rvv_name, &db16, abh, NULL, bbh, NULL,
+                          bias, c_rvv, -1, -1)
                             == RVCL_SUCCESS,
                     "rvv bf16 runs (packed path)");
             const golden_cmp_t cmpb = opb->compare(c_rvv, golden,
@@ -782,7 +824,8 @@ int main(int argc, char **argv) {
                         .dtype_bias = RVCL_DTYPE_FP32,
                         .quant = {}};
                 fc.golden(fa, fb, bias, fg, FM, FN, FK);
-                CHECK(run_matmul_kernel(fc.name, &df, fa, fb, bias, fk, -1, -1)
+                CHECK(run_matmul_kernel(fc.name, &df, fa, NULL, fb, NULL, bias,
+                              fk, -1, -1)
                                 == RVCL_SUCCESS,
                         "rvv fp8 runs on special values");
                 const golden_cmp_t cmpf
@@ -791,6 +834,123 @@ int main(int argc, char **argv) {
                         "rvv fp8 special values match golden bit-for-bit");
                 free(fa);
                 free(fb);
+                free(fg);
+                free(fk);
+            }
+        }
+
+        /* ---- mxfp8 block-scale smoke: e8m0 boundary conversions ---- */
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16) {
+            /* E8M0 up-conversion boundaries, asserted directly on the shared
+             * table so the full exponent range is covered on any compiler.
+             * 0x00 -> 2^-127 (subnormal), 0xFE -> 2^127 (largest normal
+             * exponent), 0xFF -> quiet NaN, mid-range bytes -> 2^(e-127). */
+            {
+                struct e8case {
+                    uint8_t byte;
+                    uint32_t bits; /* expected f32 bit pattern */
+                };
+                const e8case cases[] = {
+                        {0x00, 0x00400000u}, /* 2^-127 subnormal */
+                        {0x01, 0x00800000u}, /* 2^-126 */
+                        {0x7F, 0x3F800000u}, /* 2^0 = 1.0 */
+                        {0x80, 0x40000000u}, /* 2^1 = 2.0 */
+                        {0xFE, 0x7F000000u}, /* 2^127 */
+                        {0xFF, 0x7FC00000u}, /* quiet NaN */
+                };
+                int conv_ok = 1;
+                for (size_t ci = 0; ci < sizeof(cases) / sizeof(cases[0]);
+                        ci++) {
+                    const uint32_t got = rvv_e8m0_to_f32_bits[cases[ci].byte];
+                    if (got != cases[ci].bits) {
+                        printf("  e8m0 0x%02x -> 0x%08x (want 0x%08x)\n",
+                                cases[ci].byte, got, cases[ci].bits);
+                        conv_ok = 0;
+                    }
+                }
+                CHECK(conv_ok, "e8m0 up-conversion boundary table is exact");
+            }
+
+            enum { XM = 5, XN = 3, XK = 64 }; /* 2 K-blocks of 32 */
+            struct mxfp8_case {
+                rvcl_dtype_t dtype;
+                const char *name;
+                void (*golden)(const uint8_t *, const uint8_t *,
+                        const uint8_t *, const uint8_t *, const float *,
+                        float *, int64_t, int64_t, int64_t, int64_t);
+            };
+            const mxfp8_case mxfp8s[] = {
+                    {RVCL_DTYPE_MXFP8_E4M3, mxfp8_e4m3_rvv_name,
+                            golden_mxfp8_e4m3},
+                    {RVCL_DTYPE_MXFP8_E5M2, mxfp8_e5m2_rvv_name,
+                            golden_mxfp8_e5m2},
+            };
+            for (size_t ci = 0; ci < sizeof(mxfp8s) / sizeof(mxfp8s[0]); ci++) {
+                const mxfp8_case &mc = mxfp8s[ci];
+                if (dt_explicit && dt_only != mc.dtype) continue;
+                const dtype_ops_t *mx = dtype_ops_for(mc.dtype);
+                uint8_t *fa = (uint8_t *)malloc((size_t)XM * XK);
+                uint8_t *fb = (uint8_t *)malloc((size_t)XK * XN);
+                uint8_t *fsa = (uint8_t *)malloc((size_t)XM * (XK / 32));
+                uint8_t *fsb = (uint8_t *)malloc((size_t)(XK / 32) * XN);
+                float *fg = (float *)malloc((size_t)XM * XN * 4);
+                float *fk = (float *)malloc((size_t)XM * XN * 4);
+                mx->fill(fa, (size_t)XM * XK, 0x12345678u);
+                mx->fill(fb, (size_t)XK * XN, 0x87654321u);
+                rvcl_matmul_desc_t dx = {.m = XM,
+                        .n = XN,
+                        .k = XK,
+                        .dtype_a = mc.dtype,
+                        .dtype_b = mc.dtype,
+                        .dtype_acc = RVCL_DTYPE_AUTO,
+                        .dtype_c = RVCL_DTYPE_FP32,
+                        .dtype_bias = RVCL_DTYPE_FP32,
+                        .quant = {}};
+
+                /* Bounded E8M0 scales via lcg_fill_e8m0 (0x00 subnormal +
+                 * finite-range exponents): products and sums stay finite, so
+                 * golden/C/JIT agree bit-for-bit on any compiler through the
+                 * shared fma grouping. The extreme exponents (0xFE) are
+                 * exercised by the conversion smoke above, not here, because
+                 * a 2^127 scale overflows an f32 product with a full-
+                 * magnitude fp8 element and the resulting Inf/NaN pattern is
+                 * compiler-dependent. */
+                lcg_fill_e8m0(fsa, (size_t)XM * (XK / 32), 0x0f0f0f0fu);
+                lcg_fill_e8m0(fsb, (size_t)(XK / 32) * XN, 0xf0f0f0f0u);
+                mc.golden(fa, fsa, fb, fsb, bias, fg, XM, XN, XK, 32);
+                CHECK(run_matmul_kernel(
+                              mc.name, &dx, fa, fsa, fb, fsb, bias, fk, -1, -1)
+                                == RVCL_SUCCESS,
+                        "rvv mxfp8 runs on bounded e8m0 scales");
+                const golden_cmp_t cmx
+                        = golden_cmp_bitexact_bits(fk, fg, (int64_t)XM * XN);
+                CHECK(cmx.mismatches == 0,
+                        "rvv mxfp8 bounded-scale result matches golden "
+                        "bit-for-bit");
+
+                /* 0xFF scale = NaN: propagates to the whole column sum. NaN
+                 * bit patterns need not match across paths (NaN is NaN), so
+                 * verify every output is NaN rather than a bit compare. */
+                memset(fsa, 0xFF, (size_t)XM * (XK / 32));
+                memset(fsb, 0xFF, (size_t)(XK / 32) * XN);
+                mc.golden(fa, fsa, fb, fsb, bias, fg, XM, XN, XK, 32);
+                CHECK(run_matmul_kernel(
+                              mc.name, &dx, fa, fsa, fb, fsb, bias, fk, -1, -1)
+                                == RVCL_SUCCESS,
+                        "rvv mxfp8 runs on NaN (0xFF) scale blocks");
+                int all_nan_k = 1, all_nan_g = 1;
+                for (int i = 0; i < XM * XN; i++) {
+                    if (!(fk[i] != fk[i])) all_nan_k = 0; /* isnan */
+                    if (!(fg[i] != fg[i])) all_nan_g = 0;
+                }
+                CHECK(all_nan_g, "golden propagates NaN (0xFF) scales");
+                CHECK(all_nan_k,
+                        "rvv mxfp8 propagates NaN (0xFF) scales (NaN is "
+                        "NaN)");
+                free(fa);
+                free(fb);
+                free(fsa);
+                free(fsb);
                 free(fg);
                 free(fk);
             }
@@ -842,8 +1002,8 @@ int main(int argc, char **argv) {
             /* run_matmul_kernel uses the full range; exercise a sub-range by
          * passing an explicit row span [4,9). */
             memset(c_rvv, 0, (size_t)M * N * 4);
-            rvcl_status_t st = run_matmul_kernel(f32_rvv_name, &d32, a, b, bias,
-                    c_rvv, 4, 9 /* rows [4,9) only */);
+            rvcl_status_t st = run_matmul_kernel(f32_rvv_name, &d32, a, NULL, b,
+                    NULL, bias, c_rvv, 4, 9 /* rows [4,9) only */);
             CHECK(st == RVCL_SUCCESS, "rvv f32 runs on sub-range");
             int bad_full = 0, untouched_ok = 1;
             golden_f32(a, b, bias, golden, M, N, K);
