@@ -53,9 +53,10 @@ void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
  * per-32-block exponent scales sa (m x K/blk, row-major) and sb
  * (K/blk x n, row-major — oneDNN-aligned), exactly the layouts the C/JIT
  * kernels consume. Dequant = element * 2^(e-127). blk is the block width
- * (32). Accumulates bias-first in ascending k, bit-identical to the
- * kernels (E8M0 scales are exact powers of two, so multiply grouping does
- * not round a finite product). */
+ * (32). Each term folds both scales into the B value and accumulates with a
+ * single fused multiply-add (acc = fma(A, B*ascale*bscale, acc)),
+ * bit-identical to the kernels on finite data: the combined E8M0 scale is an
+ * exact power of two, so the multiply never rounds a finite product. */
 void golden_mxfp8_e4m3(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
         const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
         int64_t k, int64_t blk);
@@ -76,7 +77,8 @@ void lcg_fill_fp8_e5m2(uint8_t *buf, size_t n, uint32_t seed);
  * range (2^-126 .. 2^33) plus the 0x00 subnormal boundary at buf[0] — a
  * corpus case always exercises the special subnormal conversion, while the
  * bounded exponents keep every product and sum finite so the bit-exact
- * compare holds on any compiler. The extreme boundary bytes (0xFE = 2^127,
+ * compare (via the shared fma grouping) holds on any compiler. The extreme
+ * boundary bytes (0xFE = 2^127,
  * 0xFF = NaN) are NOT injected here: a 2^127 scale overflows an f32 product
  * with a full-magnitude fp8 element and the resulting Inf/NaN pattern is
  * compiler-dependent, so those conversions are covered by the dedicated

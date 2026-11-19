@@ -235,11 +235,13 @@ when the input dtype is block-scale.
 **MXFP8 (E4M3 / E5M2) full chain** is the worked example of a block-scale
 dtype: the E8M0 scale bytes upconvert through the 256-entry lookup table in
 `src/backends/rvv/rvv_e8m0.hpp` (`0x00 -> 2^-127` subnormal, `0xFF -> NaN`,
-else `2^(e-127)`), and the scale is an exact power of two, so folding it
-into the product never rounds a finite term — golden, C and JIT kernels
-stay bit-identical (NaN is the one exception and is covered by an `isnan`
-smoke rather than a bit-compare). The micro-kernels take a distinct
-signature carrying the scale tensors
+else `2^(e-127)`). Golden, C and JIT kernels share one grouping: each K term
+folds both E8M0 scales into the B value (the combined scale is an exact power
+of two, so the multiply never rounds a finite term) and accumulates with a
+single fused multiply-add, `acc = fma(A, B*ascale*bscale, acc)` — so the three
+paths stay bit-identical on finite data (NaN is the one exception and is
+covered by an `isnan` smoke rather than a bit-compare). The micro-kernels take
+a distinct signature carrying the scale tensors
 (`rvv_gemm_mxfp8_fn(a, b_packed, sa, sb, bias, c, m, n, k, blk, r)`, `blk`
 hard-coded to 32); the JIT kernel is a second xbyak_riscv gemm that embeds
 both the FP8 and E8M0 tables. Dispatch auto-selects via the trait

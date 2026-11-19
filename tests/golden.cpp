@@ -20,6 +20,7 @@
 
 #include "golden.hpp"
 
+#include <math.h>
 #include <string.h>
 
 #include "../src/backends/rvv/rvv_fp16.hpp"
@@ -88,11 +89,11 @@ void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
 }
 
 /* MXFP8 goldens share one body parameterized by the FP8 dtype upconversion.
- * The E8M0 scales are exact powers of two, so the multiply grouping
- * (a-scale and b-scale folded into the product) never rounds a finite
- * term — the accumulate order (bias first, ascending k) is bit-identical
- * to the C and JIT kernels even though the JIT folds the A-block scale
- * into the B strip first. */
+ * Each K term folds both E8M0 scales into the B value (the combined scale is
+ * an exact power of two, so B*ascale*bscale never rounds a finite term) and
+ * accumulates with a single fused multiply-add, acc = fma(A, B*ascale*bscale,
+ * acc) — the exact grouping of the C and JIT kernels, so the accumulate
+ * order (bias first, ascending k) is bit-identical on finite data. */
 template <float (*UP)(uint8_t)>
 static void golden_mxfp8_impl(const uint8_t *a, const uint8_t *sa,
         const uint8_t *b, const uint8_t *sb, const float *bias, float *c,
@@ -105,7 +106,8 @@ static void golden_mxfp8_impl(const uint8_t *a, const uint8_t *sa,
                 const int64_t pblk = p / blk;
                 const float ascale = rvv_e8m0_to_f32(sa[i * nblk + pblk]);
                 const float bscale = rvv_e8m0_to_f32(sb[pblk * n + j]);
-                acc += UP(a[i * k + p]) * UP(b[p * n + j]) * ascale * bscale;
+                const float bscl = ascale * bscale;
+                acc = fmaf(UP(a[i * k + p]), UP(b[p * n + j]) * bscl, acc);
             }
             c[i * n + j] = acc;
         }
@@ -168,8 +170,9 @@ void lcg_fill_e8m0(uint8_t *buf, size_t n, uint32_t seed) {
          * the per-term magnitude is 57344^2 * 2^(2*(e8m0-127)); capping the
          * byte at 0xA0 (2^33) keeps even a K-wide sum well inside f32 range.
          * This preserves the bit-exactness guarantee — E8M0 scales are exact
-         * powers of two, so every *finite* product and sum is bit-identical
-         * across golden/C/JIT on any compiler. An unbounded random byte (or
+         * powers of two, so with the shared fma grouping every *finite*
+         * product and sum is bit-identical across golden/C/JIT on any
+         * compiler. An unbounded random byte (or
          * the 0xFE maximum exponent) can overflow to Inf, and the resulting
          * Inf/NaN pattern is compiler-dependent (0*Inf, Inf+(-Inf)), which
          * is why the extreme boundary exponents are exercised by the

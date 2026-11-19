@@ -909,11 +909,12 @@ int main(int argc, char **argv) {
 
                 /* Bounded E8M0 scales via lcg_fill_e8m0 (0x00 subnormal +
                  * finite-range exponents): products and sums stay finite, so
-                 * golden/C/JIT agree bit-for-bit on any compiler. The extreme
-                 * exponents (0xFE) are exercised by the conversion smoke
-                 * above, not here, because a 2^127 scale overflows an f32
-                 * product with a full-magnitude fp8 element and the resulting
-                 * Inf/NaN pattern is compiler-dependent. */
+                 * golden/C/JIT agree bit-for-bit on any compiler through the
+                 * shared fma grouping. The extreme exponents (0xFE) are
+                 * exercised by the conversion smoke above, not here, because
+                 * a 2^127 scale overflows an f32 product with a full-
+                 * magnitude fp8 element and the resulting Inf/NaN pattern is
+                 * compiler-dependent. */
                 lcg_fill_e8m0(fsa, (size_t)XM * (XK / 32), 0x0f0f0f0fu);
                 lcg_fill_e8m0(fsb, (size_t)(XK / 32) * XN, 0xf0f0f0f0u);
                 mc.golden(fa, fsa, fb, fsb, bias, fg, XM, XN, XK, 32);

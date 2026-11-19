@@ -32,13 +32,20 @@
  * row-major; sb is [K/blk][n] row-major (oneDNN-aligned, K-blocks on the
  * outer axis), accessed as sb[(p/blk)*n + j].
  *
- * K accumulates in ascending order (bias first), bit-identical to the golden
- * and the JIT path. The JIT counterpart lives in jit/rvv_gemm_mxfp8_jit.cpp.
+ * Each K term folds both E8M0 scales into the B value and accumulates with a
+ * single fused multiply-add, acc = fma(A, B*ascale*bscale, acc). The
+ * combined scale is an exact power of two, so B*ascale*bscale does not round,
+ * and the lone rounding per K step matches the JIT's vfmacc_vf grouping
+ * bit-for-bit. K accumulates in ascending order (bias first), bit-identical
+ * to the golden and the JIT path. The JIT counterpart lives in
+ * jit/rvv_gemm_mxfp8_jit.cpp.
  ******************************************************************************/
 
 #include "rvv_e8m0.hpp"
 #include "rvv_fp8.hpp"
 #include "rvv_internal.hpp"
+
+#include <math.h>
 
 namespace {
 
@@ -69,8 +76,12 @@ void rvv_gemm_mxfp8_c_impl(const void *a_in, const void *b_packed,
                 const int64_t pblk = p / blk;
                 const float ascale = rvv_e8m0_to_f32(sa[i * nblk + pblk]);
                 const float bscale = rvv_e8m0_to_f32(sb[pblk * n + j]);
-                acc += UP_FP8(a[i * k_dim + p]) * UP_FP8(bcol[p * RVV_PACK_NC])
-                        * ascale * bscale;
+                /* Fold both scales into the B value (exact power of two, so
+                 * no rounding) and accumulate with one fused multiply-add,
+                 * matching the JIT's vfmacc_vf grouping bit-for-bit. */
+                const float bscl = ascale * bscale;
+                acc = fmaf(UP_FP8(a[i * k_dim + p]),
+                        UP_FP8(bcol[p * RVV_PACK_NC]) * bscl, acc);
             }
             c[i * n + j] = acc;
         }
