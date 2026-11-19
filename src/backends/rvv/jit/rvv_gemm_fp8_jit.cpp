@@ -77,7 +77,8 @@ constexpr int nc_log2 = __builtin_ctz(RVV_PACK_NC);
  * that table arithmetically. All eight kernel arguments arrive in a0..a7
  * (LP64D, no stack arguments) and the kernel is a leaf. */
 template <const uint32_t (*TABLE)[256], uint32_t EXP_BIAS, uint32_t MAN_SHIFT,
-        uint32_t MAN_MASK, uint32_t DIV_C, uint32_t SUB_C, bool HAS_INF>
+        uint32_t MAN_MASK, uint32_t EXP_MASK, uint32_t DIV_C, uint32_t SUB_C,
+        bool HAS_INF>
 class rvv_gemm_fp8_jit_t : public CodeGenerator {
 public:
     rvv_gemm_fp8_jit_t() : CodeGenerator(size_t {64} * 1024) {
@@ -208,25 +209,27 @@ private:
         vsetvli(vl, av, SEW::e8, LMUL::m1, VTA::ta, VMA::ma); /* e8/m1 */
         vle8_v(vb, bcur); /* B[p, j0 .. j0+vl) as byte indices */
         vsetvli(vl, av, SEW::e32, LMUL::m4, VTA::ta, VMA::ma); /* widen */
-        /* vzext.vf4 vd, vs2: funct6 010010, funct3 010. The vs1 field is a
-         * reserved, don't-care operand (real hardware ignores it), but the
-         * qemu emulator decodes a zero vs1 as an illegal instruction, so the
-         * field is set to vd's register number (as GCC does) to run correctly
-         * on both the emulator and real silicon. */
-        append4B(0x4a002057u | (vb.getIdx() << 20) | (vidx.getIdx() << 15)
-                | (vidx.getIdx() << 7));
+        vzext_vf4(vidx, vb); /* zero-extend the bytes to e32 indices */
         vsetvli(vl, av, SEW::e32, LMUL::m1, VTA::ta, VMA::ma); /* compute */
         /* sreg = sign bit, ereg = exponent field, mreg = mantissa field. */
         vsrl_vi(sreg, vidx, 7);
         vand_vi(sreg, sreg, 1);
         vsrl_vi(ereg, vidx, MAN_SHIFT);
-        vand_vi(ereg, ereg, MAN_MASK);
+        /* vand.vi with 31 sign-extends the immediate to all ones (an
+         * identity AND), which would leak the shifted-out sign bit into
+         * the exponent field; the mask goes through a scalar register. */
+        li(tp, EXP_MASK);
+        vand_vx(ereg, ereg, tp);
         vand_vi(mreg, vidx, MAN_MASK);
         /* vzext.vf4 source (vb) holds the zero-extended bytes; after the
          * field extraction the bytes themselves (vidx) are no longer
          * needed and vidx is reused as a scratch f32 register. */
         vfcvt_f_xu_v(scratch, mreg); /* mf = (float)mantissa */
-        vadd_vi(vb, ereg, EXP_BIAS); /* vb = exponent + bias */
+        /* OPIVI immediates are simm5 (silently truncated by the encoder,
+         * then sign-extended by hardware); 120/112 and 31 do not fit, so
+         * every out-of-simm5 constant goes through a scalar register. */
+        li(tp, EXP_BIAS);
+        vadd_vx(vb, ereg, tp); /* vb = exponent + bias */
         vsll_vi(vb, vb, 23); /* vb = float bits of 2^(exp) */
         vfdiv_vf(scratch, scratch, fc_div); /* mf / divisor */
         vfadd_vf(scratch, scratch, fc_one); /* 1 + mf / divisor */
@@ -238,7 +241,8 @@ private:
         vmsne_vi(v0, sreg, 0); /* sign set */
         vfneg_v(vidx, scratch); /* -val */
         vmerge_vvm(scratch, scratch, vidx); /* val = sign ? -val : val */
-        vmseq_vi(v0, ereg, MAN_MASK == 7 ? 15 : 31); /* max exponent */
+        li(tp, EXP_MASK); /* simm5-unsafe constant (31 for E5M2) */
+        vmseq_vx(v0, ereg, tp); /* max exponent */
         if (HAS_INF) {
             vmsne_vi(vb, mreg, 0); /* m != 0 */
             vmand_mm(v0, v0, vb); /* e==max && m!=0 -> NaN */
@@ -254,7 +258,7 @@ private:
             vfmv_v_f(vb, fc_pinf); /* +inf */
             vfmv_v_f(vidx, fc_ninf); /* -inf */
             vmerge_vvm(vb, vb, vidx); /* signed inf */
-            vmseq_vi(v0, ereg, 31); /* e == 31 */
+            vmseq_vx(v0, ereg, tp); /* e == 31; tp still holds EXP_MASK */
             vmsne_vi(vidx, mreg, 0); /* m != 0 */
             vmandn_mm(v0, v0, vidx); /* e==31 && m==0 -> inf */
             vmerge_vvm(scratch, scratch, vb); /* val = inf ? s-inf : val */
@@ -285,12 +289,13 @@ private:
 };
 
 template <const uint32_t (*TABLE)[256], uint32_t EXP_BIAS, uint32_t MAN_SHIFT,
-        uint32_t MAN_MASK, uint32_t DIV_C, uint32_t SUB_C, bool HAS_INF>
+        uint32_t MAN_MASK, uint32_t EXP_MASK, uint32_t DIV_C, uint32_t SUB_C,
+        bool HAS_INF>
 rvv_gemm_fn rvv_gemm_fp8_jit_entry_impl(void) {
     static rvv_gemm_fn entry = []() -> rvv_gemm_fn {
         try {
             static rvv_gemm_fp8_jit_t<TABLE, EXP_BIAS, MAN_SHIFT, MAN_MASK,
-                    DIV_C, SUB_C, HAS_INF>
+                    EXP_MASK, DIV_C, SUB_C, HAS_INF>
                     kern;
             return kern.template getCode<rvv_gemm_fn>();
         } catch (const std::exception &e) {
@@ -314,8 +319,8 @@ int rvv_gemm_fp8_e4m3_jit_available(void) {
 rvv_gemm_fn rvv_gemm_fp8_e4m3_jit_entry(void) {
     /* E4M3: exponent field e = bits 6:3 (bias 7), mantissa m = bits 2:0,
      * max exponent 15 with m==7 -> qNaN; no infinity. */
-    return rvv_gemm_fp8_jit_entry_impl<&rvv_fp8_e4m3_to_f32_bits, 120, 3, 7,
-            0x41000000u, 0x39000000u, false>();
+    return rvv_gemm_fp8_jit_entry_impl<&rvv_fp8_e4m3_to_f32_bits, 120, 3, 7, 15,
+            0x41000000u, 0x3B000000u, false>();
 }
 
 int rvv_gemm_fp8_e5m2_jit_available(void) {
@@ -325,6 +330,6 @@ int rvv_gemm_fp8_e5m2_jit_available(void) {
 rvv_gemm_fn rvv_gemm_fp8_e5m2_jit_entry(void) {
     /* E5M2: exponent field e = bits 6:2 (bias 15), mantissa m = bits 1:0,
      * max exponent 31: m==0 -> +/-inf, m!=0 -> qNaN. */
-    return rvv_gemm_fp8_jit_entry_impl<&rvv_fp8_e5m2_to_f32_bits, 112, 2, 3,
+    return rvv_gemm_fp8_jit_entry_impl<&rvv_fp8_e5m2_to_f32_bits, 112, 2, 3, 31,
             0x40800000u, 0x37800000u, true>();
 }

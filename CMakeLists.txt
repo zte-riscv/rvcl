@@ -452,7 +452,7 @@ if(RVCL_BUILD_TESTS)
             # JIT-when-RVV, c is the portable oracle, intrinsics exist only
             # under the RVCL_RVV_MARCH vector override). <dtypes> scopes the
             # forced targets to the dtypes the operator serves (matmul:
-            # f32/f16/bf16, gemv: f32), so a dtype with no kernel for the op
+            # f32/f16/bf16/fp8, gemv: f32), so a dtype with no kernel for the op
             # never gets a forced target. The intrinsics path exists only
             # for f32. RISC-V hosts only — the x86 build stays host-agnostic.
             if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
@@ -476,8 +476,8 @@ if(RVCL_BUILD_TESTS)
         endif()
     endfunction()
 
-    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16")
-    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16")
+    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2")
+    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2")
     rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32")
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32")
 endif()
