@@ -27,6 +27,31 @@ size_t rvcl_dtype_size(rvcl_dtype_t dt) {
     return rvcl_dtype_traits(dt).size;
 }
 
+/* Block-scale attributes are exposed through these accessors rather than
+ * new trait-struct fields: rvcl_dtype_traits_t is exported and returned by
+ * value, so appending a field would shift the caller stack frame and break
+ * existing binary consumers (D-1). Block size / scale dtype are dtype
+ * properties, so the desc and the dispatch cache key stay field-free. */
+size_t rvcl_dtype_block_size(rvcl_dtype_t dt) {
+    switch (dt) {
+        case RVCL_DTYPE_MXFP8_E4M3:
+        case RVCL_DTYPE_MXFP8_E5M2:
+        case RVCL_DTYPE_MXFP4: return 32;
+        case RVCL_DTYPE_NVFP4: return 16;
+        default: return 0; /* not a block-scale dtype */
+    }
+}
+
+rvcl_dtype_t rvcl_dtype_scale_dtype(rvcl_dtype_t dt) {
+    switch (dt) {
+        case RVCL_DTYPE_MXFP8_E4M3:
+        case RVCL_DTYPE_MXFP8_E5M2:
+        case RVCL_DTYPE_MXFP4: return RVCL_DTYPE_E8M0;
+        case RVCL_DTYPE_NVFP4: return RVCL_DTYPE_FP8_E4M3;
+        default: return RVCL_DTYPE_AUTO; /* no scale dtype */
+    }
+}
+
 rvcl_work_range_t rvcl_work_range_full(int64_t m, int64_t n, int64_t k) {
     rvcl_work_range_t r = {.m_begin = 0,
             .m_end = m,

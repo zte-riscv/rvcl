@@ -78,10 +78,20 @@ typedef enum {
     RVCL_DTYPE_INT32, /* accumulators / quantized intermediates */
     RVCL_DTYPE_FP8_E4M3, /* reserved (§4.5.6: no ratified base ext yet) */
     RVCL_DTYPE_FP8_E5M2, /* reserved */
+    RVCL_DTYPE_E8M0, /* OCP MX block exponent, 1 byte, 2^e */
+    RVCL_DTYPE_MXFP8_E4M3, /* MX: 32-element block + E8M0 scale */
+    RVCL_DTYPE_MXFP8_E5M2, /* MX: 32-element block + E8M0 scale */
+    RVCL_DTYPE_NVFP4, /* nvfp4: 16-element block + E4M3 scale */
+    RVCL_DTYPE_MXFP4, /* MX: 32-element block + E8M0 scale */
 } rvcl_dtype_t;
 
 /* Element size in bytes; 0 for RVCL_DTYPE_AUTO / unknown. */
 RVCL_API size_t rvcl_dtype_size(rvcl_dtype_t dt);
+
+/* Block-scale attribute of a datatype: 0 = not a block-scale dtype. */
+RVCL_API size_t rvcl_dtype_block_size(rvcl_dtype_t dt);
+/* Scale datatype of a block-scale dtype; RVCL_DTYPE_AUTO when none. */
+RVCL_API rvcl_dtype_t rvcl_dtype_scale_dtype(rvcl_dtype_t dt);
 
 /* --------------------------------------------------------------- calendar */
 
