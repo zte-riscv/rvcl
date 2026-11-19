@@ -110,7 +110,7 @@ typedef struct {
     bcase_t *cases;
     int count, cap;
     char file_mode; /* 'C'|'P'|'S' from the --mode header, 0 if absent */
-    int dt_fixed; /* 0 = both dtypes */
+    int dt_fixed; /* 0 = all dtypes */
     rvcl_dtype_t dt;
 } bcorpus_t;
 
@@ -406,6 +406,10 @@ static const char *jms(char *buf, size_t sz, double v, int avail) {
 
 typedef enum { MODE_C, MODE_P, MODE_S } bench_mode_t;
 
+/* fills a/b(/ah/bh)/bias deterministically; narrow dtypes (f16/bf16)
+ * narrow-from-f32 for P (legacy data path), direct narrow fill for C/S
+ * (S skips the fill optimization by design; C shares data with the
+ * differential run) */
 /* Kernel-only timing goes through the same per-dtype selector the backend
  * binds (rvv_pick_*); --path=NAME forces a specific micro-kernel through
  * the shared by-name resolver. */
@@ -497,7 +501,8 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(g->r, &num_ws);
     g->num_ws = num_ws;
 
-    /* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
+    /* narrow (2-byte) storage lives in the ah/bh buffers; fp32 in a/b. */
+/* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
      * fp32 in a/b. */
     const int narrow = cs->slot->op == RVCL_OP_MATMUL
             && cs->od.matmul.dtype_a != RVCL_DTYPE_FP32;
@@ -673,7 +678,8 @@ int main(int argc, char **argv) {
         for (int di = 0; slot->dtypes[di] != RVCL_DTYPE_AUTO; di++) {
             const dtype_ops_t *dop = dtype_ops_for(slot->dtypes[di]);
             if (!dop) continue; /* missing test row (never happens today) */
-            const int narrow = dop->dtype != RVCL_DTYPE_FP32;
+            const int dt = dop->dtype != RVCL_DTYPE_FP32; /* 0 f32, 1 narrow */
+const int narrow = dop->dtype != RVCL_DTYPE_FP32;
             if (corpus.dt_fixed && dop->dtype != corpus.dt) continue;
             const char *dtstr = dop->dtstr;
 
@@ -792,8 +798,21 @@ int main(int argc, char **argv) {
             /* kernel-only goes through the same selector the backend
              * binds (rvv_pick_*); --path=NAME forces a specific
              * micro-kernel through the shared by-name resolver */
+            rvv_gemm_fn (*pick_by_name)(const char *) = NULL;
+            rvv_gemm_fn (*pick_auto)(void) = NULL;
+            if (dop->dtype == RVCL_DTYPE_FP32) {
+                pick_by_name = rvv_pick_gemm_f32_by_name;
+                pick_auto = rvv_pick_gemm_f32;
+            } else if (dop->dtype == RVCL_DTYPE_FP16) {
+                pick_by_name = rvv_pick_gemm_f16_by_name;
+                pick_auto = rvv_pick_gemm_f16;
+            } else {
+                pick_by_name = rvv_pick_gemm_bf16_by_name;
+                pick_auto = rvv_pick_gemm_bf16;
+            }
             if (path) {
-                kc.gemm = pick_gemm(dop->dtype, path);
+                kc.gemm = pick_by_name(path);
+kc.gemm = pick_gemm(dop->dtype, path);
                 if (!kc.gemm) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",
                             path, dtstr);
@@ -802,7 +821,8 @@ int main(int argc, char **argv) {
                     return 2;
                 }
             } else {
-                kc.gemm = pick_gemm(dop->dtype, NULL);
+                kc.gemm = pick_auto();
+kc.gemm = pick_gemm(dop->dtype, NULL);
             }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)

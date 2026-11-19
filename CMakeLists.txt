@@ -123,18 +123,23 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_pack.cpp
         src/backends/rvv/rvv_gemm_f32.cpp
         src/backends/rvv/rvv_gemm_f16.cpp
+        src/backends/rvv/rvv_gemm_bf16.cpp
         src/backends/rvv/rvv_gemm_fp8.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
-    # The JIT micro-kernel compiles on RISC-V hosts only, always at the
+    # The JIT micro-kernels compile on RISC-V hosts only, always at the
     # baseline -march and never under the RVCL_RVV_MARCH override below:
     # the JIT path exists to keep a single rv64gc binary that probes the
     # vector extension at run time, so its translation unit must not see
     # __riscv_vector at compile time. Non-RISC-V hosts do not build it at
     # all (see the rvcl_jit_probe target below for analysis coverage).
+    # rvv_gemm_f16_jit.cpp is a pure-JIT TU like the f32 one; the bf16 JIT
+    # is co-located in rvv_gemm_bf16.cpp under RVCL_HAVE_JIT, so that file
+    # is already compiled by the line above.
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
         list(APPEND RVCL_RUNTIME_SOURCES
             src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+            src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
             src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp)
     endif()
 endif()
@@ -198,31 +203,40 @@ endif()
 # / FP16 features when the __riscv_* macros are visible there.
 if(RVCL_ENABLE_RVV)
     # The vendored xbyak_riscv headers stay off the global include path:
-    # only the JIT translation unit resolves includes against them — both
-    # when it compiles on RISC-V hosts and in its compile-database entry
-    # elsewhere.
+    # only the JIT translation units resolve includes against them — both
+    # when they compile on RISC-V hosts and in their compile-database
+    # entries elsewhere. rvv_gemm_f16_jit.cpp is a pure-JIT TU; the bf16
+    # JIT is co-located in rvv_gemm_bf16.cpp, so that file also needs the
+    # vendored path for its RVCL_HAVE_JIT section.
     set_source_files_properties(
         src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
         src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
+        src/backends/rvv/rvv_gemm_bf16.cpp
         PROPERTIES INCLUDE_DIRECTORIES
                     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbyak_riscv")
 endif()
 
 # clang-tidy analysis (CI and CONTRIBUTING) runs against the compile
 # database on any host and covers every C/C++ file in a PR diff — including
-# a JIT translation unit that only builds on RISC-V hosts. This target is
+# the JIT translation units that only build on RISC-V hosts. This target is
 # never built (EXCLUDE_FROM_ALL) and exists only so the database exports
-# that TU's compile command on the other hosts; the vendored include path
-# rides on the source-file property above.
+# those TUs' compile commands on the other hosts; the vendored include path
+# rides on the source-file property above. RVCL_HAVE_JIT is set here so the
+# bf16 JIT section co-located in rvv_gemm_bf16.cpp (guarded by that macro)
+# is included in the analysis; the pure-JIT f32/f16 TUs carry no guard.
 if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
     add_library(rvcl_jit_probe EXCLUDE_FROM_ALL
         src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
-        src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp)
+        src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
+        src/backends/rvv/rvv_gemm_bf16.cpp)
     set_target_properties(rvcl_jit_probe PROPERTIES
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED YES)
-    # The probe never builds; its compile-database entry must still
-    # resolve the public headers the JIT TU includes alongside the
+    target_compile_definitions(rvcl_jit_probe PRIVATE RVCL_HAVE_JIT)
+    # The probe never builds; its compile-database entries must still
+    # resolve the public headers the JIT TUs include alongside the
     # vendored generator path from the source-file property.
     target_include_directories(rvcl_jit_probe PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -242,8 +256,11 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
             src/backends/rvv/rvv_pack.cpp
             src/backends/rvv/rvv_gemm_f32.cpp
             src/backends/rvv/rvv_gemm_f16.cpp
-            src/backends/rvv/rvv_gemm_fp8.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
+        # rvv_gemm_bf16.cpp is deliberately NOT in the march list: it has no
+        # __riscv_vector intrinsics (the C path uses soft conversions, the
+        # JIT path emits its own instructions), and its RVCL_HAVE_JIT section
+        # must stay at the baseline march like the other JIT TUs.
         # The GEMV C-portable kernel is the operator's only compute path and
         # the differential oracle. Under the vector -march override the cross
         # gcc auto-vectorizes its scalar K reduction into a non-fused
@@ -419,7 +436,7 @@ if(RVCL_BUILD_TESTS)
     if(NOT RVCL_TEST_SET MATCHES "^(smoke|ci|all)$")
         message(FATAL_ERROR "RVCL_TEST_SET must be smoke, ci or all")
     endif()
-    function(rvcl_add_corpus op set file)
+    function(rvcl_add_corpus op set file dtypes)
         if(RVCL_TEST_SET STREQUAL "all"
                 OR (RVCL_TEST_SET STREQUAL "ci" AND NOT "${set}" STREQUAL "weekly")
                 OR (RVCL_TEST_SET STREQUAL "smoke" AND "${set}" STREQUAL "smoke"))
@@ -430,35 +447,39 @@ if(RVCL_BUILD_TESTS)
                 PROPERTIES LABELS "corpus;${set}")
 
             # Forced micro-kernel-path variants of the same corpus: the
-            # RVCL_RVV_KERNEL environment pin drives the f32 selection off
-            # auto so every path keeps its own regression surface (auto
-            # binds JIT-when-RVV, c is the portable oracle, intrinsics
-            # exist only under the RVCL_RVV_MARCH vector override). The
-            # variants run f32-only (--dt): f16 has no JIT path and keeps
-            # its auto chain, which the plain target above already covers.
-            # RISC-V hosts only — the x86 build stays host-agnostic.
+            # RVCL_RVV_KERNEL environment pin drives the selection off auto
+            # so every path keeps its own regression surface (auto binds
+            # JIT-when-RVV, c is the portable oracle, intrinsics exist only
+            # under the RVCL_RVV_MARCH vector override). <dtypes> scopes the
+            # forced targets to the dtypes the operator serves (matmul:
+            # f32/f16/bf16, gemv: f32), so a dtype with no kernel for the op
+            # never gets a forced target. The intrinsics path exists only
+            # for f32. RISC-V hosts only — the x86 build stays host-agnostic.
             if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
-                set(rvcl_forced_paths jit c)
-                if(RVCL_RVV_MARCH)
-                    list(APPEND rvcl_forced_paths intrinsics)
-                endif()
-                foreach(path IN LISTS rvcl_forced_paths)
-                    add_test(NAME test_${op}_modeC_${set}_${path}
-                        COMMAND rvcl_differential
-                                --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/${op}/${file}
-                                --dt=f32)
-                    set_tests_properties(test_${op}_modeC_${set}_${path}
-                        PROPERTIES LABELS "corpus;${set}"
-                        ENVIRONMENT "RVCL_RVV_KERNEL=${path}")
+                foreach(dt IN LISTS dtypes)
+                    set(rvcl_forced_paths jit c)
+                    if(dt STREQUAL "f32" AND RVCL_RVV_MARCH)
+                        list(APPEND rvcl_forced_paths intrinsics)
+                    endif()
+                    foreach(path IN LISTS rvcl_forced_paths)
+                        add_test(NAME test_${op}_modeC_${set}_${dt}_${path}
+                            COMMAND rvcl_differential
+                                    --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/${op}/${file}
+                                    --dt=${dt})
+                        set_tests_properties(
+                            test_${op}_modeC_${set}_${dt}_${path}
+                            PROPERTIES LABELS "corpus;${set}"
+                            ENVIRONMENT "RVCL_RVV_KERNEL=${path}")
+                    endforeach()
                 endforeach()
             endif()
         endif()
     endfunction()
 
-    rvcl_add_corpus(matmul smoke test_matmul_smoke)
-    rvcl_add_corpus(matmul ci    test_matmul_ci)
-    rvcl_add_corpus(gemv   smoke test_gemv_smoke)
-    rvcl_add_corpus(gemv   ci    test_gemv_ci)
+    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16")
+    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16")
+    rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32")
+    rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32")
 endif()
 
 # ---------------------------------------------------------------- examples

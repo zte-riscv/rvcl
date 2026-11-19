@@ -24,6 +24,7 @@
 
 #include "../src/backends/rvv/rvv_fp16.hpp"
 #include "../src/backends/rvv/rvv_fp8.hpp"
+#include "../src/backends/rvv/rvv_bf16.hpp"
 #include "../src/common/dtype_traits.hpp"
 
 /* ----------------------------------------------------- per-dtype wrappers
@@ -38,6 +39,11 @@ static void golden_f32_op(const void *a, const void *b, const float *bias,
 static void golden_f16_op(const void *a, const void *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k) {
     golden_f16((const uint16_t *)a, (const uint16_t *)b, bias, c, m, n, k);
+}
+
+static void golden_bf16_op(const void *a, const void *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k) {
+    golden_bf16((const uint16_t *)a, (const uint16_t *)b, bias, c, m, n, k);
 }
 
 static void golden_fp8_e4m3_op(const void *a, const void *b, const float *bias,
@@ -58,6 +64,10 @@ static void fill_f16_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_f16((uint16_t *)buf, n, seed);
 }
 
+static void fill_bf16_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_bf16((uint16_t *)buf, n, seed);
+}
+
 static void fill_fp8_e4m3_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_fp8_e4m3((uint8_t *)buf, n, seed);
 }
@@ -68,10 +78,8 @@ static void fill_fp8_e5m2_op(void *buf, size_t n, uint32_t seed) {
 
 /* fp32 storage is the value itself (4 bytes) while the f32_to_storage
  * slot returns a narrow (uint16_t) storage word, so it is only meaningful
- * for narrow dtypes (fp16 / fp8). The fp32 row keeps it NULL; no consumer
- * dereferences it for fp32 (both call sites guard on fp16). The fp8
- * down-conversions return uint8_t, widened to the uint16_t slot (the
- * 8-bit value lives in the low byte). */
+ * for narrow dtypes (fp16, bf16, fp8). The fp32 row keeps it NULL; no consumer
+ * dereferences it for fp32 (both call sites guard on the narrow dtypes). */
 
 static uint16_t f32_to_fp8_e4m3_slot(float f) {
     return (uint16_t)rvv_f32_to_fp8_e4m3(f);
@@ -94,10 +102,6 @@ static golden_cmp_t compare_op(const float *got, const float *exp, int64_t n,
     return golden_cmp_bitexact(got, exp, n);
 }
 
-/* fp8 rows: bit-exact at the bit level, because the golden and the
- * kernels upconvert through the same table and accumulate NaN-laden
- * products; identical NaN bit patterns must compare equal, which the
- * fp32 `!=` in golden_cmp_bitexact would flag. */
 static golden_cmp_t compare_op_bits(const float *got, const float *exp,
         int64_t n, rvcl_assert_level_t level, rvcl_dtype_t dtype) {
     if (level == RVCL_ASSERT_TOLERANT) {
@@ -109,8 +113,8 @@ static golden_cmp_t compare_op_bits(const float *got, const float *exp,
 
 /* ------------------------------------------------------------------ table */
 
-/* The currently supported test dtypes (f32, f16, f8_e4m3, f8_e5m2). A
- * new dtype adds one row here plus its golden/fill wrappers. */
+/* The currently supported test dtypes (f32, f16, bf16). A new dtype adds
+ * one row here plus its golden/fill wrappers. */
 static const dtype_ops_t k_dtype_ops[] = {
         {
                 .dtstr = "f32",
@@ -129,6 +133,15 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .fill = fill_f16_op,
                 .compare = compare_op,
                 .f32_to_storage = rvv_f32_to_f16,
+        },
+        {
+                .dtstr = "bf16",
+                .dtype = RVCL_DTYPE_BF16,
+                .elt = 2,
+                .golden = golden_bf16_op,
+                .fill = fill_bf16_op,
+                .compare = compare_op,
+                .f32_to_storage = rvv_f32_to_bf16,
         },
         {
                 .dtstr = "f8_e4m3",

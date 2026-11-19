@@ -248,7 +248,7 @@ the test suite was one corpus directory `tests/inputs/gemv/` plus one
 
 | Version | Milestone                                                                                  |
 | ------- | ------------------------------------------------------------------------------------------ |
-| v0.1    | RVV backend (FP32/FP16), differential testing against the reference                        |
+| v0.1    | RVV backend (FP32/FP16/BF16), differential testing against the reference                   |
 | v0.2    | IME backend — the first proof of the abstraction's value (same API on a matrix extension) |
 | v0.3    | VME / AME + oneDNN vertical slice (`DNNL_RV64_USE_RVCL`)                                  |
 | v0.4    | INT8 quantized paths + dispatch cost model (stages 5–7)                                   |

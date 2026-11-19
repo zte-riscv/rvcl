@@ -27,7 +27,8 @@
  * resolver never branches on the dtype. Semantics stay bit-identical to
  * the hand-written selectors they replace:
  *   f32 auto = JIT-when-RVV-else-C
- *   f16 auto = intrinsics-when-RVV-else-C
+ *   f16 auto = JIT-when-FP16-else-C (intrinsics kept as by-name only)
+ *   bf16 auto = JIT-when-RVV-else-C
  *
  * Internal to the backend; included only by rvv_backend.cpp.
  ******************************************************************************/
@@ -74,6 +75,10 @@ static rvv_gemm_fn rvv_path_f16_c(void) {
     return rvv_gemm_f16_c;
 }
 
+static rvv_gemm_fn rvv_path_bf16_c(void) {
+    return rvv_gemm_bf16_c;
+}
+
 static rvv_gemm_fn rvv_path_fp8_e4m3_c(void) {
     return rvv_gemm_fp8_e4m3_c;
 }
@@ -89,6 +94,22 @@ static int rvv_path_f32_jit_ok(void) {
 
 static rvv_gemm_fn rvv_path_f32_jit(void) {
     return rvv_gemm_f32_jit_entry();
+}
+
+static int rvv_path_f16_jit_ok(void) {
+    return rvv_gemm_f16_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_f16_jit(void) {
+    return rvv_gemm_f16_jit_entry();
+}
+
+static int rvv_path_bf16_jit_ok(void) {
+    return rvv_gemm_bf16_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_bf16_jit(void) {
+    return rvv_gemm_bf16_jit_entry();
 }
 
 static int rvv_path_fp8_e4m3_jit_ok(void) {
@@ -117,12 +138,6 @@ static rvv_gemm_fn rvv_path_f16_rvv(void) {
     return rvv_gemm_f16_rvv;
 }
 #endif
-
-/* Probe that never reports available: a path known by name but never
- * served on this build (f16's JIT), so a forced request fails loudly. */
-static int rvv_path_never(void) {
-    return 0;
-}
 
 /* ----------------------------------------------------------- resolver */
 
@@ -177,26 +192,42 @@ static const rvv_path_table_t rvv_f32_paths = {
 /* --------------------------------------------------------------- f16 */
 
 static const rvv_path_entry_t rvv_f16_path_entries[] = {
-        {"jit", NULL, rvv_path_never, -1,
-                "rvcl: f16 has no JIT path (want auto, c or intrinsics)\n"},
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_f16_jit, rvv_path_f16_jit_ok, 0,
+                "rvcl: forced JIT f16 path requires the FP16 (Zvfh) "
+                "extension\n"},
+#endif
 #if defined(__riscv_vector)
-        {"intrinsics", rvv_path_f16_rvv, NULL, 0, NULL},
+        {"intrinsics", rvv_path_f16_rvv, NULL, -1, NULL},
 #endif
         {"c", rvv_path_f16_c, NULL, 1, NULL},
 };
 
 static const rvv_path_table_t rvv_f16_paths = {
         "rvcl: f16 kernel path '%s' is unavailable "
-        "(want auto, c or intrinsics)\n",
+        "(want auto, c, jit or intrinsics)\n",
         rvv_f16_path_entries,
         sizeof(rvv_f16_path_entries) / sizeof(rvv_f16_path_entries[0]),
 };
 
-/* ------------------------------------------------------------- fp8 E4M3 */
+/* -------------------------------------------------------------- bf16 */
 
-/* fp8 has no intrinsics path: it is upconverted through the lookup table
- * by the C kernel and the JIT kernel. auto = JIT-when-RVV-else-C (rank 0
- * beats rank 1 C), matching f32. */
+static const rvv_path_entry_t rvv_bf16_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_bf16_jit, rvv_path_bf16_jit_ok, 0,
+                "rvcl: forced JIT bf16 path requires the vector extension\n"},
+#endif
+        {"c", rvv_path_bf16_c, NULL, 1, NULL},
+};
+
+static const rvv_path_table_t rvv_bf16_paths = {
+        "rvcl: bf16 kernel path '%s' is unavailable "
+        "(want auto, c or jit)\n",
+        rvv_bf16_path_entries,
+        sizeof(rvv_bf16_path_entries) / sizeof(rvv_bf16_path_entries[0]),
+};
+
+/* ------------------------------------------------------------- fp8 */
 
 static const rvv_path_entry_t rvv_fp8_e4m3_path_entries[] = {
 #if defined(RVCL_HAVE_JIT)
@@ -214,8 +245,6 @@ static const rvv_path_table_t rvv_fp8_e4m3_paths = {
         sizeof(rvv_fp8_e4m3_path_entries)
                 / sizeof(rvv_fp8_e4m3_path_entries[0]),
 };
-
-/* ------------------------------------------------------------- fp8 E5M2 */
 
 static const rvv_path_entry_t rvv_fp8_e5m2_path_entries[] = {
 #if defined(RVCL_HAVE_JIT)

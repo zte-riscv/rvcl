@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "../src/backends/rvv/rvv_fp16.hpp"
+#include "../src/backends/rvv/rvv_bf16.hpp"
 #include "../src/backends/rvv/rvv_fp8.hpp"
 
 /* ------------------------------------------------------------- goldens */
@@ -50,8 +51,19 @@ void golden_f16(const uint16_t *a, const uint16_t *b, const float *bias,
         }
 }
 
-/* fp8 goldens share one body parameterized by the dtype upconversion, so
- * the E4M3 and E5M2 reference paths cannot drift apart. */
+void golden_bf16(const uint16_t *a, const uint16_t *b, const float *bias,
+        float *c, int64_t m, int64_t n, int64_t k) {
+    for (int64_t i = 0; i < m; i++)
+        for (int64_t j = 0; j < n; j++) {
+            float acc = bias ? bias[j] : 0.0f;
+            for (int64_t p = 0; p < k; p++)
+                acc += rvv_bf16_to_f32(a[i * k + p])
+                        * rvv_bf16_to_f32(b[p * n + j]);
+            c[i * n + j] = acc;
+        }
+}
+
+/* fp8 goldens share one body parameterized by the dtype upconversion. */
 template <float (*UP)(uint8_t)>
 static void golden_fp8_impl(const uint8_t *a, const uint8_t *b,
         const float *bias, float *c, int64_t m, int64_t n, int64_t k) {
@@ -93,9 +105,12 @@ void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed) {
                 (float)(lcg_next(&seed) >> 8) / 16777216.0f - 0.5f);
 }
 
-/* fp8 fills down-convert the same [-0.5, 0.5) LCG stream; every value is
- * finite (well inside both dtypes' range), and the smallest magnitudes
- * land in the subnormal window, so the fills exercise subnormals too. */
+void lcg_fill_bf16(uint16_t *buf, size_t n, uint32_t seed) {
+    for (size_t i = 0; i < n; i++)
+        buf[i] = rvv_f32_to_bf16(
+                (float)(lcg_next(&seed) >> 8) / 16777216.0f - 0.5f);
+}
+
 void lcg_fill_fp8_e4m3(uint8_t *buf, size_t n, uint32_t seed) {
     for (size_t i = 0; i < n; i++)
         buf[i] = rvv_f32_to_fp8_e4m3(

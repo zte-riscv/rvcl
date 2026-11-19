@@ -84,11 +84,14 @@ void rvv_gemm_f32_c(const void *a, const void *b_packed, const void *bias,
 void rvv_gemm_f16_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
-void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed, const void *bias,
+void rvv_gemm_bf16_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
-void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed, const void *bias,
-        void *c, int64_t m, int64_t n, int64_t k_dim,
+void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed,
+        const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
+        const rvcl_work_range_t *r);
+void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed,
+        const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
 /* Panel packer (rvv_pack.cpp): plain B -> panel layout, dtype-agnostic. */
@@ -129,13 +132,17 @@ typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,
         const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
 
-/* JIT host-side entries (rvv_gemm_f32_jit.cpp): only present when the
- * JIT translation unit is compiled in, which callers detect through
- * RVCL_HAVE_JIT (a private definition of the library target). Library
- * internal; not exported. */
+/* JIT host-side entries (rvv_gemm_f32_jit.cpp / rvv_gemm_f16_jit.cpp /
+ * rvv_gemm_bf16.cpp): only present when the JIT translation units are
+ * compiled in, which callers detect through RVCL_HAVE_JIT (a private
+ * definition of the library target). Library internal; not exported. */
 #if defined(RVCL_HAVE_JIT)
 int rvv_gemm_f32_jit_available(void);
 rvv_gemm_fn rvv_gemm_f32_jit_entry(void);
+int rvv_gemm_f16_jit_available(void);
+rvv_gemm_fn rvv_gemm_f16_jit_entry(void);
+int rvv_gemm_bf16_jit_available(void);
+rvv_gemm_fn rvv_gemm_bf16_jit_entry(void);
 int rvv_gemm_fp8_e4m3_jit_available(void);
 rvv_gemm_fn rvv_gemm_fp8_e4m3_jit_entry(void);
 int rvv_gemm_fp8_e5m2_jit_available(void);
@@ -159,6 +166,7 @@ rvv_gemm_fn rvv_gemm_fp8_e5m2_jit_entry(void);
  * backend/tests; not public API. */
 rvv_gemm_fn rvv_pick_gemm_f32(void);
 rvv_gemm_fn rvv_pick_gemm_f16(void);
+rvv_gemm_fn rvv_pick_gemm_bf16(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(void);
 
@@ -169,6 +177,7 @@ rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(void);
  * run cannot serve. */
 rvv_gemm_fn rvv_pick_gemm_f32_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_f16_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_bf16_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2_by_name(const char *name);
 
