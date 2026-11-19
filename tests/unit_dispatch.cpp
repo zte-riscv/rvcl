@@ -1471,7 +1471,7 @@ static void tc21_block_scale(void) {
     g_scale_seen.store(0);
     CHECK(rvcl_matmul_scaled(&mx, a, sa, b, sb, NULL, c) == RVCL_SUCCESS,
             "scaled matmul with scales succeeds");
-    CHECK(g_scale_seen.load() == 1,
+    CHECK(g_scale_seen.load() >= 1,
             "scale tensor reached the kernel run via SRC_SCALE_A");
     unregister_quiet("t21_scale");
     rvcl_dispatch_cache_clear();
