@@ -84,6 +84,60 @@ static void tc01_trait_table(void) {
             "f16 acc habit = FP32");
 }
 
+/* TC-05: the block-scale dtype facts — trait rows for E8M0 and the four
+ * MX/NV formats, plus the block-size / scale-dtype accessors (D-1). */
+static void tc05_block_scale_dtypes(void) {
+    printf("TC-05 block-scale dtype traits and accessors\n");
+
+    /* Trait rows: 1-byte storage, FP family, FP32 accumulator, bit-exact. */
+    const rvcl_dtype_t block_dtypes[5]
+            = {RVCL_DTYPE_E8M0, RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2,
+                    RVCL_DTYPE_NVFP4, RVCL_DTYPE_MXFP4};
+    const char *labels[5]
+            = {"e8m0", "mxfp8e4m3", "mxfp8e5m2", "nvfp4", "mxfp4"};
+    for (int i = 0; i < 5; i++) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%s trait size = 1", labels[i]);
+        CHECK(rvcl_dtype_traits(block_dtypes[i]).size == 1, msg);
+        snprintf(msg, sizeof(msg), "%s rvcl_dtype_size = 1", labels[i]);
+        CHECK(rvcl_dtype_size(block_dtypes[i]) == 1, msg);
+        snprintf(msg, sizeof(msg), "%s family = FP", labels[i]);
+        CHECK(rvcl_dtype_traits(block_dtypes[i]).family == RVCL_DTYPE_FAMILY_FP,
+                msg);
+        snprintf(msg, sizeof(msg), "%s acc default = FP32", labels[i]);
+        CHECK(rvcl_dtype_traits(block_dtypes[i]).acc_default == RVCL_DTYPE_FP32,
+                msg);
+        snprintf(msg, sizeof(msg), "%s assert level = BITEXACT", labels[i]);
+        CHECK(rvcl_dtype_traits(block_dtypes[i]).assert_level_default
+                        == RVCL_ASSERT_BITEXACT,
+                msg);
+    }
+
+    /* Accessor facts. */
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_MXFP8_E4M3) == 32,
+            "mxfp8e4m3 block = 32");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_MXFP8_E4M3) == RVCL_DTYPE_E8M0,
+            "mxfp8e4m3 scale = E8M0");
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_MXFP8_E5M2) == 32,
+            "mxfp8e5m2 block = 32");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_MXFP8_E5M2) == RVCL_DTYPE_E8M0,
+            "mxfp8e5m2 scale = E8M0");
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_NVFP4) == 16, "nvfp4 block = 16");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_NVFP4) == RVCL_DTYPE_FP8_E4M3,
+            "nvfp4 scale = E4M3");
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_MXFP4) == 32, "mxfp4 block = 32");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_MXFP4) == RVCL_DTYPE_E8M0,
+            "mxfp4 scale = E8M0");
+    /* E8M0 itself is a scale dtype, not a block-scale compute dtype. */
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_E8M0) == 0, "e8m0 block = 0");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_E8M0) == RVCL_DTYPE_AUTO,
+            "e8m0 scale = AUTO");
+    /* A plain dtype is not block-scale. */
+    CHECK(rvcl_dtype_block_size(RVCL_DTYPE_FP32) == 0, "f32 block = 0");
+    CHECK(rvcl_dtype_scale_dtype(RVCL_DTYPE_FP32) == RVCL_DTYPE_AUTO,
+            "f32 scale = AUTO");
+}
+
 static void tc02_assert_level_defaults(void) {
     printf("TC-02 assertion-level defaults and tolerance class\n");
 
@@ -170,6 +224,7 @@ int main(void) {
     tc02_assert_level_defaults();
     tc03_registry_assert_level();
     tc04_dispatch_routing();
+    tc05_block_scale_dtypes();
 
     printf(g_failures ? "UNIT-DTYPE-TRAITS: %d failure(s)\n"
                       : "UNIT-DTYPE-TRAITS: all passed\n",
