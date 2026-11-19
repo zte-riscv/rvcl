@@ -79,8 +79,10 @@ def check_pr_title(title, pr_number):
     squash_status = "Squash subject: "
     print(squash_status + squash)
     # Appending " (#<number>)" cannot break a subject that already matched
-    # SUBJECT_RE, so only the length can still fail here; a bare title that
-    # already failed is reported as FAILED rather than checked again.
+    # SUBJECT_RE, so the length is the only new failure mode here.
+    # The `not is_ok` clause is a deliberate invariant guard: it reports a
+    # bare title that already failed as FAILED rather than masking it, so a
+    # failed bare title never gets a passing squash subject.
     if not is_ok or len(squash) > SUBJECT_MAX_LEN:
         if len(squash) > SUBJECT_MAX_LEN:
             print(
