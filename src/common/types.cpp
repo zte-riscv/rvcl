@@ -20,10 +20,13 @@
 #include "rvcl/types.h"
 
 size_t rvcl_dtype_bits(rvcl_dtype_t dt) {
-    /* Sub-byte dtype: INT4 packs two elements per byte, so its per-element
-     * width is 4 bits rather than size*8. Every other dtype stores one
-     * element per size bytes, so its width derives from the trait size. */
-    if (dt == RVCL_DTYPE_INT4) return 4;
+    /* Sub-byte dtypes: INT4 and the FP4 block-scale formats (NVFP4, MXFP4)
+     * pack two elements per byte, so their per-element width is 4 bits
+     * rather than size*8. Every other dtype stores one element per size
+     * bytes, so its width derives from the trait size. */
+    if (dt == RVCL_DTYPE_INT4 || dt == RVCL_DTYPE_NVFP4
+            || dt == RVCL_DTYPE_MXFP4)
+        return 4;
     return rvcl_dtype_traits(dt).size * 8;
 }
 

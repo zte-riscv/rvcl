@@ -48,6 +48,9 @@ typedef struct {
             int64_t blk);
     /* Deterministic LCG fill of a dtype-storage buffer. */
     void (*fill)(void *buf, size_t n, uint32_t seed);
+    /* Deterministic LCG fill of the block-scale tensor (E8M0 for MXFP8/MXFP4,
+     * E4M3 for NVFP4); NULL for non-block-scale dtypes. */
+    void (*fill_scale)(void *buf, size_t n, uint32_t seed);
     /* Compare routing, driven by the kernel desc assertion level; the
      * tolerance class comes from the library trait table by dtype. */
     golden_cmp_t (*compare)(const float *got, const float *exp, int64_t n,

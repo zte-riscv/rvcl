@@ -127,6 +127,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_fp8.cpp
         src/backends/rvv/rvv_gemm_s8u8.cpp
         src/backends/rvv/rvv_gemm_mxfp8.cpp
+        src/backends/rvv/rvv_gemm_fp4.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the
@@ -473,8 +474,15 @@ if(RVCL_BUILD_TESTS)
             # never gets a forced target. The intrinsics path exists only
             # for f32. RISC-V hosts only — the x86 build stays host-agnostic.
             if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+                # dtypes with a JIT micro-kernel (fp4's JIT is deferred, so
+                # its forced variants are scoped to the portable C oracle).
+                set(rvcl_jit_dtypes
+                    f32 f16 bf16 f8_e4m3 f8_e5m2 mxfp8e4m3 mxfp8e5m2 s8 u8)
                 foreach(dt IN LISTS dtypes)
-                    set(rvcl_forced_paths jit c)
+                    set(rvcl_forced_paths c)
+                    if(dt IN_LIST rvcl_jit_dtypes)
+                        list(PREPEND rvcl_forced_paths jit)
+                    endif()
                     if(dt STREQUAL "f32" AND RVCL_RVV_MARCH)
                         list(APPEND rvcl_forced_paths intrinsics)
                     endif()
@@ -493,8 +501,8 @@ if(RVCL_BUILD_TESTS)
         endif()
     endfunction()
 
-    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8")
-    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8")
+    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4")
+    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4")
     rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32")
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32")
 endif()

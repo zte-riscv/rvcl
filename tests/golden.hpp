@@ -69,6 +69,19 @@ void golden_mxfp8_e5m2(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
         const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
         int64_t k, int64_t blk);
 
+/* FP4 block-scale goldens: A/B are E2M1 elements nibble-packed (even index =
+ * low nibble, 2 per byte). NVFP4 uses block 16 with an E4M3 scale (f32 single
+ * multiply, golden and kernel use the same formula); MXFP4 uses block 32 with
+ * an E8M0 scale (x * 2^(e-127)). Both fold both scales into the B value and
+ * accumulate with a single fused multiply-add, bit-identical to the kernels
+ * on finite data through the shared fma grouping. */
+void golden_nvfp4(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk);
+void golden_mxfp4(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk);
+
 /* Deterministic LCG fill in [-0.5, 0.5): identical sequence on every
  * host and libc (no rand()), so differential and bench C mode see the
  * exact same inputs for a given shape. */
@@ -93,6 +106,23 @@ void lcg_fill_i32(int32_t *buf, size_t n, uint32_t seed);
  * differential smoke on rvv_e8m0_to_f32 instead. Uses the same LCG stream
  * as the element fills. */
 void lcg_fill_e8m0(uint8_t *buf, size_t n, uint32_t seed);
+
+/* Deterministic E2M1 FP4 element fill: draws a nibble (0-15) per element and
+ * packs two per byte (even index = low nibble). The whole 16-value E2M1
+ * range is exercised, so the conversion table's full set is covered; buf
+ * holds ceil(n/2) bytes. */
+void lcg_fill_e2m1(uint8_t *buf, size_t n, uint32_t seed);
+
+/* Deterministic E4M3 (NVFP4) scale fill: uniform finite bytes in a bounded
+ * range (0x01 .. 0x7E, i.e. 2^-9 .. 448) plus the 0x00 zero and 0x01
+ * subnormal boundaries at buf[0]/buf[1] — a corpus case always exercises the
+ * zero and subnormal scale conversions, while the bounded magnitudes keep
+ * every product and sum finite so the bit-exact compare holds on any
+ * compiler. The extreme boundary bytes (0x7F = NaN) are NOT injected here:
+ * a NaN scale propagates NaN through the column sum with a compiler-dependent
+ * NaN bit pattern, so that conversion is covered by the dedicated differential
+ * smoke on the E4M3 scale instead. */
+void lcg_fill_e4m3(uint8_t *buf, size_t n, uint32_t seed);
 
 /* Stable per-shape seed (the mix below is part of the data contract:
  * differential and bench C mode derive identical buffers from it). */

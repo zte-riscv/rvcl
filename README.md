@@ -261,9 +261,31 @@ both the FP8 and E8M0 tables. Dispatch auto-selects via the trait
 `acc_default`; the corpus, differential (boundary `0x00`/`0xFE`/`0xFF`
 smoke) and bench `kernel` attribution all cover it.
 
+**FP4 (NVFP4 / MXFP4) full chain** is the second block-scale worked example,
+extending the pattern to 4-bit (sub-byte) E2M1 elements. A and B are E2M1
+values nibble-packed two per byte (even index = low nibble) and upconverted
+through the shared 16-entry f32 table in `src/backends/rvv/rvv_fp4.hpp` (every
+one of the 16 encodings is exactly representable in f32). NVFP4 uses block 16
+with an E4M3 scale (`x * e4m3_scale`), MXFP4 block 32 with an E8M0 scale
+(`x * 2^(e-127)`); the A scale byte is `sa[i][K/blk]`, B is `sb[K/blk][j]`
+(oneDNN-aligned). Golden and C kernels share the exact grouping of the MXFP8
+chain — each K term folds both scales into the B value and accumulates with a
+single fused multiply-add `acc = fma(A, B*ascale*bscale, acc)` — so they agree
+bit-for-bit on finite data even though the E4M3 scale is not an exact power of
+two (both paths round identically). A is unpacked on the fly from its nibble
+storage via `rvv_fp4_nibble_get`; B is pre-unpacked to a byte per element by
+the panel packer, which branches on `rvcl_dtype_bits < 8`. The micro-kernels
+reuse the block-scale signature `rvv_gemm_mxfp8_fn(a, b_packed, sa, sb, bias,
+c, m, n, k, blk, r)` with `blk` bound to 16 (NVFP4) / 32 (MXFP4); the JIT path
+is deferred (v0.5), so the fp4 path tables carry only the C entry. Dispatch
+requires K divisible by the block size; the corpus, differential (E4M3
+`0x00`/`0x01`/`0x7E`/`0x7F` and E8M0 boundary smokes) and bench `kernel`
+attribution all cover it.
+
 **Sub-byte storage contract** (`rvcl_dtype_bits`, `rvcl_dtype_size`,
 `rvcl_tensor_bytes`): `rvcl_dtype_bits()` reports the per-element storage
-width in bits (`INT4` = 4, byte-multiple dtypes = `size*8`, `AUTO` = 0).
+width in bits (`INT4` = 4, `NVFP4` = 4, `MXFP4` = 4, byte-multiple dtypes =
+`size*8`, `AUTO` = 0).
 `rvcl_dtype_size()` is documented as `ceil(bits/8)`: for a sub-byte dtype a
 byte is the storage granularity that packs several elements (`INT4` = 1 byte
 = a pair of elements). `rvcl_tensor_bytes()` returns `ceil(numel*bits/8)`,

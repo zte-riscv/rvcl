@@ -356,8 +356,10 @@ static void bench_kernel_only(void *p) {
         const void *a = cs->od.matmul.dtype_a == RVCL_DTYPE_FP32
                 ? (const void *)cs->a
                 : (const void *)cs->ah;
+        const int64_t blk
+                = (int64_t)rvcl_dtype_block_size(cs->od.matmul.dtype_a);
         kc->gemm_mxfp8(a, kc->packed, cs->sa, cs->sb, cs->bias, cs->c, cs->m,
-                cs->n, cs->k, 32, &full);
+                cs->n, cs->k, blk, &full);
         return;
     }
     kc->gemm(cs->od.matmul.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
@@ -399,7 +401,9 @@ static void bench_e2e(void *p) {
     if (cs->od.matmul.dtype_a == RVCL_DTYPE_FP32)
         rvcl_matmul(&cs->od.matmul, cs->a, cs->b, cs->bias, cs->c);
     else if (cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP8_E4M3
-            || cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP8_E5M2)
+            || cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP8_E5M2
+            || cs->od.matmul.dtype_a == RVCL_DTYPE_NVFP4
+            || cs->od.matmul.dtype_a == RVCL_DTYPE_MXFP4)
         rvcl_matmul_scaled(&cs->od.matmul, cs->ah, cs->sa, cs->bh, cs->sb,
                 cs->bias, cs->c);
     else
@@ -462,6 +466,12 @@ static rvv_gemm_mxfp8_fn pick_gemm_mxfp8(rvcl_dtype_t dt, const char *path) {
         case RVCL_DTYPE_MXFP8_E5M2:
             return path ? rvv_pick_gemm_mxfp8_e5m2_by_name(path)
                         : rvv_pick_gemm_mxfp8_e5m2();
+        case RVCL_DTYPE_NVFP4:
+            return path ? rvv_pick_gemm_nvfp4_by_name(path)
+                        : rvv_pick_gemm_nvfp4();
+        case RVCL_DTYPE_MXFP4:
+            return path ? rvv_pick_gemm_mxfp4_by_name(path)
+                        : rvv_pick_gemm_mxfp4();
         default: return NULL;
     }
 }
@@ -519,17 +529,17 @@ static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
         op->fill(cs->bh, (size_t)b_elems, seed ^ 0x9e3779b9u);
     }
 
-    /* Block-scale (MXFP8) dtypes carry E8M0 scales: sa[m][K/blk] and
-     * sb[K/blk][n], filled with the boundary-aware scale LCG. */
+    /* Block-scale dtypes carry per-block scales: sa[m][K/blk] and
+     * sb[K/blk][n], filled with the dtype's boundary-aware scale LCG. */
     const int64_t blk = (int64_t)rvcl_dtype_block_size(op->dtype);
     cs->sa = NULL;
     cs->sb = NULL;
-    if (blk > 0) {
+    if (blk > 0 && op->fill_scale) {
         const int64_t nblk = cs->k / blk;
         cs->sa = (uint8_t *)malloc((size_t)(cs->m * nblk));
         cs->sb = (uint8_t *)malloc((size_t)(nblk * cs->n));
-        lcg_fill_e8m0(cs->sa, (size_t)(cs->m * nblk), seed ^ 0xa5a5a5a5u);
-        lcg_fill_e8m0(cs->sb, (size_t)(nblk * cs->n), seed ^ 0x5f5f5f5fu);
+        op->fill_scale(cs->sa, (size_t)(cs->m * nblk), seed ^ 0xa5a5a5a5u);
+        op->fill_scale(cs->sb, (size_t)(nblk * cs->n), seed ^ 0x5f5f5f5fu);
     }
 }
 
@@ -864,12 +874,14 @@ int main(int argc, char **argv) {
                     .gemm_mxfp8 = NULL};
             /* kernel-only goes through the same selectors the backend binds
              * (rvv_pick_*); --path=NAME forces a specific micro-kernel
-             * through the shared by-name resolver. mxfp8 uses the
-             * block-scale selector (distinct function type carrying the
-             * E8M0 scale tensors). */
-            const int is_mxfp8 = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
-                    || dop->dtype == RVCL_DTYPE_MXFP8_E5M2;
-            if (is_mxfp8) {
+             * through the shared by-name resolver. Block-scale dtypes
+             * (MXFP8/NVFP4/MXFP4) use the block-scale selector (distinct
+             * function type carrying the scale tensors). */
+            const int is_block_scale = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
+                    || dop->dtype == RVCL_DTYPE_MXFP8_E5M2
+                    || dop->dtype == RVCL_DTYPE_NVFP4
+                    || dop->dtype == RVCL_DTYPE_MXFP4;
+            if (is_block_scale) {
                 kc.gemm_mxfp8 = pick_gemm_mxfp8(dop->dtype, path);
                 if (!kc.gemm_mxfp8) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",

@@ -115,6 +115,14 @@ static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e5m2_c(void) {
     return rvv_gemm_mxfp8_e5m2_c;
 }
 
+static rvv_gemm_mxfp8_fn rvv_path_nvfp4_c(void) {
+    return rvv_gemm_nvfp4_c;
+}
+
+static rvv_gemm_mxfp8_fn rvv_path_mxfp4_c(void) {
+    return rvv_gemm_mxfp4_c;
+}
+
 #if defined(RVCL_HAVE_JIT)
 static int rvv_path_f32_jit_ok(void) {
     return rvv_gemm_f32_jit_available();
@@ -371,6 +379,28 @@ static const rvv_path_mxfp8_table_t rvv_mxfp8_e5m2_paths = {
         rvv_mxfp8_e5m2_path_entries,
         sizeof(rvv_mxfp8_e5m2_path_entries)
                 / sizeof(rvv_mxfp8_e5m2_path_entries[0]),
+};
+
+/* --------------------------------------------------------------- fp4 */
+
+static const rvv_path_mxfp8_entry_t rvv_nvfp4_path_entries[] = {
+        {"c", rvv_path_nvfp4_c, NULL, 1, NULL},
+};
+
+static const rvv_path_mxfp8_table_t rvv_nvfp4_paths = {
+        "rvcl: nvfp4 kernel path '%s' is unavailable (want auto or c)\n",
+        rvv_nvfp4_path_entries,
+        sizeof(rvv_nvfp4_path_entries) / sizeof(rvv_nvfp4_path_entries[0]),
+};
+
+static const rvv_path_mxfp8_entry_t rvv_mxfp4_path_entries[] = {
+        {"c", rvv_path_mxfp4_c, NULL, 1, NULL},
+};
+
+static const rvv_path_mxfp8_table_t rvv_mxfp4_paths = {
+        "rvcl: mxfp4 kernel path '%s' is unavailable (want auto or c)\n",
+        rvv_mxfp4_path_entries,
+        sizeof(rvv_mxfp4_path_entries) / sizeof(rvv_mxfp4_path_entries[0]),
 };
 
 /* -------------------------------------------------------------- s8/u8 */
