@@ -494,7 +494,7 @@ static void tc05_cache_counters(void) {
     d2.m = 17;
     rvcl_dispatch_result_t *r = NULL;
 
-    int hits = rvcl_dispatch_cache_hits();
+    int hits; /* assigned below from the baseline; the first use is the delta */
     int misses = rvcl_dispatch_cache_misses();
     CHECK(rvcl_dispatch_matmul(&d1, &r) == RVCL_SUCCESS, "first request ok");
     rvcl_dispatch_release(r);
@@ -627,8 +627,12 @@ static void tc06_cache_key(void) {
  * is never selected again. */
 static void tc07_registry_change(void) {
     printf("TC-AC3-07 cache invalidation on registry change\n");
-    rvcl_kernel_desc_t f1 = make_desc("t07_f1", RVCL_DTYPE_INT8,
-            RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
+    /* (INT32,INT32,INT32,INT32) is a valid request tuple that no built-in
+     * kernel occupies (s8/u8 now take (INT8|UINT8,...,INT32,INT32)), so the
+     * two synthetic kernels below are the only candidates — the isolation
+     * the case needs to observe cost-driven selection. */
+    rvcl_kernel_desc_t f1 = make_desc("t07_f1", RVCL_DTYPE_INT32,
+            RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
     f1.cost_fn = cost_five;
     rvcl_kernel_desc_t f2 = f1;
     snprintf(f2.name, RVCL_KERNEL_NAME_MAX, "%s", "t07_f2");
@@ -637,8 +641,8 @@ static void tc07_registry_change(void) {
             "two cost-differentiated kernels registered");
     rvcl_dispatch_cache_clear();
 
-    const rvcl_matmul_desc_t d = make_request(16, 16, 16, RVCL_DTYPE_INT8,
-            RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
+    const rvcl_matmul_desc_t d = make_request(16, 16, 16, RVCL_DTYPE_INT32,
+            RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32);
     rvcl_dispatch_result_t *r = NULL;
     CHECK(rvcl_dispatch_matmul(&d, &r) == RVCL_SUCCESS, "dispatch succeeds");
     CHECK(rvcl_dispatch_kernel_name(r)
@@ -742,6 +746,7 @@ static void tc09_illegal_tuples(void) {
     cases[nc].label = "reserved dtype value";
     cases[nc++].d = v;
     v = base;
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     v.dtype_a = (rvcl_dtype_t)99;
     cases[nc].label = "out-of-range dtype value";
     cases[nc++].d = v;
@@ -758,10 +763,12 @@ static void tc09_illegal_tuples(void) {
     cases[nc].label = "AUTO in C";
     cases[nc++].d = v;
     v = base;
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     v.dtype_acc = (rvcl_dtype_t)99;
     cases[nc].label = "out-of-range accumulator dtype";
     cases[nc++].d = v;
     v = base;
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     v.dtype_bias = (rvcl_dtype_t)99;
     cases[nc].label = "out-of-range bias dtype";
     cases[nc++].d = v;

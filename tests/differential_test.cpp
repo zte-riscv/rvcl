@@ -407,10 +407,13 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
         return -1;
     }
 
-    /* Build the operator descriptor through the slot. */
+    /* Build the operator descriptor through the slot. The C dtype and the
+     * bias dtype follow the input's acc habit (int32 for the integer s8/u8
+     * acc habit, fp32 otherwise). */
     rvcl_op_desc_t od;
-    slot->build_desc(&od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    const rvcl_dtype_t cdtype = dtype_ops_out_dtype(dt);
+    slot->build_desc(
+            &od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO, cdtype, cdtype);
 
     /* A block-scale (MXFP8) dtype requires K divisible by its block size;
      * a corpus shape whose K is not is invalid for that dtype, so skip it
@@ -433,7 +436,10 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
     int fails = 0;
 
     float *bias = (float *)malloc((size_t)bias_elems * 4);
-    lcg_fill_f32(bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    if (cdtype == RVCL_DTYPE_INT32)
+        lcg_fill_i32((int32_t *)bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    else
+        lcg_fill_f32(bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
 
     /* dtype-storage A/B buffers, sized and filled through the test table */
     void *a = malloc((size_t)a_elems * op->elt);
@@ -548,7 +554,8 @@ int main(int argc, char **argv) {
         else {
             fprintf(stderr,
                     "usage: %s [--batch=<corpus-file>] "
-                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2] "
+                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2|"
+                    "s8|u8] "
                     "[--op=matmul|gemv]\n",
                     argv[0]);
             return 2;
@@ -585,8 +592,8 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr,
                     "error: bad value for --dt: '%s' "
-                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3 or "
-                    "mxfp8e5m2)\n",
+                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3, "
+                    "mxfp8e5m2, s8 or u8)\n",
                     dt_arg);
             return 2;
         }
@@ -600,6 +607,12 @@ int main(int argc, char **argv) {
     const int dt_only_mxfp8_e5m2 = dt_only == RVCL_DTYPE_MXFP8_E5M2;
     const int dt_only_other = dt_only_fp8_e4m3 || dt_only_fp8_e5m2
             || dt_only_mxfp8_e4m3 || dt_only_mxfp8_e5m2;
+    /* Integer dtypes (s8/u8) have no fixed float sections of their own:
+     * a dtype-restricted run must not execute the float fixed sections
+     * below, or a forced-c run exposes the portable f32 fallback to the
+     * vector-tier compile-march 1-ulp artifact (the f32_c skip-list reason). */
+    const int dt_only_int
+            = dt_only == RVCL_DTYPE_INT8 || dt_only == RVCL_DTYPE_UINT8;
 
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
 
@@ -648,7 +661,7 @@ int main(int argc, char **argv) {
         float *c_ref = (float *)malloc((size_t)M * N * 4),
               *c_rvv = (float *)malloc((size_t)M * N * 4);
         float *golden = (float *)malloc((size_t)M * N * 4);
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             a = (float *)malloc((size_t)M * K * 4);
             b = (float *)malloc((size_t)K * N * 4);
             for (int i = 0; i < M * K; i++)
@@ -671,7 +684,7 @@ int main(int argc, char **argv) {
                 .quant = {},
         };
 
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             golden_f32(a, b, bias, golden, M, N, K);
 
             CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, NULL,
@@ -714,7 +727,7 @@ int main(int argc, char **argv) {
 
         /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
         uint16_t *ah = NULL, *bh = NULL;
-        if (!dt_only_f32 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f32 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
             ah = (uint16_t *)malloc((size_t)M * K * 2);
             bh = (uint16_t *)malloc((size_t)K * N * 2);
@@ -749,7 +762,7 @@ int main(int argc, char **argv) {
 
         /* ---- bf16 differential: rvv bf16 vs golden soft-convert ---- */
         uint16_t *abh = NULL, *bbh = NULL;
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_other) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_other && !dt_only_int) {
             const dtype_ops_t *opb = dtype_ops_for(RVCL_DTYPE_BF16);
             abh = (uint16_t *)malloc((size_t)M * K * 2);
             bbh = (uint16_t *)malloc((size_t)K * N * 2);
@@ -783,7 +796,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- fp8 special-value smoke ---- */
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16 && !dt_only_int) {
             enum { FM = 5, FN = 3, FK = 7 };
             static const uint8_t e4m3_special[]
                     = {0x7F, 0xFF, 0x01, 0x03, 0x7E, 0x78, 0x00, 0x80};
@@ -840,7 +853,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- mxfp8 block-scale smoke: e8m0 boundary conversions ---- */
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16 && !dt_only_int) {
             /* E8M0 up-conversion boundaries, asserted directly on the shared
              * table so the full exponent range is covered on any compiler.
              * 0x00 -> 2^-127 (subnormal), 0xFE -> 2^127 (largest normal
@@ -998,7 +1011,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- work-range honoring inside a kernel ---- */
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             /* run_matmul_kernel uses the full range; exercise a sub-range by
          * passing an explicit row span [4,9). */
             memset(c_rvv, 0, (size_t)M * N * 4);

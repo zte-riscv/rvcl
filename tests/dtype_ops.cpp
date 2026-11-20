@@ -90,6 +90,29 @@ static void golden_mxfp8_e5m2_op(const void *a, const void *sa, const void *b,
             (const uint8_t *)b, (const uint8_t *)sb, bias, c, m, n, k, blk);
 }
 
+/* INT8 goldens: the output and bias are int32 (the s8/u8 acc habit), both
+ * 4 bytes per element like the float buffers the test rig passes, so the
+ * storage is reinterpreted as int32. */
+static void golden_s8_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
+    golden_s8((const int8_t *)a, (const int8_t *)b, (const int32_t *)bias,
+            (int32_t *)c, m, n, k);
+}
+
+static void golden_u8_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    (void)sa;
+    (void)sb;
+    (void)blk;
+    golden_u8((const uint8_t *)a, (const uint8_t *)b, (const int32_t *)bias,
+            (int32_t *)c, m, n, k);
+}
+
 static void fill_f32_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_f32((float *)buf, n, seed);
 }
@@ -108,6 +131,14 @@ static void fill_fp8_e4m3_op(void *buf, size_t n, uint32_t seed) {
 
 static void fill_fp8_e5m2_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_fp8_e5m2((uint8_t *)buf, n, seed);
+}
+
+static void fill_s8_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_s8((int8_t *)buf, n, seed);
+}
+
+static void fill_u8_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_u8((uint8_t *)buf, n, seed);
 }
 
 /* fp32 storage is the value itself (4 bytes) while the f32_to_storage
@@ -213,6 +244,24 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .compare = compare_op_bits,
                 .f32_to_storage = f32_to_fp8_e5m2_slot,
         },
+        {
+                .dtstr = "s8",
+                .dtype = RVCL_DTYPE_INT8,
+                .elt = 1,
+                .golden = golden_s8_op,
+                .fill = fill_s8_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = NULL, /* integer storage; no f32 convert */
+        },
+        {
+                .dtstr = "u8",
+                .dtype = RVCL_DTYPE_UINT8,
+                .elt = 1,
+                .golden = golden_u8_op,
+                .fill = fill_u8_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = NULL, /* integer storage; no f32 convert */
+        },
 };
 
 static const int k_dtype_ops_count
@@ -231,4 +280,10 @@ int dtype_ops_from_dtstr(const char *s, rvcl_dtype_t *out) {
             return 1;
         }
     return 0;
+}
+
+rvcl_dtype_t dtype_ops_out_dtype(rvcl_dtype_t dt) {
+    if (dt == RVCL_DTYPE_INT8 || dt == RVCL_DTYPE_UINT8)
+        return RVCL_DTYPE_INT32;
+    return RVCL_DTYPE_FP32;
 }

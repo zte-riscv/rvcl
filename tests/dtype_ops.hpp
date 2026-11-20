@@ -66,4 +66,9 @@ const dtype_ops_t *dtype_ops_for(rvcl_dtype_t dt);
 /* dtstr -> datatype; returns 1 and sets *out on a known string, else 0. */
 int dtype_ops_from_dtstr(const char *s, rvcl_dtype_t *out);
 
+/* Output (C) dtype for an input dtype's matmul: INT32 for the integer
+ * s8/u8 acc habit, FP32 otherwise. The test rig is float-typed, so callers
+ * (differential, bench) build the descriptor's C dtype from this. */
+rvcl_dtype_t dtype_ops_out_dtype(rvcl_dtype_t dt);
+
 #endif /* RVCL_TEST_DTYPE_OPS_H */

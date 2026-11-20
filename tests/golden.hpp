@@ -49,6 +49,14 @@ void golden_fp8_e4m3(const uint8_t *a, const uint8_t *b, const float *bias,
 void golden_fp8_e5m2(const uint8_t *a, const uint8_t *b, const float *bias,
         float *c, int64_t m, int64_t n, int64_t k);
 
+/* INT8 (signed/unsigned byte) goldens: each byte is widened to int32 and
+ * accumulated in ascending K order (bias first), bit-identical to the C
+ * and JIT kernels. The output and bias are int32 (the s8/u8 acc habit). */
+void golden_s8(const int8_t *a, const int8_t *b, const int32_t *bias,
+        int32_t *c, int64_t m, int64_t n, int64_t k);
+void golden_u8(const uint8_t *a, const uint8_t *b, const int32_t *bias,
+        int32_t *c, int64_t m, int64_t n, int64_t k);
+
 /* MXFP8 block-scale goldens: A/B are FP8 bytes and carry the 1-byte E8M0
  * per-32-block exponent scales sa (m x K/blk, row-major) and sb
  * (K/blk x n, row-major — oneDNN-aligned), exactly the layouts the C/JIT
@@ -72,6 +80,9 @@ void lcg_fill_f16(uint16_t *buf, size_t n, uint32_t seed);
 void lcg_fill_bf16(uint16_t *buf, size_t n, uint32_t seed);
 void lcg_fill_fp8_e4m3(uint8_t *buf, size_t n, uint32_t seed);
 void lcg_fill_fp8_e5m2(uint8_t *buf, size_t n, uint32_t seed);
+void lcg_fill_s8(int8_t *buf, size_t n, uint32_t seed);
+void lcg_fill_u8(uint8_t *buf, size_t n, uint32_t seed);
+void lcg_fill_i32(int32_t *buf, size_t n, uint32_t seed);
 
 /* Deterministic E8M0 scale fill: uniform bytes in a finite-safe exponent
  * range (2^-126 .. 2^33) plus the 0x00 subnormal boundary at buf[0] — a

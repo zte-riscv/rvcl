@@ -105,6 +105,14 @@ static rvv_gemm_fn rvv_path_fp8_e5m2_c(void) {
     return rvv_gemm_fp8_e5m2_c;
 }
 
+static rvv_gemm_fn rvv_path_s8_c(void) {
+    return rvv_gemm_s8_c;
+}
+
+static rvv_gemm_fn rvv_path_u8_c(void) {
+    return rvv_gemm_u8_c;
+}
+
 static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e4m3_c(void) {
     return rvv_gemm_mxfp8_e4m3_c;
 }
@@ -168,6 +176,22 @@ static int rvv_path_mxfp8_e5m2_jit_ok(void) {
 
 static rvv_gemm_mxfp8_fn rvv_path_mxfp8_e5m2_jit(void) {
     return rvv_gemm_mxfp8_e5m2_jit_entry();
+}
+
+static int rvv_path_s8_jit_ok(void) {
+    return rvv_gemm_s8_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_s8_jit(void) {
+    return rvv_gemm_s8_jit_entry();
+}
+
+static int rvv_path_u8_jit_ok(void) {
+    return rvv_gemm_u8_jit_available();
+}
+
+static rvv_gemm_fn rvv_path_u8_jit(void) {
+    return rvv_gemm_u8_jit_entry();
 }
 #endif
 
@@ -353,6 +377,36 @@ static const rvv_path_mxfp8_table_t rvv_mxfp8_e5m2_paths = {
         rvv_mxfp8_e5m2_path_entries,
         sizeof(rvv_mxfp8_e5m2_path_entries)
                 / sizeof(rvv_mxfp8_e5m2_path_entries[0]),
+};
+
+/* -------------------------------------------------------------- s8/u8 */
+
+static const rvv_path_entry_t rvv_s8_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_s8_jit, rvv_path_s8_jit_ok, 0,
+                "rvcl: forced JIT s8 path requires the vector extension\n"},
+#endif
+        {"c", rvv_path_s8_c, NULL, 1, NULL},
+};
+
+static const rvv_path_table_t rvv_s8_paths = {
+        "rvcl: s8 kernel path '%s' is unavailable (want auto, c or jit)\n",
+        rvv_s8_path_entries,
+        sizeof(rvv_s8_path_entries) / sizeof(rvv_s8_path_entries[0]),
+};
+
+static const rvv_path_entry_t rvv_u8_path_entries[] = {
+#if defined(RVCL_HAVE_JIT)
+        {"jit", rvv_path_u8_jit, rvv_path_u8_jit_ok, 0,
+                "rvcl: forced JIT u8 path requires the vector extension\n"},
+#endif
+        {"c", rvv_path_u8_c, NULL, 1, NULL},
+};
+
+static const rvv_path_table_t rvv_u8_paths = {
+        "rvcl: u8 kernel path '%s' is unavailable (want auto, c or jit)\n",
+        rvv_u8_path_entries,
+        sizeof(rvv_u8_path_entries) / sizeof(rvv_u8_path_entries[0]),
 };
 
 #endif /* RVCL_RVV_PATHS_H */

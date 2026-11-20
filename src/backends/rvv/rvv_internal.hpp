@@ -93,6 +93,12 @@ void rvv_gemm_fp8_e4m3_c(const void *a, const void *b_packed, const void *bias,
 void rvv_gemm_fp8_e5m2_c(const void *a, const void *b_packed, const void *bias,
         void *c, int64_t m, int64_t n, int64_t k_dim,
         const rvcl_work_range_t *r);
+void rvv_gemm_s8_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
+        const rvcl_work_range_t *r);
+void rvv_gemm_u8_c(const void *a, const void *b_packed, const void *bias,
+        void *c, int64_t m, int64_t n, int64_t k_dim,
+        const rvcl_work_range_t *r);
 
 /* MXFP8 block-scale C kernels (rvv_gemm_mxfp8.cpp): A/B are FP8 bytes and
  * carry the 1-byte E8M0 per-32-block exponent scales sa/sb. sa is [m][K/blk]
@@ -167,6 +173,10 @@ int rvv_gemm_mxfp8_e4m3_jit_available(void);
 rvv_gemm_mxfp8_fn rvv_gemm_mxfp8_e4m3_jit_entry(void);
 int rvv_gemm_mxfp8_e5m2_jit_available(void);
 rvv_gemm_mxfp8_fn rvv_gemm_mxfp8_e5m2_jit_entry(void);
+int rvv_gemm_s8_jit_available(void);
+rvv_gemm_fn rvv_gemm_s8_jit_entry(void);
+int rvv_gemm_u8_jit_available(void);
+rvv_gemm_fn rvv_gemm_u8_jit_entry(void);
 #endif
 
 /* Micro-kernel selection — single source of truth for "which kernel is
@@ -189,6 +199,8 @@ rvv_gemm_fn rvv_pick_gemm_f16(void);
 rvv_gemm_fn rvv_pick_gemm_bf16(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3(void);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(void);
+rvv_gemm_fn rvv_pick_gemm_s8(void);
+rvv_gemm_fn rvv_pick_gemm_u8(void);
 
 /* Block-scale (MXFP8) selectors: resolve the same RVCL_RVV_KERNEL knob
  * against the mxfp8 path tables. Distinct function type (the mxfp8 kernel
@@ -207,6 +219,8 @@ rvv_gemm_fn rvv_pick_gemm_f16_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_bf16_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e4m3_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_fp8_e5m2_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_s8_by_name(const char *name);
+rvv_gemm_fn rvv_pick_gemm_u8_by_name(const char *name);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e4m3_by_name(const char *name);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e5m2_by_name(const char *name);
 

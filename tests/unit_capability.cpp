@@ -496,7 +496,7 @@ static void case_inject_restore(
  * Fresh-process modes (own ctest entries): the capability snapshot is built
  * at most once per process and the probe window closes permanently after
  * the first query, so each vendor-scenario runs in its own invocation.
- * A minimal out-of-tree kernel (INT8 tuple, no builtin occupancy) requiring
+ * A minimal out-of-tree kernel (INT32 tuple, no builtin occupancy) requiring
  * a vendor feature is registered to prove the probe's write channel changes
  * dispatch visibility — the way an actual plugin would.
  */
@@ -564,15 +564,15 @@ static rvcl_status_t vk_create(
     return RVCL_SUCCESS;
 }
 
-/* Registers the vendor kernel on the INT8 tuple (unoccupied by any builtin),
+/* Registers the vendor kernel on the INT32 tuple (unoccupied by any builtin),
  * requiring the vendor feature. */
 static rvcl_status_t register_vendor_kernel(const char *name) {
     rvcl_kernel_desc_t d;
     memset(&d, 0, sizeof(d));
     snprintf(d.name, RVCL_KERNEL_NAME_MAX, "%s", name);
     d.operation = RVCL_OP_MATMUL;
-    d.dtype_a = RVCL_DTYPE_INT8;
-    d.dtype_b = RVCL_DTYPE_INT8;
+    d.dtype_a = RVCL_DTYPE_INT32;
+    d.dtype_b = RVCL_DTYPE_INT32;
     d.dtype_acc = RVCL_DTYPE_INT32;
     d.dtype_c = RVCL_DTYPE_INT32;
     d.quant_support = RVCL_QUANT_NONE;
@@ -592,8 +592,8 @@ static rvcl_matmul_desc_t vendor_request(void) {
             .m = 16,
             .n = 16,
             .k = 16,
-            .dtype_a = RVCL_DTYPE_INT8,
-            .dtype_b = RVCL_DTYPE_INT8,
+            .dtype_a = RVCL_DTYPE_INT32,
+            .dtype_b = RVCL_DTYPE_INT32,
             .dtype_acc = RVCL_DTYPE_INT32,
             .dtype_c = RVCL_DTYPE_INT32,
             .dtype_bias = RVCL_DTYPE_AUTO,

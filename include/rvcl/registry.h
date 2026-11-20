@@ -32,7 +32,14 @@
 extern "C" {
 #endif
 
-#define RVCL_REGISTRY_MAX_KERNELS 64
+/* Registry capacity. Sized to hold the full built-in dtype family (each
+ * dtype registers a dedicated RVV tier per enabled VLEN tier plus a generic
+ * RVV entry and a portable fallback — nine dtypes on the 4-tier CI build
+ * already exceed 64) with enough headroom for the unit-test concurrency
+ * harness (TC-AC1-13 registers up to ~33 entries on top of the built-ins).
+ * This is a fixed array bound, not an API contract; it grows with the
+ * dtype/backend family. */
+#define RVCL_REGISTRY_MAX_KERNELS 128
 
 /*
  * Registers a kernel descriptor + factory. The descriptor is copied.
