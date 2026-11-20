@@ -127,6 +127,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_fp8.cpp
         src/backends/rvv/rvv_gemm_s8u8.cpp
         src/backends/rvv/rvv_gemm_mxfp8.cpp
+        src/backends/rvv/rvv_gemm_fp4.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the

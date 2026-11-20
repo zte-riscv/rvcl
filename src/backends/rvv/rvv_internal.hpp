@@ -106,6 +106,17 @@ void rvv_gemm_mxfp8_e5m2_c(const void *a, const void *b_packed, const void *sa,
         const void *sb, const void *bias, void *c, int64_t m, int64_t n,
         int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
 
+/* FP4 block-scale C kernels (rvv_gemm_fp4.cpp): A/B are E2M1 elements
+ * nibble-packed (even index = low nibble). NVFP4 uses block 16 with an E4M3
+ * scale; MXFP4 uses block 32 with an E8M0 scale. Same function signature as
+ * the mxfp8 kernels (the mxfp8_fn type). */
+void rvv_gemm_nvfp4_c(const void *a, const void *b_packed, const void *sa,
+        const void *sb, const void *bias, void *c, int64_t m, int64_t n,
+        int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
+void rvv_gemm_mxfp4_c(const void *a, const void *b_packed, const void *sa,
+        const void *sb, const void *bias, void *c, int64_t m, int64_t n,
+        int64_t k_dim, int64_t blk, const rvcl_work_range_t *r);
+
 /* Panel packer (rvv_pack.cpp): plain B -> panel layout, dtype-agnostic. */
 rvcl_status_t rvv_pack_b_panel(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
         int64_t m, int64_t n, int64_t k_dim, size_t elt);
@@ -205,6 +216,12 @@ rvv_gemm_fn rvv_pick_gemm_u8(void);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e4m3(void);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e5m2(void);
 
+/* FP4 block-scale selectors (NVFP4 / MXFP4): the kernels share the
+ * rvv_gemm_mxfp8_fn signature, so they resolve against mxfp8-style path
+ * tables with the same knob semantics. */
+rvv_gemm_mxfp8_fn rvv_pick_gemm_nvfp4(void);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp4(void);
+
 /* Explicit path resolution: name is "auto", "c", "jit" or "intrinsics".
  * The bench --path knob and RVCL_RVV_KERNEL resolve through the same
  * functions, so there is a single set of path semantics. Returns NULL
@@ -219,5 +236,7 @@ rvv_gemm_fn rvv_pick_gemm_s8_by_name(const char *name);
 rvv_gemm_fn rvv_pick_gemm_u8_by_name(const char *name);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e4m3_by_name(const char *name);
 rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp8_e5m2_by_name(const char *name);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_nvfp4_by_name(const char *name);
+rvv_gemm_mxfp8_fn rvv_pick_gemm_mxfp4_by_name(const char *name);
 
 #endif /* RVCL_RVV_INTERNAL_H */
