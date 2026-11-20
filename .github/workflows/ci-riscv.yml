@@ -172,6 +172,7 @@ jobs:
       - name: Extract archive
         run: |
           tar -xzf build.tar.gz
+          sudo mkdir -p /usr/riscv64-linux-gnu
           sudo tar -C /usr/riscv64-linux-gnu -xzf sysroot.tar.gz
 
       - name: Run rvcl tests
