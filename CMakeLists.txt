@@ -125,6 +125,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_f16.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp
         src/backends/rvv/rvv_gemm_fp8.cpp
+        src/backends/rvv/rvv_gemm_s8u8.cpp
         src/backends/rvv/rvv_gemm_mxfp8.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
     )
@@ -142,7 +143,8 @@ if(RVCL_ENABLE_RVV)
             src/backends/rvv/jit/rvv_gemm_f32_jit.cpp
             src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
             src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
-            src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp)
+            src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp
+            src/backends/rvv/jit/rvv_gemm_s8u8_jit.cpp)
     endif()
 endif()
 
@@ -215,6 +217,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
         src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
         src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_s8u8_jit.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp
         PROPERTIES INCLUDE_DIRECTORIES
                     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbyak_riscv")
@@ -234,6 +237,7 @@ if(RVCL_ENABLE_RVV AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
         src/backends/rvv/jit/rvv_gemm_f16_jit.cpp
         src/backends/rvv/jit/rvv_gemm_fp8_jit.cpp
         src/backends/rvv/jit/rvv_gemm_mxfp8_jit.cpp
+        src/backends/rvv/jit/rvv_gemm_s8u8_jit.cpp
         src/backends/rvv/rvv_gemm_bf16.cpp)
     set_target_properties(rvcl_jit_probe PROPERTIES
         CXX_STANDARD 17
