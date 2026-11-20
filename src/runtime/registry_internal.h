@@ -58,14 +58,16 @@ typedef struct {
 } rvcl_registry_view_t;
 
 /*
- * Copies up to max_entries live entries in registration order into out
- * and stores the registry generation observed for that copy in
- * *generation. Returns the number of entries copied. The copy is
- * consistent: concurrent registrations and unregistrations are never
- * observed half-applied.
+ * Copies up to max_entries live entries of one operation, in that
+ * operation's registration order, into out and stores the registry
+ * generation observed for that copy in *generation. Returns the number
+ * of entries copied. The copy is consistent: concurrent registrations
+ * and unregistrations are never observed half-applied. Dispatch
+ * consumes this so a selection loop only ever walks the requested
+ * operation's kernels. An out-of-range operation yields zero entries.
  */
-int rvcl_registry_snapshot(
-        rvcl_registry_view_t *out, int max_entries, unsigned *generation);
+int rvcl_registry_snapshot_op(rvcl_operation_t op, rvcl_registry_view_t *out,
+        int max_entries, unsigned *generation);
 
 /*
  * Monotonic change counter: bumped by every successful registration,

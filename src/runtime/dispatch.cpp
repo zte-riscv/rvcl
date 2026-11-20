@@ -17,7 +17,8 @@
  ******************************************************************************/
 
 /* Six-stage filtering, then cost-based selection:
- *   1. operation   - descriptor operation equals the request operation
+ *   1. operation   - the registry snapshot covers only the request
+ *                    operation's kernels (per-operation registry views)
  *   2. datatype    - exact (A,B,acc,C) match after AUTO resolution, plus
  *                    quantization support for quantized requests
  *   3. capability  - every required feature is present in the snapshot
@@ -485,18 +486,18 @@ rvcl_status_t rvcl_dispatch_op(rvcl_operation_t op, const rvcl_op_desc_t *od,
      * retry instead of being reallocated on the stack each attempt. */
     rvcl_registry_view_t views[RVCL_REGISTRY_MAX_KERNELS];
     for (int attempt = 0; attempt < RVCL_DISPATCH_MAX_ATTEMPTS; attempt++) {
-        /* A registry snapshot keeps stages 1-5 on one coherent table.
-         * The generation observed with the copy detects a change that
-         * lands while the candidates are being evaluated. */
-        const int n = rvcl_registry_snapshot(
-                views, RVCL_REGISTRY_MAX_KERNELS, &generation);
+        /* A per-operation registry snapshot keeps stages 2-5 on one
+         * coherent table covering only this operation's kernels (stage
+         * 1). The generation observed with the copy detects a change
+         * that lands while the candidates are being evaluated. */
+        const int n = rvcl_registry_snapshot_op(
+                op, views, RVCL_REGISTRY_MAX_KERNELS, &generation);
 
         rvcl_kernel_t *best = NULL;
         uint64_t best_cost = UINT64_MAX;
         for (int i = 0; i < n; i++) {
             const rvcl_kernel_desc_t *kd = &views[i].desc;
 
-            if (kd->operation != op) continue; /* stage 1 */
             if (!filter_datatype(kd, &f)) continue; /* stage 2 */
             if (!filter_capability(kd, cap)) continue; /* stage 3 */
             if (kd->vlen_tier != RVCL_VLEN_TIER_ANY
