@@ -387,8 +387,8 @@ static rvcl_status_t gemv_run_named(const char *name, const rvcl_op_desc_t *od,
 
 static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
         RVCL_DTYPE_BF16, RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP8_E5M2,
-        RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_INT8,
-        RVCL_DTYPE_UINT8, RVCL_DTYPE_AUTO};
+        RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_NVFP4,
+        RVCL_DTYPE_MXFP4, RVCL_DTYPE_INT8, RVCL_DTYPE_UINT8, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_gemv_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO};
 

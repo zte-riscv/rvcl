@@ -25,6 +25,7 @@
 #include "../src/backends/rvv/rvv_bf16.hpp"
 #include "../src/backends/rvv/rvv_fp8.hpp"
 #include "../src/backends/rvv/rvv_e8m0.hpp"
+#include "../src/backends/rvv/rvv_fp4.hpp"
 
 /* ------------------------------------------------------------- goldens */
 
@@ -149,6 +150,47 @@ void golden_mxfp8_e5m2(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
     golden_mxfp8_impl<rvv_fp8_e5m2_to_f32>(a, sa, b, sb, bias, c, m, n, k, blk);
 }
 
+/* FP4 goldens share one body parameterized by the scale upconversion (E4M3
+ * for NVFP4, E8M0 for MXFP4). A/B are E2M1 nibble-packed (even index = low
+ * nibble); each nibble is unpacked and upconverted via the shared 16-entry
+ * table. Each K term folds both scales into the B value and accumulates with
+ * a single fused multiply-add, acc = fma(A, B*ascale*bscale, acc) — the exact
+ * grouping of the C kernel (which reads B already unpacked to a byte per
+ * element by the packer, so it sees the same E2M1 nibble value). */
+template <float (*UP_SCALE)(uint8_t)>
+static void golden_fp4_impl(const uint8_t *a, const uint8_t *sa,
+        const uint8_t *b, const uint8_t *sb, const float *bias, float *c,
+        int64_t m, int64_t n, int64_t k, int64_t blk) {
+    const int64_t nblk = k / blk;
+    for (int64_t i = 0; i < m; i++)
+        for (int64_t j = 0; j < n; j++) {
+            float acc = bias ? bias[j] : 0.0f;
+            for (int64_t p = 0; p < k; p++) {
+                const int64_t pblk = p / blk;
+                const float ascale = UP_SCALE(sa[i * nblk + pblk]);
+                const float bscale = UP_SCALE(sb[pblk * n + j]);
+                const float bscl = ascale * bscale;
+                const uint8_t an = rvv_fp4_nibble_get(a, i * k + p);
+                const uint8_t bn = rvv_fp4_nibble_get(b, p * n + j);
+                acc = fmaf(
+                        rvv_e2m1_to_f32(an), rvv_e2m1_to_f32(bn) * bscl, acc);
+            }
+            c[i * n + j] = acc;
+        }
+}
+
+void golden_nvfp4(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_fp4_impl<rvv_fp8_e4m3_to_f32>(a, sa, b, sb, bias, c, m, n, k, blk);
+}
+
+void golden_mxfp4(const uint8_t *a, const uint8_t *sa, const uint8_t *b,
+        const uint8_t *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_fp4_impl<rvv_e8m0_to_f32>(a, sa, b, sb, bias, c, m, n, k, blk);
+}
+
 /* ----------------------------------------------------------- LCG fill */
 
 /* 32-bit LCG (exact in uint32 arithmetic — same stream everywhere). */
@@ -222,6 +264,27 @@ void lcg_fill_e8m0(uint8_t *buf, size_t n, uint32_t seed) {
      * bit-exact, so keeping it in the corpus stays arch-stable and always
      * exercises the special subnormal conversion. */
     if (n >= 1) buf[0] = 0x00;
+}
+
+void lcg_fill_e2m1(uint8_t *buf, size_t n, uint32_t seed) {
+    for (size_t i = 0; i < n; i++) {
+        const uint8_t nib = (uint8_t)(lcg_next(&seed) >> 24) & 0xFu;
+        if (i & 1u)
+            buf[i >> 1] |= (uint8_t)(nib << 4);
+        else
+            buf[i >> 1] = nib;
+    }
+}
+
+void lcg_fill_e4m3(uint8_t *buf, size_t n, uint32_t seed) {
+    for (size_t i = 0; i < n; i++)
+        buf[i] = (uint8_t)(0x01 + (lcg_next(&seed) >> 24) % 0x7E);
+    /* Zero and subnormal boundaries (E4M3): 0x00 -> +0, 0x01 -> 2^-9. The
+     * 0x7F NaN boundary is deliberately excluded here (a NaN scale would
+     * propagate a compiler-dependent NaN bit pattern through the column
+     * sum), so it is exercised by the dedicated differential smoke instead. */
+    if (n >= 1) buf[0] = 0x00;
+    if (n >= 2) buf[1] = 0x01;
 }
 
 void golden_sentinel(void *buf, size_t bytes) {

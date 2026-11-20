@@ -88,6 +88,20 @@ static void golden_mxfp8_e5m2_op(const void *a, const void *sa, const void *b,
             (const uint8_t *)b, (const uint8_t *)sb, bias, c, m, n, k, blk);
 }
 
+static void golden_nvfp4_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_nvfp4((const uint8_t *)a, (const uint8_t *)sa, (const uint8_t *)b,
+            (const uint8_t *)sb, bias, c, m, n, k, blk);
+}
+
+static void golden_mxfp4_op(const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t m, int64_t n,
+        int64_t k, int64_t blk) {
+    golden_mxfp4((const uint8_t *)a, (const uint8_t *)sa, (const uint8_t *)b,
+            (const uint8_t *)sb, bias, c, m, n, k, blk);
+}
+
 /* INT8 goldens: the output and bias are int32 (the s8/u8 acc habit), both
  * 4 bytes per element like the float buffers the test rig passes, so the
  * storage is reinterpreted as int32. */
@@ -137,6 +151,18 @@ static void fill_s8_op(void *buf, size_t n, uint32_t seed) {
 
 static void fill_u8_op(void *buf, size_t n, uint32_t seed) {
     lcg_fill_u8((uint8_t *)buf, n, seed);
+}
+
+static void fill_e2m1_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_e2m1((uint8_t *)buf, n, seed);
+}
+
+static void fill_e8m0_scale_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_e8m0((uint8_t *)buf, n, seed);
+}
+
+static void fill_e4m3_scale_op(void *buf, size_t n, uint32_t seed) {
+    lcg_fill_e4m3((uint8_t *)buf, n, seed);
 }
 
 /* fp32 storage is the value itself (4 bytes) while the f32_to_storage
@@ -230,6 +256,7 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .elt = 1,
                 .golden = golden_mxfp8_e4m3_op,
                 .fill = fill_fp8_e4m3_op,
+                .fill_scale = fill_e8m0_scale_op,
                 .compare = compare_op_bits,
                 .f32_to_storage = f32_to_fp8_e4m3_slot,
         },
@@ -239,8 +266,29 @@ static const dtype_ops_t k_dtype_ops[] = {
                 .elt = 1,
                 .golden = golden_mxfp8_e5m2_op,
                 .fill = fill_fp8_e5m2_op,
+                .fill_scale = fill_e8m0_scale_op,
                 .compare = compare_op_bits,
                 .f32_to_storage = f32_to_fp8_e5m2_slot,
+        },
+        {
+                .dtstr = "nvfp4",
+                .dtype = RVCL_DTYPE_NVFP4,
+                .elt = 1,
+                .golden = golden_nvfp4_op,
+                .fill = fill_e2m1_op,
+                .fill_scale = fill_e4m3_scale_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = NULL, /* sub-byte storage; no f32 convert */
+        },
+        {
+                .dtstr = "mxfp4",
+                .dtype = RVCL_DTYPE_MXFP4,
+                .elt = 1,
+                .golden = golden_mxfp4_op,
+                .fill = fill_e2m1_op,
+                .fill_scale = fill_e8m0_scale_op,
+                .compare = compare_op_bits,
+                .f32_to_storage = NULL, /* sub-byte storage; no f32 convert */
         },
         {
                 .dtstr = "s8",
