@@ -14,19 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * init.cpp — library initialization / backend registration entry
- *
- * Backends are registered once at library init. RVCL_ENABLE_<BACKEND>
- * build flags decide which backends compile in (PLAN §4.12); dispatch
- * discovers what exists purely through the registry.
- *
- * Registration order is a dispatch contract (RFC-0002 FR1.5): dedicated
- * variants first (high VLEN tier to low), then generic (including the
- * portable entries on non-vector builds), then the unbounded fallback
- * last. Dispatch breaks cost ties by this order, so the sequence below
- * directly shapes selection.
  ******************************************************************************/
+
+/* Backends are registered once at library init. RVCL_ENABLE_<BACKEND> build
+ * flags decide which backends compile in; dispatch discovers what exists
+ * purely through the registry. Registration order is a dispatch contract:
+ * dedicated variants first (high VLEN tier to low), then generic (including
+ * the portable entries on non-vector builds), then the unbounded fallback
+ * last. Dispatch breaks cost ties by this order, so the sequence below
+ * directly shapes selection. */
 
 #include "rvcl/init.h"
 #include "rvcl/registry.h"

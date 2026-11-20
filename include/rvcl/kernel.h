@@ -14,18 +14,14 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * kernel.h — kernel ABI (Layer 2, project-stable interface)
- *
- * Kernel contract (PLAN §4.3): a kernel is metadata + feature requirements
- * + packing contract + execution functions with the ACL-style three-phase
- * lifecycle:
- *
- *   validate(desc, capability)  — side-effect-free probe (dispatch time)
- *   configure(desc) -> ws_req   — one per dispatch result; reports workspace
- *   pack_a / pack_b             — packing, callable independently of run
- *   run(tensor_pack, work_range)— executes; never mallocs, never threads
  ******************************************************************************/
+
+/* Kernel contract: a kernel is metadata + feature requirements + packing
+ * contract + execution functions with an ACL-style three-phase lifecycle:
+ *   validate(desc, capability)  - side-effect-free probe (dispatch time)
+ *   configure(desc) -> ws_req   - one per dispatch result; reports workspace
+ *   pack_a / pack_b             - packing, callable independently of run
+ *   run(tensor_pack, work_range)- executes; never mallocs, never threads */
 
 #ifndef RVCL_KERNEL_H
 #define RVCL_KERNEL_H
@@ -73,7 +69,7 @@ RVCL_API unsigned rvcl_kernel_abi_version(void);
 /* ------------------------------------------------------------ cost model */
 
 /*
- * Cost estimation callback (RFC-0002 cost). Contract:
+ * Cost estimation callback. Contract:
  *   - input: the operation description and the capability snapshot;
  *   - output: non-negative integer (estimated cycles), smaller = better;
  *     0 means "no cost information";
@@ -86,9 +82,9 @@ typedef uint64_t (*rvcl_kernel_cost_fn)(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
 /*
- * Canonical zero-cost implementation: "no cost information" (RFC-0002
- * FR4.2). Kernels without a real cost model must bind this so descriptor
- * iteration never sees a NULL callback.
+ * Canonical zero-cost implementation: "no cost information". Kernels
+ * without a real cost model must bind this so descriptor iteration never
+ * sees a NULL callback.
  */
 RVCL_API uint64_t rvcl_kernel_cost_zero(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
@@ -140,7 +136,7 @@ typedef struct {
 
     rvcl_operation_t operation;
 
-    /* (A, B, acc, C) tuple — the unit of datatype filtering (PLAN §4.5.2). */
+    /* (A, B, acc, C) tuple — the unit of datatype filtering. */
     rvcl_dtype_t dtype_a;
     rvcl_dtype_t dtype_b;
     rvcl_dtype_t dtype_acc;
@@ -176,7 +172,7 @@ typedef struct {
 
 /* ------------------------------------------------------- operation descs */
 
-/* Quantization context (PLAN §4.5.3); zero-init for non-quantized paths. */
+/* Quantization context; zero-init for non-quantized paths. */
 typedef struct {
     int enabled; /* 0 for non-quantized */
     float scale_a, scale_b, scale_c;
@@ -229,10 +225,10 @@ typedef struct {
             rvcl_workspace_req_t *ws_req /* out, up to RVCL_MAX_WORKSPACES */,
             int *num_ws /* out */);
 
-    /* Packing (independent of run; see PLAN §4.6). Phase 0 kernels are
-     * unpacked, so these are optional (NULL = no packing needed).
-     * pack_b fills the packing workspace ahead of run(); implementations
-     * whose run() packs B itself must honor pack->src_b_packed (memory.h)
+    /* Packing (independent of run). Kernels that operate unpacked leave
+     * these NULL (no packing needed). pack_b fills the packing workspace
+     * ahead of run(); implementations whose run() packs B itself must honor
+     * pack->src_b_packed (memory.h)
      * by skipping that in-run packing. */
     rvcl_status_t (*pack_a)(rvcl_kernel_t *k, const rvcl_tensor_t *src,
             rvcl_tensor_t *dst_packed);

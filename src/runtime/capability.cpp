@@ -14,20 +14,18 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * capability.cpp — host capability detection (cached)
- *
- * Detection layers (PLAN §4.4): compile-time __riscv_* macros first, then
- * runtime hwprobe/auxv when available. Failures degrade to the RVV
- * baseline; capability never selects kernels.
- *
- * Feature value semantics (unified across both layers): a present
- * feature carries 1 ("present, no further detail") or an informative
- * value. For RVCL_FEATURE_RVV the informative value is the vector
- * length in bits (128/256/...) read from the vlenb CSR; it stays 1 when
- * the read is unavailable (present-but-unknown). Presence is queried
- * via rvcl_capability_has() — never inferred from the value.
  ******************************************************************************/
+
+/* Detection layers: compile-time __riscv_* macros first, then runtime
+ * hwprobe/auxv when available. Failures degrade to the RVV baseline;
+ * capability never selects kernels.
+ *
+ * Feature value semantics (unified across both layers): a present feature
+ * carries 1 ("present, no further detail") or an informative value. For
+ * RVCL_FEATURE_RVV the informative value is the vector length in bits
+ * (128/256/...) read from the vlenb CSR; it stays 1 when the read is
+ * unavailable (present-but-unknown). Presence is queried via
+ * rvcl_capability_has() — never inferred from the value. */
 
 #include "rvcl/capability.h"
 

@@ -14,17 +14,13 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * examples/scheduler.cpp — inject a custom host scheduler
- *
- * Demonstrates the Scheduler contract (PLAN §4.9): the host owns
- * parallelism. A custom rvcl_ischeduler_t slices work ranges and
- * executes the slices (here: on worker threads via a trivial pool);
- * the kernel just computes. Injection is process-wide and one-shot.
- *
- * Must be the FIRST rvcl call of the process to win the set-once race
- * with the lazy default: we inject before rvcl_init()/rvcl_matmul().
  ******************************************************************************/
+
+/* Demonstrates the Scheduler contract: the host owns parallelism. A custom
+ * rvcl_ischeduler_t slices work ranges and executes the slices (here: on
+ * worker threads via a trivial pool); the kernel just computes. Injection
+ * is process-wide and one-shot, so this must be the FIRST rvcl call of the
+ * process to win the set-once race with the lazy default. */
 
 #include <pthread.h>
 #include <stdio.h>

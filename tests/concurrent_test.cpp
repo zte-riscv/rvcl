@@ -14,42 +14,31 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/concurrent_test.cpp — concurrent stress for the host-parallel stack
- *
- * Permanent smoke driver: four concurrent scenarios, each gated so all
+ ******************************************************************************/
+
+/* Permanent smoke driver: four concurrent scenarios, each gated so all
  * threads race into the shared path at once, all small enough to stay
  * smoke-fast on every host and cheap enough for sanitizer CI to amplify.
- *
- * 1. capability concurrent first-call — the first rvcl_get_capability() of
- *    the process is issued by T threads at once; the magic-static once
- *    converges them (same cached pointer + identical content, race-free).
- * 2. dispatch concurrent first-call — the first rvcl_dispatch_matmul() of
- *    the process races through the cold cache under the cache mutex; both
- *    a same-desc group (one key) and a different-desc group (varied shapes
- *    that collide into shared cache slots) must all succeed (cache-lock
- *    regression, including the concurrent-eviction path).
- * 3. kernel run() under exclusive M slices — a host scheduler slices M and
- *    calls run() per slice, so one kernel instance and one tensor pack
- *    (including the packed-B workspace configure() reports) are shared by
- *    every concurrent run().
- * 4. semantic concurrent — T threads each run rvcl_matmul() end-to-end on
- *    their own independent tensors at once; every result is bit-exact vs
- *    its own golden (the pack-once end-to-end concurrency endorsement).
+ *   1. capability concurrent first-call: the first rvcl_get_capability() is
+ *      issued by T threads at once; the magic-static once converges them.
+ *   2. dispatch concurrent first-call: the cold cache races under the cache
+ *      mutex, including the concurrent-eviction path.
+ *   3. kernel run() under exclusive M slices: one kernel instance and one
+ *      tensor pack (including the packed-B workspace) are shared by every
+ *      concurrent run().
+ *   4. semantic concurrent: T threads each run rvcl_matmul() end-to-end on
+ *      independent tensors; every result is bit-exact vs its own golden.
  *
  * The kernel-run scenario fetches the kernel through the registry by name
  * (factory bypass, like differential_test), configures it manually with a
- * self-allocated workspace; B is pre-packed once via rvcl_kernel_pack_b()
- * and endorsed with pack.src_b_packed before any thread starts, then T
- * pthreads each run() one exclusive M slice — every run consumes the packed
- * panels read-only (the pack-once contract; the serial in-run packing path
- * stays covered by differential_test).
+ * self-allocated workspace; B is pre-packed once and endorsed with
+ * pack.src_b_packed before any thread starts, then T pthreads each run() one
+ * exclusive M slice — every run consumes the packed panels read-only.
  *
  * Functional contract: slices own disjoint C rows and the packed workspace
  * is only read after the pre-pack, so the output must stay bit-exact vs the
  * golden on every host, and ThreadSanitizer must report nothing: concurrent
- * run() holds no cross-slice writes into the shared buffer.
- ******************************************************************************/
+ * run() holds no cross-slice writes into the shared buffer. */
 
 #include <pthread.h>
 #include <stdio.h>

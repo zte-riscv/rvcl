@@ -16,7 +16,8 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-#
+# *******************************************************************************
+
 # Enforce the Conventional Commits format on every commit in base..head.
 # See the "Commit message conventions" section in CONTRIBUTING.md.
 #
@@ -25,7 +26,6 @@
 # squash subject "<title> (#<number>)" is validated, so the 72-character limit
 # applies to what actually lands on main (the suffix included) rather than to
 # the bare title.
-# *******************************************************************************
 
 import argparse
 import re

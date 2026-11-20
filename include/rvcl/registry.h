@@ -14,13 +14,11 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * registry.h — kernel registry (Layer: Registry)
- *
- * Registers and indexes kernel metadata by operation × (A,B,acc,C)
- * (PLAN §4.5.2). The registry NEVER makes load-dependent performance
- * decisions (§4.1 invariant) — that is dispatch's job.
  ******************************************************************************/
+
+/* Registers and indexes kernel metadata by operation x (A,B,acc,C). The
+ * registry never makes load-dependent performance decisions — that is
+ * dispatch's job. */
 
 #ifndef RVCL_REGISTRY_H
 #define RVCL_REGISTRY_H

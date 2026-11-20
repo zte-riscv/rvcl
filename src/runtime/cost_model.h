@@ -14,21 +14,18 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * cost_model.h — internal kernel cost-model wrappers (not installed)
- *
- * Declarations shared between the library and its test executables only.
- * This header is deliberately outside include/rvcl/: it is not part of
- * the public API, is never installed, and carries no stability promise.
- *
- * The scoring wrappers below are the rvcl_kernel_cost_fn implementations
- * the backends bind instead of rvcl_kernel_cost_zero(). They estimate a
- * non-negative cycle count (smaller = better) from the request shape and
- * the host capability snapshot so dispatch can order surviving candidates
- * by an explainable heuristic. The real-machine calibration that turns
- * the default coefficients into measured data does not change this
- * interface.
  ******************************************************************************/
+
+/* Declarations shared between the library and its test executables only.
+ * This header is deliberately outside include/rvcl/: it is not part of the
+ * public API, is never installed, and carries no stability promise.
+ *
+ * The scoring wrappers below are the rvcl_kernel_cost_fn implementations the
+ * backends bind instead of rvcl_kernel_cost_zero(). They estimate a
+ * non-negative cycle count (smaller = better) from the request shape and the
+ * host capability snapshot so dispatch can order surviving candidates by an
+ * explainable heuristic. Real-machine calibration that turns the default
+ * coefficients into measured data does not change this interface. */
 
 #ifndef RVCL_COST_MODEL_H
 #define RVCL_COST_MODEL_H

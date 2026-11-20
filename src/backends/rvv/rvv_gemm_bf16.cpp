@@ -14,28 +14,23 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_bf16.cpp — BF16 GEMM micro-kernels (C fallback + RVV JIT)
- *
- * Tuple (bf16,bf16,f32,f32): storage bfloat16 (u16), accumulation and
- * output fp32. bf16 is the top 16 bits of an fp32, so the up-conversion
- * is an exact integer widen-and-shift (u16 << 16) that needs no Zvfbfmin;
- * fp32 accumulation is sequential over K.
- *
- * The C-portable path uses the soft conversions in rvv_bf16.hpp and is
- * both the correctness oracle and the x86 CI path. The JIT micro-kernel
- * (xbyak_riscv) mirrors the f32 JIT skeleton lane for lane: per output
- * column j the accumulator starts at bias[j] and takes one fused
- * multiply-add per k in ascending order, so it is bit-identical to the C
- * path under the same inputs. A BF16 panel row is widened to fp32 by
- * zero-extend + shift-left-16; the scalar A element is loaded as u16,
- * shifted and moved into an fp32 register by the same bit identity.
- *
- * The JIT kernel compiles at the baseline rv64gc -march; vector code runs
- * only after a run-time capability probe (RVV only — bf16 needs no
- * extension beyond the base vector), which keeps the whole backend in a
- * single baseline binary.
  ******************************************************************************/
+
+/* Tuple (bf16,bf16,f32,f32): storage bfloat16 (u16), accumulation and
+ * output fp32. bf16 is the top 16 bits of an fp32, so the up-conversion is
+ * an exact integer widen-and-shift (u16 << 16) that needs no Zvfbfmin; fp32
+ * accumulation is sequential over K. The C-portable path uses the soft
+ * conversions in rvv_bf16.hpp and is both the correctness oracle and the
+ * non-vector host path. The JIT micro-kernel (xbyak_riscv) mirrors the f32
+ * JIT skeleton: per output column j the accumulator starts at bias[j] and
+ * takes one fused multiply-add per k in ascending order, so it is
+ * bit-identical to the C path under the same inputs. A BF16 panel row is
+ * widened to fp32 by zero-extend + shift-left-16; the scalar A element is
+ * loaded as u16, shifted and moved into an fp32 register by the same bit
+ * identity. The JIT kernel compiles at the baseline rv64gc -march, with
+ * vector code running only after a run-time capability probe (RVV only —
+ * bf16 needs no extension beyond the base vector), keeping the whole
+ * backend in a single baseline binary. */
 
 #include "rvv_bf16.hpp"
 #include "rvv_internal.hpp"

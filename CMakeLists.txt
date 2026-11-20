@@ -5,12 +5,12 @@ project(rvcl
     LANGUAGES CXX)
 
 # ------------------------------------------------------------------ options
-# Backends are independently buildable (PLAN §4.12).
+# Backends are independently buildable.
 option(RVCL_ENABLE_RVV   "Enable RVV backend"        ON)  # v0.1
 option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.2
 option(RVCL_ENABLE_VME   "Enable VME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_AME   "Enable AME backend"        OFF) # lands in v0.3
-option(RVCL_ENABLE_OMP   "Built-in OpenMP scheduler backend" OFF) # PR-3
+option(RVCL_ENABLE_OMP   "Built-in OpenMP scheduler backend" OFF)
 option(RVCL_BUILD_TESTS  "Build tests"               ON)
 option(RVCL_BUILD_EXAMPLES "Build examples"          ON)
 option(RVCL_BUILD_BENCH  "Build benchmark harness"   ON)
@@ -116,7 +116,7 @@ set(RVCL_RUNTIME_SOURCES
 # Compiles on any host: the micro-kernels are guarded by __riscv_vector;
 # on non-RISC-V hosts the translation units reduce to the C-portable
 # fallback so the framework side (packing, registration, cache) is fully
-# testable on x86 CI (PLAN §6.2 item 12).
+# testable on non-vector hosts.
 if(RVCL_ENABLE_RVV)
     list(APPEND RVCL_RUNTIME_SOURCES
         src/backends/rvv/rvv_backend.cpp
@@ -148,11 +148,11 @@ if(RVCL_ENABLE_RVV)
     endif()
 endif()
 
-# OpenMP scheduler backend (PR-3 §5.3.1): zero-injection default parallelism
-# for the standalone product shape. OFF by default so the default build
-# carries no libgomp dependency and the source list stays OMP-free (guarantee
-# 2). The omp_scheduler TU is appended before add_library; the RVCL_HAVE_OMP
-# macro and the OpenMP link are applied to the target below.
+# OpenMP scheduler backend: zero-injection default parallelism for the
+# standalone product shape. OFF by default so the default build carries no
+# libgomp dependency and the source list stays OMP-free. The omp_scheduler
+# TU is appended before add_library; the RVCL_HAVE_OMP macro and the OpenMP
+# link are applied to the target below.
 if(RVCL_ENABLE_OMP)
     find_package(OpenMP REQUIRED)
     list(APPEND RVCL_RUNTIME_SOURCES
@@ -284,7 +284,7 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
 endif()
 
 # Backends (RVCL_ENABLE_*): each adds sources + a rvcl_<backend>_register()
-# call in init.cpp's register_all(). Gated per PLAN §4.12:
+# call in init.cpp's register_all():
 #   cmake -DRVCL_ENABLE_RVV=ON -DRVCL_ENABLE_IME=OFF ...
 
 # ------------------------------------------------------------------- tests
@@ -339,7 +339,7 @@ if(RVCL_BUILD_TESTS)
 
     # OpenMP scheduler backend tests: only in OpenMP builds, as an
     # independent process (its own ctest) so the lazy-default and nested-guard
-    # assertions run before any set-once injection (guarantee 3).
+    # assertions run before any set-once injection.
     if(RVCL_ENABLE_OMP)
         add_executable(rvcl_scheduler_omp tests/scheduler_omp_test.cpp)
         target_link_libraries(
@@ -352,7 +352,7 @@ if(RVCL_BUILD_TESTS)
     # invariant, registration order and concurrent access safety.
     add_executable(rvcl_unit_registry tests/unit_registry.cpp)
     target_link_libraries(rvcl_unit_registry PRIVATE rvcl rvcl_test_golden)
-    # The build configuration decides the enabled tier set (AC1), so the
+    # The build configuration decides the enabled tier set, so the
     # test must see the same RVCL_RVV_TIERS_<T> definitions as the library.
     if(RVCL_ENABLE_RVV)
         target_compile_definitions(rvcl_unit_registry PRIVATE ${_rvcl_tier_defs})
@@ -508,7 +508,7 @@ if(RVCL_BUILD_EXAMPLES)
     target_link_libraries(example_multicore PRIVATE rvcl)
     # RVCL_HAVE_OMP is a PRIVATE definition of the rvcl target and is not
     # visible to example targets; inject the same macro separately on the
-    # example so its builtin mode compiles only in OpenMP builds (D-10).
+    # example so its builtin mode compiles only in OpenMP builds.
     if(RVCL_ENABLE_OMP)
         target_compile_definitions(example_multicore PRIVATE RVCL_HAVE_OMP)
         target_link_libraries(example_multicore PRIVATE OpenMP::OpenMP_CXX)

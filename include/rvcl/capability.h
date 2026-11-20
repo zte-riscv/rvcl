@@ -14,13 +14,11 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * capability.h — CPU capability model (Layer: Capability)
- *
- * Capability describes what the hardware can do. It NEVER selects kernels
- * (PLAN §4.1 invariant). Detection is done once and cached; failures
- * degrade to the RVV baseline instead of erroring out (PLAN §4.4).
  ******************************************************************************/
+
+/* Capability describes what the hardware can do; it never selects kernels.
+ * Detection runs once and is cached; failures degrade to the RVV baseline
+ * instead of erroring out. */
 
 #ifndef RVCL_CAPABILITY_H
 #define RVCL_CAPABILITY_H
@@ -50,7 +48,7 @@ RVCL_API const rvcl_feature_t *rvcl_capability_get(
  * Detects host capabilities (cached; thread-safe after first call).
  * Detection layers: compile-time __riscv_* macros -> runtime auxv/hwprobe
  * -> vendor interfaces. On any failure the result degrades to the RVV
- * baseline rather than returning an error (PLAN §4.4).
+ * baseline rather than returning an error.
  * The returned pointer is owned by RVCL and valid for the process lifetime.
  */
 RVCL_API const rvcl_capability_t *rvcl_get_capability(void);

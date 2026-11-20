@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * types.cpp — basic type helpers
  ******************************************************************************/
 
 #include "dtype_traits.hpp"
@@ -39,8 +37,8 @@ size_t rvcl_dtype_size(rvcl_dtype_t dt) {
 /* Block-scale attributes are exposed through these accessors rather than
  * new trait-struct fields: rvcl_dtype_traits_t is exported and returned by
  * value, so appending a field would shift the caller stack frame and break
- * existing binary consumers (D-1). Block size / scale dtype are dtype
- * properties, so the desc and the dispatch cache key stay field-free. */
+ * existing binary consumers. Block size / scale dtype are dtype properties,
+ * so the desc and the dispatch cache key stay field-free. */
 size_t rvcl_dtype_block_size(rvcl_dtype_t dt) {
     switch (dt) {
         case RVCL_DTYPE_MXFP8_E4M3:

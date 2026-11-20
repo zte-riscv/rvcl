@@ -14,19 +14,16 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_f32.cpp — FP32 GEMM micro-kernels (RVV intrinsics + C fallback)
- *
- * Contract: C[M,N] = bias? + A[M,K] × B_packed[K,N] over the work range.
- * B arrives panel-packed (RVV_PACK_NC columns per panel, k-major inside).
- * Accumulation in fp32; C written as fp32 (tuple f32,f32,f32,f32).
- *
- * The C path is both the correctness oracle (differential-tested against
- * the reference backend) and the x86 CI path. The RVV path vectorizes
- * across the NC columns of a B panel — one accumulator vector per
- * (row, panel), K streamed in order — so both paths accumulate K in the
- * same ascending order and produce bit-identical results.
  ******************************************************************************/
+
+/* Contract: C[M,N] = bias? + A[M,K] x B_packed[K,N] over the work range. B
+ * arrives panel-packed (RVV_PACK_NC columns per panel, k-major inside).
+ * Accumulation and output are fp32. The C path is both the correctness
+ * oracle (differential-tested against the reference backend) and the
+ * non-vector host path. The RVV path vectorizes across the NC columns of a
+ * B panel — one accumulator vector per (row, panel), K streamed in order —
+ * so both paths accumulate K in the same ascending order and produce
+ * bit-identical results. */
 
 #include "rvv_internal.hpp"
 

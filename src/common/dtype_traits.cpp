@@ -14,14 +14,12 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * dtype_traits.cpp — constexpr dtype fact table
- *
- * One row per rvcl_dtype_t (AUTO..FP8_E5M2), indexed by the enum value so
- * a lookup is a direct array read. The AUTO accumulation habit here must
- * stay behavior-identical to the historical resolve_acc: int8/uint8 ->
- * INT32, every other concrete dtype -> FP32.
  ******************************************************************************/
+
+/* One row per rvcl_dtype_t (AUTO..FP8_E5M2), indexed by the enum value so a
+ * lookup is a direct array read. The AUTO accumulation habit here must stay
+ * behavior-identical to the historical resolve_acc: int8/uint8 -> INT32,
+ * every other concrete dtype -> FP32. */
 
 #include "dtype_traits.hpp"
 

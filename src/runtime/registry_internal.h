@@ -14,12 +14,10 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * registry_internal.h — registry hooks used by the initialization path
- *
- * Not installed and not part of the public API; only library translation
- * units include this header.
  ******************************************************************************/
+
+/* Not installed and not part of the public API; only library translation
+ * units include this header. */
 
 #ifndef RVCL_REGISTRY_INTERNAL_H
 #define RVCL_REGISTRY_INTERNAL_H
@@ -27,7 +25,7 @@
 #include "rvcl/kernel.h"
 #include "rvcl/types.h"
 
-/* Whole-table fallback check (FR1.7): every datatype tuple that has at
+/* Whole-table fallback check: every datatype tuple that has at
  * least one live entry must contain a kernel without shape limits. Run
  * once after built-in registration; returns
  * RVCL_ERROR_REGISTRY_INVARIANT on violation.

@@ -14,40 +14,31 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/differential_test.cpp — reference vs RVV backend differential testing
- *
- * PLAN §6.2 item 11 + §8.1 level 3: the same numeric cases run through
- * both backends by forcing kernel selection, then compare within
- * tolerance. fp32: bit-identical expected (same accumulation order);
- * fp16 storage path: tolerance 1e-3 relative (conversion rounding).
+ ******************************************************************************/
+
+/* Reference vs RVV backend differential testing: the same numeric cases run
+ * through both backends by forcing kernel selection, then compare within
+ * tolerance. fp32: bit-identical expected (same accumulation order); fp16
+ * storage path: tolerance 1e-3 relative (conversion rounding).
  *
  * Bit-exactness note for the RVV intrinsics path: vfmacc is a fused
  * (single-rounding) multiply-add, so the scalar golden must contract
- * `acc += a * b` to fmadd the same way — build with optimization
- * (Release / -O2+) on vector builds for the fp32 bit-exact checks to
- * hold. At -O0 the scalar golden double-rounds and only the tolerance
- * comparison would pass.
+ * `acc += a * b` to fmadd the same way — build with optimization (Release /
+ * -O2+) on vector builds for the fp32 bit-exact checks to hold. At -O0 the
+ * scalar golden double-rounds and only the tolerance comparison would pass.
+ * Also covered: scheduler injection does not change numeric results, and
+ * work-range partitioning covers without overlap or gap.
  *
- * Also covers the v0.1 acceptance criteria (PLAN §6.2):
- *   - scheduler injection does not change numeric results;
- *   - work-range partitioning covers without overlap or gap.
- *
- * Corpus mode: `rvcl_differential --batch=<file>` appends the shape
- * corpus (tests/inputs/README.md, format spec) after the fixed contract
- * sections below. Fixed sections test framework contracts, not shape
- * numerics, and stay out of the batch loop by design. With no arguments
- * the behavior is byte-for-byte the Phase 0 run.
- *
- * `--dt=f32|f16|bf16` restricts the whole run — fixed sections and corpus
- * cases alike — to one dtype. The forced-path ctest targets use it: a
- * jit-forced f32 run must fail loudly on f16's lack of a JIT path only
- * when f16 is actually in scope, not because the fixed sections ran it.
- *
- * This file holds one of the two independent corpus parsers (bench has
- * the other): both follow the spec's error table, and ctest runs the
- * same corpus through both — cross-validation is the feature.
- ******************************************************************************/
+ * Corpus mode: `rvcl_differential --batch=<file>` appends the shape corpus
+ * (tests/inputs/README.md, format spec) after the fixed contract sections
+ * below. Fixed sections test framework contracts, not shape numerics, and
+ * stay out of the batch loop by design. `--dt=f32|f16|bf16` restricts the
+ * whole run — fixed sections and corpus cases alike — to one dtype, so a
+ * jit-forced f32 run fails loudly on f16's lack of a JIT path only when f16
+ * is actually in scope. This file holds one of the two independent corpus
+ * parsers (bench has the other): both follow the spec's error table, and
+ * ctest runs the same corpus through both — cross-validation is the
+ * feature. */
 
 #include <stdarg.h>
 #include <stdio.h>

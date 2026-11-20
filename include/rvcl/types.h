@@ -14,11 +14,10 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * Basic types shared by all RVCL public headers: status codes, data types,
- * operations, feature ids. See PLAN-0001 §4.5 (datatype model) and RFC-0002
- * (capability/registry/dispatch vocabulary).
  ******************************************************************************/
+
+/* Basic types shared by all RVCL public headers: status codes, data types,
+ * operations and feature ids. */
 
 #ifndef RVCL_TYPES_H
 #define RVCL_TYPES_H
@@ -65,7 +64,7 @@ typedef enum {
 } rvcl_status_t;
 
 /* ------------------------------------------------------------- data types */
-/* Storage / compute / accumulation roles are separate (PLAN §4.5.1). */
+/* Storage / compute / accumulation roles are separate. */
 
 typedef enum {
     RVCL_DTYPE_AUTO = 0, /* derive from habit rules when unspecified */
@@ -74,9 +73,9 @@ typedef enum {
     RVCL_DTYPE_BF16,
     RVCL_DTYPE_INT8,
     RVCL_DTYPE_UINT8,
-    RVCL_DTYPE_INT4, /* weights only in the roadmap (§4.5.2) */
+    RVCL_DTYPE_INT4, /* weights only in the roadmap */
     RVCL_DTYPE_INT32, /* accumulators / quantized intermediates */
-    RVCL_DTYPE_FP8_E4M3, /* reserved (§4.5.6: no ratified base ext yet) */
+    RVCL_DTYPE_FP8_E4M3, /* reserved (no ratified base extension yet) */
     RVCL_DTYPE_FP8_E5M2, /* reserved */
     RVCL_DTYPE_E8M0, /* OCP MX block exponent, 1 byte, 2^e */
     RVCL_DTYPE_MXFP8_E4M3, /* MX: 32-element block + E8M0 scale */
@@ -115,7 +114,7 @@ typedef enum {
 /*
  * Feature ids are stable identifiers used by both the capability model and
  * kernel descriptors ("required_features"). Vendor/TPE extensions add new
- * ids without touching the dispatch model (PLAN §4.4).
+ * ids without touching the dispatch model.
  */
 
 typedef enum {
@@ -138,7 +137,7 @@ typedef enum {
      * hard-coded last name. */
     RVCL_FEATURE_STD_LAST,
     /* vendor/TPE slot: values from RVCL_FEATURE_VENDOR_FIRST are assigned
-     * by registration; TPE lands here without model changes (PLAN §4.4). */
+     * by registration; TPE lands here without model changes. */
     RVCL_FEATURE_VENDOR_FIRST = 0x1000,
 } rvcl_feature_id_t;
 
@@ -153,8 +152,8 @@ typedef struct {
     uint32_t value;
 } rvcl_feature_t;
 
-/* VLEN tier vocabulary for kernel descriptors (RFC-0002 dispatch). The
- * enum value IS the tier width in bits, so validation and comparison are
+/* VLEN tier vocabulary for kernel descriptors. The enum value IS the tier
+ * width in bits, so validation and comparison are
  * direct numeric checks. Kernels compiled for a specific VLEN declare that
  * tier; dispatch excludes a kernel when the host tier is lower. The host
  * tier itself is an internal dispatch input, not part of the public API. */
@@ -168,8 +167,8 @@ typedef enum {
 
 /* ------------------------------------------------------------ work ranges */
 /*
- * Partial output ranges for external parallelism (PLAN §4.3): kernels never
- * create threads; the scheduler slices work ranges and calls run() per slice.
+ * Partial output ranges for external parallelism: kernels never create
+ * threads; the scheduler slices work ranges and calls run() per slice.
  */
 
 typedef struct {

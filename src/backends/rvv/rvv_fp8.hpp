@@ -14,31 +14,23 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_fp8.hpp — FP8 (E4M3 / E5M2) soft conversions (internal)
- *
- * FP8 has no ratified base hardware extension, so the up-conversion is a
- * 256-entry f32 lookup table per dtype: every FP8 bit pattern maps to an
- * f32 value that is exactly representable, so the table is the exact
- * reference for golden and differential tests on any host. The two
- * dtypes share the same table infrastructure and differ only in the
- * table contents:
- *   - E4M3: 1 sign, 4 exponent (bias 7), 3 mantissa. No infinity; the
- *     exponent-field-15 patterns 0x7F / 0xFF (mantissa 0b111) are NaN and
- *     the remaining field-15 patterns are finite (max 448).
- *   - E5M2: 1 sign, 5 exponent (bias 15), 2 mantissa. Exponent field 31
- *     carries +/-inf (mantissa 0) and NaN (mantissa nonzero).
- *
- * The down-conversions (f32 -> fp8, round-to-nearest-even) are the
- * deterministic reference for narrowing fp32 data into FP8 storage so the
- * bench and differential test data are reproducible. The up-conversion
- * tables are shared verbatim by the golden, the C-portable kernels and
- * the JIT kernels, so all three agree bit-for-bit on FP8 inputs.
- *
- * Storage type is uint8_t for the values and uint16_t for the table's
- * f32 bit patterns, so kernels compile independent of any compiler FP8
- * support.
  ******************************************************************************/
+
+/* FP8 has no ratified base hardware extension, so the up-conversion is a
+ * 256-entry f32 lookup table per dtype; every FP8 bit pattern maps to an
+ * exactly-representable f32, making the table the exact reference for golden
+ * and differential tests on any host. The two dtypes share the same table
+ * infrastructure and differ only in the contents:
+ *   - E4M3: 1 sign, 4 exponent (bias 7), 3 mantissa; no infinity, field-15
+ *     patterns with mantissa 0b111 are NaN.
+ *   - E5M2: 1 sign, 5 exponent (bias 15), 2 mantissa; field 31 carries
+ *     +/-inf (mantissa 0) and NaN (mantissa nonzero).
+ * The down-conversions (f32 -> fp8, round-to-nearest-even) are the
+ * deterministic reference for narrowing fp32 data into FP8 storage. The
+ * up-conversion tables are shared verbatim by the golden, the C-portable
+ * kernels and the JIT kernels, so all three agree bit-for-bit on FP8 inputs.
+ * Storage type is uint8_t for the values and uint16_t for the table's f32
+ * bit patterns, so kernels compile independent of any compiler FP8 support. */
 
 #ifndef RVCL_RVV_FP8_H
 #define RVCL_RVV_FP8_H

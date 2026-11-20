@@ -14,22 +14,19 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * unit_capability.cpp — capability unit tests
- *
- * Covers: host detection output and has/get query semantics, snapshot
+ ******************************************************************************/
+
+/* Covers: host detection output and has/get query semantics, snapshot
  * caching and stability, concurrent first-call consistency, the
  * human-readable summary contract, and the VLEN-tier conversion table.
- * Host-dependent expectations branch on what the running snapshot
- * actually reports instead of hardcoding a host, so the binary is
- * runnable everywhere; an exact VLEN may additionally be pinned with
- * RVCL_EXPECT_VLEN=<bits>.
+ * Host-dependent expectations branch on what the running snapshot actually
+ * reports instead of hardcoding a host, so the binary is runnable anywhere;
+ * an exact VLEN may additionally be pinned with RVCL_EXPECT_VLEN=<bits>.
  *
- * The --inject mode (own ctest entry, fresh process) exercises the
- * test-only snapshot override facility: synthetic snapshots, summary
- * regeneration, host restore, and the dispatch-cache invalidation that
- * accompanies every override/restore.
- ******************************************************************************/
+ * The --inject mode (own ctest entry, fresh process) exercises the test-only
+ * snapshot override facility: synthetic snapshots, summary regeneration,
+ * host restore, and the dispatch-cache invalidation that accompanies every
+ * override/restore. */
 
 #include <pthread.h>
 #include <stdio.h>

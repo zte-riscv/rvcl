@@ -14,16 +14,13 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * examples/dispatch.cpp — dispatch-once-run-many + cache observability
- *
- * The hot-path usage pattern (PLAN §4.7): dispatch once per problem
- * shape, configure reports workspace, run many times with different
- * data. Demonstrates: kernel selection query, workspace allocation by
- * the caller, repeated runs, pack B once and hold it across runs
- * (LIFETIME_KERNEL, bit-exact vs in-run packing), dispatch cache
- * hit/miss counters.
  ******************************************************************************/
+
+/* The hot-path usage pattern: dispatch once per problem shape, configure
+ * reports workspace, run many times with different data. Demonstrates the
+ * kernel selection query, caller-allocated workspace, repeated runs, B
+ * packed once and held across runs (LIFETIME_KERNEL), and dispatch cache
+ * hit/miss counters. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +63,7 @@ int main(void) {
     }
     printf("dispatch selected: %s\n", rvcl_dispatch_kernel_name(r));
 
-    /* 2. Workspace: the caller is the allocator (PLAN §4.10). */
+    /* 2. Workspace: the caller is the allocator. */
     int num_ws = 0;
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(r, &num_ws);
     void *ws_buf[RVCL_TENSOR_AUX_COUNT] = {0};

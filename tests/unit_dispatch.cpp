@@ -14,27 +14,24 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * unit_dispatch.cpp — dispatch unit tests
- *
- * Covers the six-stage filter pipeline and the selection rules: built-in
+ ******************************************************************************/
+
+/* Covers the six-stage filter pipeline and the selection rules: built-in
  * selection per build and host, datatype AUTO resolution, required-feature
  * and VLEN-tier filtering, shape bounds (inclusive), validate rejection,
  * cost-driven choice with registration order as the tie-break, cache
  * behavior (full-field key, invalidation on registry change, hit reuse),
- * failure semantics, the dispatch/execute boundary, and concurrent
- * dispatch under registry churn.
+ * failure semantics, the dispatch/execute boundary, and concurrent dispatch
+ * under registry churn.
  *
- * Host-dependent expectations branch on what the running snapshot and
- * build configuration actually provide, so the binary is runnable
- * everywhere. The --inject mode (own ctest entry, fresh process) uses the
- * test-only capability override to exercise non-host VLEN tiers and
- * feature sets.
+ * Host-dependent expectations branch on what the running snapshot and build
+ * configuration actually provide, so the binary is runnable everywhere. The
+ * --inject mode (own ctest entry, fresh process) uses the test-only
+ * capability override to exercise non-host VLEN tiers and feature sets.
  *
  * Custom kernels use datatype tuples no built-in occupies and are
  * unregistered at the end of each case; the dispatch cache is cleared
- * between cases so they stay independent.
- ******************************************************************************/
+ * between cases so they stay independent. */
 
 #include <pthread.h>
 #include <stdint.h>

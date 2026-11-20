@@ -14,55 +14,27 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_backend.cpp — RVV backend framework adapter: validate/configure/run
- *
- * One registry entry per variant (RFC-0002 FR1.2), grouped by dtype tuple
- * and registered in the order dispatch relies on for cost ties:
- *   vector builds:
- *     rvcl_matmul_f32_rvv_<tier>  (f32,f32,f32,f32)   requires RVV, per
- *         VLEN tier high -> low (RVCL_RVV_TIERS_<T> decides what compiles)
- *     rvcl_matmul_f32_rvv         (f32,f32,f32,f32)   generic, requires RVV
- *     rvcl_matmul_f16_rvv_<tier>  (f16,f16,f32,f32)   requires RVV + FP16
- *     rvcl_matmul_f16_rvv         (f16,f16,f32,f32)   generic
- *     rvcl_matmul_bf16_rvv_<tier> (bf16,bf16,f32,f32) requires RVV
- *     rvcl_matmul_bf16_rvv        (bf16,bf16,f32,f32) generic
- *     rvcl_matmul_fp8_e4m3_rvv[_<tier>] (fp8_e4m3,fp8_e4m3,f32,f32) requires
- *         RVV
- *     rvcl_matmul_fp8_e5m2_rvv[_<tier>] (fp8_e5m2,fp8_e5m2,f32,f32) requires
- *         RVV
- *     rvcl_matmul_s8_rvv[_<tier>]       (s8,s8,s32,s32)  requires RVV
- *     rvcl_matmul_u8_rvv[_<tier>]       (u8,u8,s32,s32)  requires RVV
- *     rvcl_matmul_mxfp8_e4m3_rvv[_<tier>] (mxfp8_e4m3,mxfp8_e4m3,f32,f32)
- *         block-scale (E8M0), requires RVV
- *     rvcl_matmul_mxfp8_e5m2_rvv[_<tier>] (mxfp8_e5m2,mxfp8_e5m2,f32,f32)
- *         block-scale (E8M0), requires RVV
- *   non-vector builds (portable scalar C entries):
- *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c /
- *     rvcl_matmul_bf16_rvv_c / rvcl_matmul_fp8_e4m3_rvv_c /
- *     rvcl_matmul_fp8_e5m2_rvv_c / rvcl_matmul_s8_rvv_c /
- *     rvcl_matmul_u8_rvv_c / rvcl_matmul_mxfp8_e4m3_rvv_c /
- *     rvcl_matmul_mxfp8_e5m2_rvv_c, no feature requirement
- *
- * The INT8/UINT8 kernels (s8 and u8 tuples) accumulate in int32 and are
- * integer-exact only while the product sum stays in int32 range: the worst
- * per-element product is 127*127 (s8) or 255*255 (u8), so a K reduction of
- * length K reaches 16129*K or 65025*K and wraps once K exceeds ~133k (s8)
- * or ~33k (u8). K must stay below those integer-exact bounds. See the K
- * limit note in rvv_gemm_s8u8.cpp and jit/rvv_gemm_s8u8_jit.cpp.
- *
- * Every variant's factory routes through the knob-aware micro-kernel
- * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
- * path semantics stay uniform across all entries; per-tier tuning later
- * only specializes the factory bindings below.
- *
- * run() contract (PLAN §4.3): consumes only pack memory; workspace is the
- * packed-B panel buffer (AUX_0) reported by configure(); when the host
- * endorses pack->src_b_packed the panels were packed once via
- * rvcl_kernel_pack_b() and run() only reads them, otherwise run() packs
- * B itself; never mallocs, never creates threads. The work range is
- * honored exactly.
  ******************************************************************************/
+
+/* One registry entry per variant, grouped by dtype tuple and registered in
+ * the order dispatch relies on for cost ties:
+ *   vector builds: rvcl_matmul_{f32,f16,bf16}_rvv[_<tier>] plus the
+ *       fp8_e4m3/e5m2, s8/u8 and mxfp8_e4m3/e5m2 variants, per VLEN tier
+ *       high -> low (RVCL_RVV_TIERS_<T> decides what compiles); each also
+ *       has a generic entry. Vector variants require RVV (f16 additionally
+ *       FP16).
+ *   non-vector builds (portable scalar C entries): rvcl_matmul_*_rvv_c with
+ *       no feature requirement.
+ * Every variant's factory routes through the knob-aware micro-kernel
+ * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so path
+ * semantics stay uniform across all entries; per-tier tuning later only
+ * specializes the factory bindings below.
+ *
+ * run() contract: consumes only pack memory; workspace is the packed-B
+ * panel buffer (AUX_0) reported by configure(). When the host endorses
+ * pack->src_b_packed the panels were packed once via rvcl_kernel_pack_b()
+ * and run() only reads them, otherwise run() packs B itself; never
+ * mallocs, never creates threads. The work range is honored exactly. */
 
 #include "rvv_internal.hpp"
 #include "rvv_paths.hpp"

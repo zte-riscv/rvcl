@@ -14,37 +14,23 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_f16_jit.cpp — FP16 GEMM JIT micro-kernel (xbyak_riscv)
- *
- * Run-time generated counterpart of the f16 micro-kernels in
- * rvv_gemm_f16.cpp: this translation unit compiles at the baseline
- * rv64gc -march, and vector code exists only after a run-time capability
- * probe — the property that keeps the whole backend in a single
- * baseline binary.
- *
- * The generated loop mirrors rvv_gemm_f16_c lane for lane: per output
- * column j the accumulator starts at bias[j] and takes one fused
- * multiply-add per k in ascending order, so the JIT path is bit-identical
- * to the C path under the same inputs. An FP16 panel row is widened to
- * fp32 with vfwcvt; the scalar A element is loaded as half and converted
- * with fcvt.s.h. Both are Zvfh instructions, so the availability probe
- * requires the FP16 capability.
- *
- * The accumulator is an fp32 vector kept at e32/m1; the FP16 panel row is
- * widened into a separate e32/m2 destination with vfwcvt so that widening
- * and compute never share a register (the core rejects in-place widening
- * and m2 compute). The K loop alternates two vtypes: e16/m1 to load the
- * FP16 panel row and widen it, e32/m1 to bias-seed, accumulate and store.
- * av is clamped to the panel-boundary lanes the same way the f32 JIT
- * clamps, so no load crosses a panel row boundary.
- *
- * Host side: rvv_gemm_f16_jit_entry() builds the code object once per
- * process (magic static) and hands out a plain function pointer, so the
- * run path performs no allocation. A generation failure is caught,
- * reported once and latched as NULL, letting the auto selection degrade
- * to the C kernel instead of crashing.
  ******************************************************************************/
+
+/* Run-time generated counterpart of the f16 micro-kernels in rvv_gemm_f16.cpp:
+ * this translation unit compiles at the baseline rv64gc -march, and vector
+ * code exists only after a run-time capability probe — the property that
+ * keeps the whole backend in a single baseline binary. The generated loop
+ * mirrors rvv_gemm_f16_c lane for lane (bias-first, one fused multiply-add
+ * per k in ascending order), so it is bit-identical to the C path under the
+ * same inputs. An FP16 panel row is widened to fp32 with vfwcvt and the
+ * scalar A element with fcvt.s.h — both Zvfh instructions, hence the probe
+ * requires the FP16 capability. The accumulator stays at e32/m1; the FP16
+ * row is widened into a separate e32/m2 destination with vfwcvt so widening
+ * and compute never share a register (the core rejects in-place widening and
+ * m2 compute). av is clamped to panel-boundary lanes, so no load crosses a
+ * panel row boundary. Host side builds the code object once per process
+ * (magic static); a generation failure is latched as NULL so auto selection
+ * degrades to the C kernel instead of crashing. */
 
 #include "../rvv_internal.hpp"
 

@@ -14,16 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * dtype_traits.hpp — library-side dtype fact table (single source of truth)
- *
- * Holds only library facts: element size, family, the AUTO
- * accumulation habit, the default assertion level and the tolerance class.
- * Backend headers (rvv_fp16.hpp) and test golden data are deliberately
- * out of scope here to keep the common layer free of a common -> backends/
- * or common -> tests/ dependency inversion; the test-side table in
- * tests/dtype_ops.{hpp,cpp} owns those and references this table.
  ******************************************************************************/
+
+/* Library-side dtype fact table (single source of truth), holding only
+ * library facts: element size, family, the AUTO accumulation habit, the
+ * default assertion level and the tolerance class. Backend headers and test
+ * golden data are deliberately out of scope here to keep the common layer
+ * free of a common -> backends/ or common -> tests/ dependency inversion;
+ * the test-side table in tests/dtype_ops.{hpp,cpp} owns those and references
+ * this table. */
 
 #ifndef RVCL_DTYPE_TRAITS_H
 #define RVCL_DTYPE_TRAITS_H

@@ -14,17 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/dtype_ops.hpp — test-side dtype fact table
- *
- * Owns the per-dtype TEST facts (dtstr, golden, fill, the soft-convert
+ ******************************************************************************/
+
+/* Owns the per-dtype TEST facts (dtstr, golden, fill, the soft-convert
  * reference and the compare routing); the library-side dtype fact table
  * (src/common/dtype_traits.hpp) owns the LIBRARY facts (size, family,
  * corpus name, acc habit, assertion-level default, tolerance class). The
  * test table references the library table for the tolerance class, so the
  * two layers stay single-source-of-truth without the common layer ever
- * referencing test or backend headers.
- ******************************************************************************/
+ * referencing test or backend headers. */
 
 #ifndef RVCL_TEST_DTYPE_OPS_H
 #define RVCL_TEST_DTYPE_OPS_H

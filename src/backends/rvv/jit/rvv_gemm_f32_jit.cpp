@@ -14,36 +14,27 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_f32_jit.cpp — FP32 GEMM JIT micro-kernel (xbyak_riscv)
- *
- * Run-time generated counterpart of the f32 micro-kernels in
- * rvv_gemm_f32.cpp: this translation unit compiles at the baseline
- * rv64gc -march, and vector code exists only after a run-time capability
- * probe — the property that keeps the whole backend in a single
- * baseline binary.
- *
- * The generated loop mirrors rvv_gemm_f32_c lane for lane: per output
- * column j the accumulator starts at bias[j] and takes one fused
- * multiply-add per k in ascending order, so the JIT path is bit-identical
- * to the C path under the same inputs. One code object serves every
- * VLEN: the AVL is clamped at run time to min(RVV_PACK_NC, columns
- * left, lanes left in the current panel row), which at VLEN=128 splits
- * each 8-wide panel into two strips and at VLEN>=256 consumes it in one.
- *
- * Host side: rvv_gemm_f32_jit_entry() builds the code object once per
- * process (magic static) and hands out a plain function pointer, so the
- * run path performs no allocation. A generation failure is caught,
- * reported once and latched as NULL, letting the auto selection degrade
- * to the C kernel instead of crashing.
- *
- * The macros below configure the vendored generator before its headers
- * are included. XBYAK_RISCV_V selects the vector instruction API.
- * XBYAK_RISCV_VSETV_DEFAULT_OLD opts out of the generator's backwards
- * compatible vsetvli/vsetivli default arguments (LMUL=m1, VTA=tu,
- * VMA=mu), forcing every call site to pass them explicitly — kernels
- * here always emit VTA::ta, VMA::ma.
  ******************************************************************************/
+
+/* Run-time generated counterpart of the f32 micro-kernels in rvv_gemm_f32.cpp:
+ * this translation unit compiles at the baseline rv64gc -march, and vector
+ * code exists only after a run-time capability probe — the property that
+ * keeps the whole backend in a single baseline binary. The generated loop
+ * mirrors rvv_gemm_f32_c lane for lane (bias-first, one fused multiply-add
+ * per k in ascending order), so it is bit-identical to the C path under the
+ * same inputs. One code object serves every VLEN: the AVL is clamped at run
+ * time to min(RVV_PACK_NC, columns left, lanes left in the current panel
+ * row), which at VLEN=128 splits each 8-wide panel into two strips and at
+ * VLEN>=256 consumes it in one. Host side builds the code object once per
+ * process (magic static); a generation failure is latched as NULL so auto
+ * selection degrades to the C kernel instead of crashing.
+ *
+ * The macros below configure the vendored generator before its headers are
+ * included. XBYAK_RISCV_V selects the vector instruction API.
+ * XBYAK_RISCV_VSETV_DEFAULT_OLD opts out of the generator's backwards
+ * compatible vsetvli/vsetivli default arguments (LMUL=m1, VTA=tu, VMA=mu),
+ * forcing every call site to pass them explicitly — kernels here always
+ * emit VTA::ta, VMA::ma. */
 
 #include "../rvv_internal.hpp"
 

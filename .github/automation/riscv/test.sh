@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
 # *******************************************************************************
-# RVCL — RISC-V Compute Library
+# Copyright 2026 ZTE Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # SPDX-License-Identifier: Apache-2.0
+# *******************************************************************************
 #
 # Test rvcl for RISC-V 64: run the cross-built ctest suite under QEMU
 # linux-user (registered through binfmt by the workflow).
@@ -11,7 +25,6 @@
 #   RVCL_CI_TIER          baseline | vector — drives skipped-tests.sh
 #   RVCL_EXPECT_FEATURES  capability gate expectations, e.g. "rvv,fp16"
 #   CTEST_PARALLEL_LEVEL  test parallelism
-# *******************************************************************************
 
 set -o errexit -o pipefail -o noclobber
 
@@ -25,7 +38,7 @@ export QEMU_LD_PREFIX=/usr/riscv64-linux-gnu
 # failure can be attributed without rerunning the job.
 qemu-riscv64-static --version 2>/dev/null | head -n 1 || true
 
-# Environment gate FIRST (G7): capability detection degrades by design,
+# Environment gate FIRST: capability detection degrades by design,
 # so a misconfigured emulator (e.g. QEMU too old to emulate hwprobe)
 # would silently downgrade and the numerical targets would still pass
 # green through the C fallback. RVCL_EXPECT_FEATURES turns "the tier we

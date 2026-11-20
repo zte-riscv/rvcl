@@ -5,9 +5,10 @@ header:
     # preserved verbatim (a folded `>` scalar would turn each line break into a
     # space and break the match). It matches the unified Apache-2.0 header
     # template used across all C/C++ sources (see src/backends/rvv/*.cpp):
-    # copyright (ZTE Corporation + year), the contiguous license text, then
-    # SPDX and the per-file description. `.` stands in for the quote marks so
-    # `(the "License")` and `"AS IS"` match regardless of quote style.
+    # the copyright line (ZTE Corporation + year), the contiguous license text,
+    # then the SPDX identifier, which is immediately followed by the closing
+    # banner line. `.` stands in for the quote marks so `(the "License")` and
+    # `"AS IS"` match regardless of quote style.
     pattern: |
       Copyright \d{4}(?:-\d{4})? ZTE Corporation
 

@@ -14,15 +14,13 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * capability_internal.h — internal capability interface (not installed)
- *
- * Declarations shared between the library and its test executables only.
- * This header is deliberately outside include/rvcl/: it is not part of
- * the public API, is never installed, and carries no stability promise.
- * It gives tests the VLEN-tier vocabulary dispatch consumes and a hook
- * to replace the process capability snapshot with a synthetic one.
  ******************************************************************************/
+
+/* Declarations shared between the library and its test executables only.
+ * This header is deliberately outside include/rvcl/: it is not part of the
+ * public API, is never installed, and carries no stability promise. It gives
+ * tests the VLEN-tier vocabulary dispatch consumes and a hook to replace the
+ * process capability snapshot with a synthetic one. */
 
 #ifndef RVCL_CAPABILITY_INTERNAL_H
 #define RVCL_CAPABILITY_INTERNAL_H

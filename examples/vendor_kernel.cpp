@@ -14,44 +14,32 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * examples/vendor_kernel.cpp — out-of-tree vendor kernel integration walkthrough
- *
- * Demonstrates the public contract a plugin uses to hook into rvcl as an
+ ******************************************************************************/
+
+/* Demonstrates the public contract a plugin uses to hook into rvcl as an
  * out-of-tree backend with the same dispatch semantics as an in-tree one:
+ *   1. ABI handshake   - rvcl_kernel_abi_version() vs RVCL_KERNEL_ABI_VERSION
+ *   2. probe register  - rvcl_capability_register_vendor_probe() before the
+ *                        first capability query, plus rvcl_capability_try_csr()
+ *   3. kernel register - rvcl_register_kernel() requiring the vendor feature
+ *   4. dispatch        - stage-3 feature pre-filter makes the vendor kernel
+ *                        visible on capable hosts, invisible otherwise
+ *   5. self-check      - rvcl_registry_find_factory() resolves the name.
  *
- *   1. ABI handshake   — rvcl_kernel_abi_version() vs RVCL_KERNEL_ABI_VERSION;
- *   2. probe register  — rvcl_capability_register_vendor_probe() (before the
- *                        first capability query), plus rvcl_capability_try_csr()
- *                        as the safe CSR-read helper;
- *   3. kernel register — rvcl_register_kernel() requiring the vendor feature,
- *                        cost via the public rvcl_cost_matmul_hint();
- *   4. dispatch        — stage-3 feature pre-filter makes the vendor kernel
- *                        visible on capable hosts, invisible otherwise;
- *   5. self-check      — rvcl_registry_find_factory() resolves the name.
- *
- * Protocol notes (the contract text the plugin must honor):
- *  - Two loading forms are recognized: LD_PRELOAD (environment-level load;
- *    the plugin's constructor registers pre-main) and direct application
- *    linking (the application calls a registration entry point explicitly).
- *    rvcl does no active dlopen of plugins.
- *  - Register a probe BEFORE the first capability query or dispatch — the
- *    snapshot is built once per process. A probe registered after that
- *    returns RVCL_ERROR_ALREADY_INITIALIZED; a runtime-loaded plugin that
- *    missed the window must fall back to a validate()-time self-probe
- *    (side-effect-free, cached) instead of relying on the snapshot.
- *  - Cost trap: do not bind rvcl_kernel_cost_zero() and expect ordering —
- *    a real cost model (here via rvcl_cost_matmul_hint) is what orders
- *    candidates. Equal costs tie-break by registration order.
- *  - Only the vendor-range feature ids (>= RVCL_FEATURE_VENDOR_FIRST) a
- *    probe declares survive into the snapshot; the framework sanitizes the
- *    probe's increment.
+ * Protocol notes the plugin must honor: two loading forms are recognized
+ * (LD_PRELOAD, whose constructor registers pre-main, and direct application
+ * linking); rvcl does no active dlopen of plugins. Register a probe BEFORE
+ * the first capability query — the snapshot is built once per process — or
+ * fall back to a validate()-time self-probe (side-effect-free, cached).
+ * Bind a real cost model (here rvcl_cost_matmul_hint), not
+ * rvcl_kernel_cost_zero(), or candidates do not get ordered. Only
+ * vendor-range feature ids (>= RVCL_FEATURE_VENDOR_FIRST) that a probe
+ * declares survive into the snapshot.
  *
  * On a host where the vendor feature is not in the snapshot the vendor
- * kernel is filtered at stage 3 and the dispatch on its tuple returns
+ * kernel is filtered at stage 3 and dispatch on its tuple returns
  * RVCL_UNSUPPORTED — the expected out-of-band outcome this walkthrough
- * treats as success-for-demonstration.
- ******************************************************************************/
+ * treats as success-for-demonstration. */
 
 #include <stdio.h>
 #include <stdlib.h>

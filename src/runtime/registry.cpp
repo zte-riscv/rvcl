@@ -14,25 +14,22 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * registry.cpp — kernel registration and indexing
- *
- * Stable-slot storage with an ordered index (RFC-0002 registry):
+ ******************************************************************************/
+
+/* Stable-slot storage with an ordered index:
  *   - descriptors live in fixed slots that are never moved by unregister,
- *     so a pointer handed out by rvcl_registry_get() stays valid while
- *     the kernel it refers to is registered;
- *   - g_order keeps the registration sequence; dispatch relies on it as
- *     the deterministic tie-break between equal-cost candidates;
- *   - freed slots are reused only after all never-used slots are spent.
- *     A pointer to an unregistered kernel therefore must not be used: its
- *     slot may later hold a different descriptor.
+ *     so a pointer handed out by rvcl_registry_get() stays valid while the
+ *     kernel it refers to is registered;
+ *   - g_order keeps the registration sequence; dispatch relies on it as the
+ *     deterministic tie-break between equal-cost candidates;
+ *   - freed slots are reused only after all never-used slots are spent. A
+ *     pointer to an unregistered kernel therefore must not be used: its slot
+ *     may later hold a different descriptor.
  *
  * Registrations are fully validated before any state changes (reject
  * atomically, never partially register). Unregistering the last unbounded
  * kernel of a live datatype tuple is rejected so every tuple keeps a
- * fallback. No performance decisions here: cost_fn is stored, never
- * called.
- ******************************************************************************/
+ * fallback. No performance decisions here: cost_fn is stored, never called. */
 
 #include "rvcl/registry.h"
 
@@ -65,7 +62,7 @@ RVCL_API uint64_t rvcl_kernel_cost_zero(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
     (void)desc;
     (void)cap;
-    return 0; /* "no cost information" (RFC-0002 FR4.2) */
+    return 0; /* "no cost information" */
 }
 
 /* ------------------------------------------------------------ validation */
@@ -174,7 +171,7 @@ static int desc_is_unbounded(const rvcl_kernel_desc_t *d) {
 }
 
 /* Does the datatype tuple `d` belongs to contain at least one unbounded
- * kernel? Every live tuple must (FR1.7). */
+ * kernel? Every live tuple must. */
 static int tuple_has_unbounded_locked(const rvcl_kernel_desc_t *d) {
     for (int i = 0; i < g_count; i++) {
         const rvcl_kernel_desc_t *o = &g_slots[g_order[i]].desc;

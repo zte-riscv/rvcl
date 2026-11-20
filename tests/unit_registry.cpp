@@ -14,23 +14,21 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * unit_registry.cpp — registry unit tests (RFC-0002 FR1 / AC1)
- *
- * Covers: full-field registration, lazy init via first computation, init
- * idempotence, duplicate/capacity/malformed rejection, iteration and
- * factory contracts, unregister semantics incl. the per-tuple fallback
- * invariant, builtin registration order, and concurrent
- * register/unregister/query safety (meaningful under the ASan build).
- *
- * Custom kernels use datatype tuples no builtin occupies (INT8/INT4) and
- * are unregistered again at the end of each case, followed by a dispatch
- * cache clear, so cases stay independent.
- *
- * Pre-init cases run in fresh processes (argv modes): they register
- * custom kernels before the first rvcl_init() to exercise the whole-table
- * fallback verifier and the failed-init rollback.
  ******************************************************************************/
+
+/* Covers: full-field registration, lazy init via first computation, init
+ * idempotence, duplicate/capacity/malformed rejection, iteration and factory
+ * contracts, unregister semantics incl. the per-tuple fallback invariant,
+ * builtin registration order, and concurrent register/unregister/query
+ * safety (meaningful under the ASan build).
+ *
+ * Custom kernels use datatype tuples no builtin occupies (INT8/INT4) and are
+ * unregistered again at the end of each case, followed by a dispatch cache
+ * clear, so cases stay independent.
+ *
+ * Pre-init cases run in fresh processes (argv modes): they register custom
+ * kernels before the first rvcl_init() to exercise the whole-table fallback
+ * verifier and the failed-init rollback. */
 
 #include <pthread.h>
 #include <sched.h>
@@ -691,10 +689,10 @@ static void tc11_table_invariant(void) {
 
 /* TC-AC1-12: builtin order = dedicated (high tier -> low), then generic,
  * then fallback. Dedicated and generic entries must declare the vector
- * features they depend on (FR1.5). The grouping invariant is checked per
- * operation family (matmul here): other operators, e.g. the GEMV entries
- * sharing the f32 tuple, are ordered and grouped the same way within their
- * own family, but a cross-family interleave must not disturb this check. */
+ * features they depend on. The grouping invariant is checked per operation
+ * family (matmul here): other operators, e.g. the GEMV entries sharing the
+ * f32 tuple, are ordered and grouped the same way within their own family,
+ * but a cross-family interleave must not disturb this check. */
 static void tc12_builtin_order(void) {
     printf("TC-AC1-12 builtin registration order\n");
     const int n = rvcl_registry_count();
@@ -748,9 +746,8 @@ static void tc12_builtin_order(void) {
 /* TC-AC1-13: concurrent register / unregister / query. The interesting
  * race window is exercised under the ASan build.
  *
- * Capacity note: the test plan budgets 8 entries per A thread (8x8), but
- * the 64-slot registry also holds the built-ins and the D-group target,
- * so each A thread registers 4 names instead. */
+ * Capacity note: the 64-slot registry holds the built-ins as well, so
+ * each A thread registers 4 names instead of 8. */
 
 #define T13_THREADS_A 8
 #define T13_PER_A 4
@@ -978,7 +975,7 @@ static void tc13_concurrent(void) {
 }
 
 /* TC-AC1-14: builtin entries exist per build configuration and every
- * name resolves. The enabled tier set is a build input (AC1), so this
+ * name resolves. The enabled tier set is a build input, so this
  * target receives the same RVCL_RVV_TIERS_<T> definitions as the library
  * and asserts exactly that set. */
 static void tc14_builtin_entries(void) {

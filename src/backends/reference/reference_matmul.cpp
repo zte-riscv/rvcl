@@ -14,13 +14,11 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * reference_matmul.cpp — golden FP32 MatMul (reference backend)
- *
- * Phase 0 reference backend (PLAN §6.2 step 4): correctness-first triple
- * loop, zero workspace, no packing. Also the differential-testing golden
- * implementation that v0.1 RVV kernels are compared against.
  ******************************************************************************/
+
+/* Reference backend: correctness-first triple loop, zero workspace, no
+ * packing. Also the differential-testing golden implementation the RVV
+ * kernels are compared against. */
 
 #include "rvcl/kernel.h"
 #include "rvcl/registry.h"
@@ -45,7 +43,7 @@ static rvcl_status_t ref_validate(
     (void)cap; /* reference kernel runs anywhere, even on x86 CI hosts */
     const rvcl_matmul_desc_t *d = &desc->matmul;
     if (d->m <= 0 || d->n <= 0 || d->k <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
-    /* Reference covers exactly the P0 fp32 tuple (PLAN §4.5.2). */
+    /* Reference covers exactly the fp32 tuple. */
     if (d->dtype_a != RVCL_DTYPE_FP32 || d->dtype_b != RVCL_DTYPE_FP32
             || d->dtype_c != RVCL_DTYPE_FP32)
         return RVCL_UNSUPPORTED_DTYPE_COMBO;
@@ -83,7 +81,7 @@ static rvcl_status_t ref_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     const float *pbias = bias ? (const float *)bias->data : NULL;
     float *pc = (float *)c->data;
 
-    /* Honor the requested sub-range; ranges partition M/N (PLAN §4.3). */
+    /* Honor the requested sub-range; ranges partition M/N. */
     for (int64_t i = r->m_begin; i < r->m_end; i++) {
         for (int64_t j = r->n_begin; j < r->n_end; j++) {
             float acc = pbias ? pbias[j] : 0.0f;
@@ -123,7 +121,7 @@ static rvcl_status_t ref_create(
  * The reference kernel is the f32 tuple's unbounded fallback: no feature
  * requirement, no shape limit, registered after the dedicated, generic
  * and portable variants so it only wins when nothing else survives
- * filtering (RFC-0002 FR1.5).
+ * filtering.
  */
 RVCL_API rvcl_status_t rvcl_reference_register(void) {
     rvcl_kernel_desc_t d;

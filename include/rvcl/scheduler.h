@@ -14,14 +14,11 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * scheduler.h — injectable scheduler (ACL IScheduler equivalent)
- *
- * Hosts own the parallelism (PLAN §4.9). Semantic APIs and kernels face
- * only rvcl_ischeduler_t; micro-kernel parallelism is expressed as work
- * range slices. rvcl_scheduler_set() is process-wide and one-shot
- * (set-once semantics, mirroring ACL's single Scheduler instance).
  ******************************************************************************/
+
+/* Hosts own the parallelism. Semantic APIs and kernels face only
+ * rvcl_ischeduler_t; micro-kernel parallelism is expressed as work-range
+ * slices. rvcl_scheduler_set() is process-wide and one-shot (set-once). */
 
 #ifndef RVCL_SCHEDULER_H
 #define RVCL_SCHEDULER_H
@@ -50,7 +47,7 @@ typedef struct rvcl_ischeduler {
 
 /*
  * Injects a host scheduler. Process-wide, one-shot: a second call returns
- * RVCL_ERROR_ALREADY_INITIALIZED (set-once semantics per PLAN §4.9).
+ * RVCL_ERROR_ALREADY_INITIALIZED (set-once semantics).
  * Passing NULL installs the built-in serial scheduler. Thread-safe.
  */
 RVCL_API rvcl_status_t rvcl_scheduler_set(rvcl_ischeduler_t *scheduler);
@@ -61,10 +58,10 @@ RVCL_API rvcl_ischeduler_t *rvcl_scheduler_get(void);
 /* Built-in serial scheduler (single-threaded fallback; tests/emulators). */
 RVCL_API rvcl_ischeduler_t *rvcl_serial_scheduler(void);
 
-/* Built-in OpenMP scheduler backend (PR-3 §5.3.1): zero-injection default
- * parallelism. Only compiled into OpenMP builds (RVCL_ENABLE_OMP=ON); on a
- * non-OpenMP build this returns NULL and the lazy default falls back to the
- * serial scheduler. */
+/* Built-in OpenMP scheduler backend: zero-injection default parallelism.
+ * Only compiled into OpenMP builds (RVCL_ENABLE_OMP=ON); on a non-OpenMP
+ * build this returns NULL and the lazy default falls back to the serial
+ * scheduler. */
 RVCL_API rvcl_ischeduler_t *rvcl_omp_scheduler(void);
 
 /* Convenience: parallel_for through the current scheduler. */

@@ -14,20 +14,16 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_internal.hpp — shared declarations inside the RVV backend
- *
- * The RVV backend keeps three layers (PLAN §4.6):
+ ******************************************************************************/
+
+/* The RVV backend keeps three layers:
  *   - pack: plain -> panel layout conversion (RVV-friendly);
  *   - micro-kernel: fixed-shape vectorized inner loops;
  *   - framework adapter: validate/configure/run + registration.
- *
  * Every translation unit compiles on any host. The vectorized paths are
  * guarded by __riscv_vector; hosts without it fall back to the C-portable
  * loops so framework logic (packing, registry, dispatch cache, tests)
- * stays verifiable on x86 CI (PLAN §6.2 item 12). A build that lands on
- * real RVV silicon gets the intrinsics through the same descriptors.
- ******************************************************************************/
+ * stays verifiable on hosts without the vector extension. */
 
 #ifndef RVCL_RVV_INTERNAL_H
 #define RVCL_RVV_INTERNAL_H
@@ -45,9 +41,9 @@
  *   B[k,n] is repacked into column panels of width RVV_PACK_NC:
  *     panel p covers columns [p*NC, (p+1)*NC)
  *     inside a panel, memory is n-major: [k][nc]
- *   Rationale (PLAN §4.6): the micro-kernel streams contiguous B rows
- *   (K direction) while holding an (MR x NC) accumulator tile, so the
- *   innermost K loop touches unit-stride memory in both operands.
+ *   Rationale: the micro-kernel streams contiguous B rows (K direction)
+ *   while holding an (MR x NC) accumulator tile, so the innermost K loop
+ *   touches unit-stride memory in both operands.
  *
  * A is consumed unpacked (row-major) in v0.1; pack_a exists for API
  * completeness and is a metadata copy.
@@ -127,15 +123,15 @@ void rvv_gemm_f16_rvv(const void *a, const void *b_packed, const void *bias,
 /* ------------------------------------------------------- backend registration */
 
 /*
- * One registry entry per variant (RFC-0002 FR1.2): on vector builds this
- * registers the per-tier dedicated variants (RVCL_RVV_TIERS_<T> build
- * macros decide which tiers are enabled, registered high -> low) plus the
- * generic entry; on non-vector builds it is a no-op and
- * rvcl_rvv_register_portable() registers the scalar C entries instead.
- * Every variant's factory routes through the knob-aware selector below,
- * so the RVCL_RVV_KERNEL forcing and the auto JIT-when-RVV policy stay
- * uniform across all entries; per-tier tuning later specializes the
- * per-variant factory bindings, invisible to the registry and dispatch.
+ * One registry entry per variant: on vector builds this registers the
+ * per-tier dedicated variants (RVCL_RVV_TIERS_<T> build macros decide which
+ * tiers are enabled, registered high -> low) plus the generic entry; on
+ * non-vector builds it is a no-op and rvcl_rvv_register_portable()
+ * registers the scalar C entries instead. Every variant's factory routes
+ * through the knob-aware selector below, so the RVCL_RVV_KERNEL forcing and
+ * the auto JIT-when-RVV policy stay uniform across all entries; per-tier
+ * tuning later specializes the per-variant factory bindings, invisible to
+ * the registry and dispatch.
  */
 RVCL_API rvcl_status_t rvcl_rvv_register(void);
 

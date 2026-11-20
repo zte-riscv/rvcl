@@ -14,14 +14,12 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * matmul.cpp — semantic MatMul API (Layer 1)
- *
- * One-shot path: dispatch → import tensors (zero-copy) → allocate the
- * reported workspace on the stack/heap of this call → pack B once → run
- * via the current scheduler. "dispatch once, run many" users call
- * dispatch.h directly.
  ******************************************************************************/
+
+/* One-shot path: dispatch -> import tensors (zero-copy) -> allocate the
+ * reported workspace on the stack/heap of this call -> pack B once -> run
+ * via the current scheduler. "dispatch once, run many" users call
+ * dispatch.h directly. */
 
 #include "rvcl/matmul.h"
 
@@ -55,7 +53,7 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
     if (!desc || !a || !b || !c) return RVCL_ERROR_INVALID_ARGUMENT;
 
     /* A block-scale input dtype must come with a scale tensor and a plain
-     * dtype must not (D-6). */
+     * dtype must not. */
     const size_t blk_a = rvcl_dtype_block_size(desc->dtype_a);
     const size_t blk_b = rvcl_dtype_block_size(desc->dtype_b);
     if ((blk_a == 0) != (sa == NULL)) return RVCL_ERROR_INVALID_ARGUMENT;
@@ -66,7 +64,7 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
     rvcl_status_t st = rvcl_dispatch_matmul(desc, &r);
     if (st != RVCL_SUCCESS) return st;
 
-    /* 2. Import host memory zero-copy (PLAN §4.10). */
+    /* 2. Import host memory zero-copy. */
     rvcl_tensor_desc_t td2 = {.ndims = 2,
             .dims = {desc->m, desc->k},
             .strides = {desc->k, 1},
@@ -101,8 +99,8 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
     }
 
     /* Scale tensors: row-major sa[m][K/blk_a] and sb[K/blk_b][n], dtype
-     * from the block-scale dtype (D-6). sb keeps K-blocks on the outer axis
-     * (oneDNN-aligned); the micro-kernels read it as sb[(p/blk)*n + j]. */
+     * from the block-scale dtype. sb keeps K-blocks on the outer axis; the
+     * micro-kernels read it as sb[(p/blk)*n + j]. */
     if (blk_a > 0) {
         rvcl_tensor_desc_t sd = {.ndims = 2,
                 .dims = {desc->m, desc->k / (int64_t)blk_a},
@@ -122,9 +120,8 @@ rvcl_status_t rvcl_matmul_scaled(const rvcl_matmul_desc_t *desc, const void *a,
 
     /* 3. Workspace: caller of the semantic API is the caller here, so we
      * allocate what configure() reported and feed AUX slots (kernels
-     * themselves never malloc; PLAN §4.3). Declared before the loop so
-     * the error goto below does not cross their initialization (C++
-     * jump rules). */
+     * themselves never malloc). Declared before the loop so the error goto
+     * below does not cross their initialization (C++ jump rules). */
     run_task_ctx_t ctx = {.kernel = rvcl_dispatch_kernel(r), .pack = &pack};
     rvcl_work_range_t full = rvcl_work_range_full(desc->m, desc->n, desc->k);
     int num_ws = 0;

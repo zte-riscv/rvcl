@@ -14,28 +14,19 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/capability_assert.cpp — environment self-check gate (G7)
- *
- * Prints the detected capability — the description plus every feature
- * with its value — and, when RVCL_EXPECT_FEATURES is set, asserts that
- * each named feature is present, failing on the first miss.
- *
- * Why this exists: capability detection degrades instead of erroring
- * (capability.h), so a misconfigured environment — e.g. a QEMU too old
- * to emulate the hwprobe syscall — silently downgrades to the
- * compile-time view and the numerical targets still pass green through
- * the C fallback. The riscv64 CI runs this as its FIRST target with
- * per-tier expectations:
- *   vector tier   RVCL_EXPECT_FEATURES=rvv,fp16  (compile-time macros)
- *   baseline tier RVCL_EXPECT_FEATURES=rvv       (runtime hwprobe upgrade)
- *
- * The RVV value (VLEN in bits; 1 = present-but-unknown) is printed as
- * an observation only — the vlenb read is best-effort by contract.
- *
- * With the variable unset the run is print-only and always exits 0, so
- * plain local `ctest` never fails on host capability differences.
  ******************************************************************************/
+
+/* Environment self-check gate: prints the detected capability — the
+ * description plus every feature with its value — and, when
+ * RVCL_EXPECT_FEATURES is set, asserts that each named feature is present,
+ * failing on the first miss. Capability detection degrades instead of
+ * erroring (capability.h), so a misconfigured environment could otherwise
+ * silently downgrade to the compile-time view while the numerical targets
+ * still pass through the C fallback. With the variable unset the run is
+ * print-only and always exits 0, so plain local `ctest` never fails on host
+ * capability differences. The RVV value (VLEN in bits; 1 = present-but-
+ * unknown) is printed as an observation only — the vlenb read is
+ * best-effort by contract. */
 
 #include <stdio.h>
 #include <stdlib.h>

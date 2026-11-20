@@ -14,22 +14,19 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/golden.hpp — shared golden helpers for the test executables
- *
- * Data semantics have a single point of truth here (linked into both
- * rvcl_differential and rvcl_bench --mode=C); the corpus parsers are
- * deliberately double-implemented so the two consumers cross-validate
- * the format spec against each other.
- *
- * The golden matmuls are hand-written naive loops with zero code shared
- * with the library — an implementation bug cannot hide in a shared ref.
- *
- * Bit-exactness note: vfmacc is a fused (single-rounding) multiply-add,
- * so the scalar golden must contract `acc += a * b` to fmadd the same
- * way — build with optimization (Release / -O2+) on vector builds for
- * the fp32 bit-exact checks to hold.
  ******************************************************************************/
+
+/* Data semantics have a single point of truth here (linked into both
+ * rvcl_differential and rvcl_bench --mode=C); the corpus parsers are
+ * deliberately double-implemented so the two consumers cross-validate the
+ * format spec against each other. The golden matmuls are hand-written naive
+ * loops with zero code shared with the library — an implementation bug
+ * cannot hide in a shared reference.
+ *
+ * Bit-exactness note: vfmacc is a fused (single-rounding) multiply-add, so
+ * the scalar golden must contract `acc += a * b` to fmadd the same way —
+ * build with optimization (Release / -O2+) on vector builds for the fp32
+ * bit-exact checks to hold. */
 
 #ifndef RVCL_TEST_GOLDEN_H
 #define RVCL_TEST_GOLDEN_H

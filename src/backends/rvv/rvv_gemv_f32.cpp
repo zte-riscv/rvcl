@@ -14,21 +14,18 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemv_f32.cpp — FP32 GEMV kernel (RVV backend, C-portable path)
- *
- * y[m] = bias? + A[m,k] x[k], row-major A, length-m output vector.
- * Single-path demonstration operator: a C-portable micro-kernel shared by
- * the generic and portable registry entries, so the operator exercises the
- * whole extension-slot pipeline without a dedicated pick-table row (D-6).
- * The generic entry (rvcl_gemv_f32_rvv) carries the RVV feature and serves
- * vector builds; the portable entry (rvcl_gemv_f32_rvv_c) carries no feature
- * requirement and serves non-vector builds / any host. Both bind the same
- * C loop, which is the correctness oracle for the differential test.
+ ******************************************************************************/
+
+/* y[m] = bias? + A[m,k] x[k], row-major A, length-m output vector. A
+ * single-path demonstration operator: a C-portable micro-kernel shared by
+ * the generic and portable registry entries. The generic entry
+ * (rvcl_gemv_f32_rvv) carries the RVV feature and serves vector builds; the
+ * portable entry (rvcl_gemv_f32_rvv_c) carries no feature requirement and
+ * serves non-vector builds / any host. Both bind the same C loop, which is
+ * the correctness oracle for the differential test.
  *
  * There is no B packing: B is a length-k vector, so run() consumes the pack
- * directly and configure() reports no workspace.
- ******************************************************************************/
+ * directly and configure() reports no workspace. */
 
 #include "rvcl/kernel.h"
 #include "rvcl/registry.h"
@@ -125,9 +122,9 @@ static rvcl_status_t rvv_create(
 
 /* ------------------------------------------------------- registration */
 
-/* One registry entry per variant (RFC-0002 FR1.2), register_one-style:
- * the generic entry requires the RVV feature on vector builds; the
- * portable entry carries no feature requirement so it serves any host. */
+/* One registry entry per variant, register_one-style: the generic entry
+ * requires the RVV feature on vector builds; the portable entry carries no
+ * feature requirement so it serves any host. */
 static rvcl_status_t gemv_register_one(const char *name, rvcl_vlen_tier_t tier,
         rvcl_feature_id_t f0, rvcl_feature_id_t f1) {
     rvcl_kernel_desc_t d;

@@ -14,37 +14,29 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_mxfp8_jit.cpp — MXFP8 (E4M3 / E5M2) block-scale GEMM JIT kernel
- *
- * Run-time generated counterpart of the C kernels in rvv_gemm_mxfp8.cpp:
+ ******************************************************************************/
+
+/* Run-time generated counterpart of the C kernels in rvv_gemm_mxfp8.cpp:
  * this translation unit compiles at the baseline rv64gc -march, and vector
- * code exists only after a run-time capability probe — the property that
- * keeps the whole backend in a single baseline binary.
+ * code exists only after a run-time capability probe, keeping the whole
+ * backend in a single baseline binary.
  *
  * Both operands are FP8 bytes, each 32-wide K-block sharing a 1-byte E8M0
  * exponent scale (dequant = element * 2^(e-127)). The scalar A element and
- * the scalar A-block scale are loaded with lbu and indexed into the shared
- * 256-entry f32 tables (FP8 in rvv_fp8.hpp, E8M0 in rvv_e8m0.hpp); the
- * NC-wide B strip and the NC-wide B-block scale are upconverted
- * arithmetically with base-RVV ops, bit-identical to the tables: the E8M0
- * normal byte e maps to the f32 bit pattern e<<23 (2^(e-127)), with the two
- * boundary bytes fixed up — 0x00 -> 0x00400000 (smallest subnormal) and
- * 0xFF -> 0x7fc00000 (NaN) — exactly the table values. Because E8M0 scales
- * are exact powers of two (the NaN/0x00 cases apart), multiplying a product
- * by them never rounds, so the accumulate order (bias first, ascending k)
- * stays bit-identical to the C path.
+ * A-block scale are loaded with lbu and indexed into the shared 256-entry
+ * f32 tables; the NC-wide B strip and B-block scale are upconverted
+ * arithmetically with base-RVV ops, bit-identical to the tables. Because
+ * E8M0 scales are exact powers of two (the NaN/0x00 cases apart),
+ * multiplying a product by them never rounds, so the accumulate order (bias
+ * first, ascending k) stays bit-identical to the C path.
  *
  * Kernel argument layout (LP64D): the eight register args are a0=a,
- * a1=b_packed, a2=sa, a3=sb, a4=bias, a5=c, a6=m, a7=n; k_dim and r are
- * the first two stack arguments (caller sp+0, sp+16). blk is a fixed
+ * a1=b_packed, a2=sa, a3=sb, a4=bias, a5=c, a6=m, a7=n; k_dim and r are the
+ * first two stack arguments (caller sp+0, sp+16). blk is a fixed
  * compile-time constant (32, the OCP MX block width) and is not read from
- * the stack. One code object serves every VLEN.
- *
- * Host side mirrors rvv_gemm_fp8_jit.cpp: the entry is built once per
- * process (magic static) and a generation failure is latched as NULL so
- * auto selection degrades to the C kernel.
- ******************************************************************************/
+ * the stack. One code object serves every VLEN. Host side builds the entry
+ * once per process (magic static); a generation failure is latched as NULL
+ * so auto selection degrades to the C kernel. */
 
 #include "../rvv_e8m0.hpp"
 #include "../rvv_fp8.hpp"

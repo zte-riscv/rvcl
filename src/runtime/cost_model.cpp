@@ -14,37 +14,24 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * cost_model.cpp — heuristic kernel cost model
- *
- * The cost callback contract (kernel.h) asks each kernel for a non-negative
- * cycle estimate, smaller = better; 0 means "no cost information". Backends
- * without a real model bind rvcl_kernel_cost_zero(). This file provides the
- * real, explainable scores that replace the zero default for the matmul
- * categories:
- *
- *   score = per_element_coefficient x shape_heuristic x vlen_tier_gain
- *
- *   - per_element_coefficient: a structured default constant per category
- *     (matmul-rvv cheap, matmul-reference expensive). These are heuristic
- *     defaults, not measured data; the real-machine backfill that turns the
- *     constant table into registrable per-kernel data is a future
- *     calibration step (see the table below).
- *   - shape_heuristic: dimensionless fixed-point penalty from the request
- *     against the kernel's preferred-tile hints (partial tail tiles cost a
- *     little extra). Neutral when a kernel declares no preferred hint, so
- *     the current built-in entries (all hints 0) score purely by category
- *     and host tier.
- *   - vlen_tier_gain: matmul-rvv amortizes better at wider VLEN, so its
- *     coefficient shrinks with the host tier; the reference gets no gain.
- *
- * Ordering guarantee: whenever a matmul-rvv candidate survives filtering
- * it scores below the matmul-reference fallback, so dispatch picks the RVV
- * entry on a capable host; the reference wins only when no matmul-rvv
- * candidate survives (feature/shape/datatype filtering). Equal scores keep
- * the earlier registration (dispatch.cpp), which is how the dedicated
- * VLEN tiers and the generic entry tie-break today.
  ******************************************************************************/
+
+/* The cost callback contract (kernel.h) asks each kernel for a non-negative
+ * cycle estimate, smaller = better; 0 means "no cost information". This file
+ * provides the real, explainable scores that replace the zero default for
+ * the matmul categories:
+ *   score = per_element_coefficient x shape_heuristic x vlen_tier_gain
+ * The per-element coefficient is a structured heuristic default per category
+ * (matmul-rvv cheap, matmul-reference expensive), not measured data; the
+ * shape_heuristic is a fixed-point penalty for partial tail tiles and is
+ * neutral when a kernel declares no preferred hint; the vlen_tier_gain
+ * shrinks the matmul-rvv coefficient as the host VLEN tier widens, with no
+ * gain for the reference. Ordering guarantee: whenever a matmul-rvv candidate
+ * survives filtering it scores below the matmul-reference fallback, so
+ * dispatch picks the RVV entry on a capable host; the reference wins only
+ * when no matmul-rvv candidate survives. Equal scores keep the earlier
+ * registration (dispatch.cpp), which is how the dedicated VLEN tiers and the
+ * generic entry tie-break today. */
 
 #include "capability_internal.h"
 #include "cost_model.h"
