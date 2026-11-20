@@ -38,7 +38,7 @@ export QEMU_LD_PREFIX=/usr/riscv64-linux-gnu
 # failure can be attributed without rerunning the job.
 qemu-riscv64-static --version 2>/dev/null | head -n 1 || true
 
-# Environment gate FIRST (G7): capability detection degrades by design,
+# Environment gate FIRST: capability detection degrades by design,
 # so a misconfigured emulator (e.g. QEMU too old to emulate hwprobe)
 # would silently downgrade and the numerical targets would still pass
 # green through the C fallback. RVCL_EXPECT_FEATURES turns "the tier we

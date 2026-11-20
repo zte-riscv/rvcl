@@ -352,7 +352,7 @@ if(RVCL_BUILD_TESTS)
     # invariant, registration order and concurrent access safety.
     add_executable(rvcl_unit_registry tests/unit_registry.cpp)
     target_link_libraries(rvcl_unit_registry PRIVATE rvcl rvcl_test_golden)
-    # The build configuration decides the enabled tier set (AC1), so the
+    # The build configuration decides the enabled tier set, so the
     # test must see the same RVCL_RVV_TIERS_<T> definitions as the library.
     if(RVCL_ENABLE_RVV)
         target_compile_definitions(rvcl_unit_registry PRIVATE ${_rvcl_tier_defs})

@@ -975,7 +975,7 @@ static void tc13_concurrent(void) {
 }
 
 /* TC-AC1-14: builtin entries exist per build configuration and every
- * name resolves. The enabled tier set is a build input (AC1), so this
+ * name resolves. The enabled tier set is a build input, so this
  * target receives the same RVCL_RVV_TIERS_<T> definitions as the library
  * and asserts exactly that set. */
 static void tc14_builtin_entries(void) {
