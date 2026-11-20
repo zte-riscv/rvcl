@@ -27,8 +27,9 @@ agnostic.
 corpus_file := { blank | comment | header_opt } case_line { blank | comment | case_line } ;
 blank       := [ \t ]* EOL ;
 comment     := '#' ANY* EOL ;            (* full-line; inline after a case is fine *)
-header_opt  := ( '--mode=' ( 'C' | 'P' | 'S' ) | '--dt=' ( 'f32' | 'f16' | 'bf16' ) ) EOL ;
-              (* only before the first case; any '--' line after it is an error *)
+header_opt  := ( '--mode=' ( 'C' | 'P' | 'S' ) | '--dt=' DTSTR ) EOL ;
+              (* DTSTR = f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2|s8|u8;
+                 only before the first case; any '--' line after it is an error *)
 case_line   := shape [ occurrence ] [ sep label ] EOL ;
 shape       := triple | triple ':' triple ;  (* MxNxK; or MxK:KxN, both K must match *)
 triple      := int 'x' int 'x' int ;
@@ -55,8 +56,8 @@ lines unmodified).
 | Rule | Meaning |
 | --- | --- |
 | header options | whole-file defaults; bench CLI `--mode` overrides the file header; differential ignores `--mode` (it is inherently correctness) |
-| `--dt` default | no header = run f32, f16 **and** bf16; explicit = run only that dtype and **assert** it is served (see exit codes) |
-| `--dt` CLI | differential `--dt=f32\|f16\|bf16` restricts the whole run — fixed contract sections and corpus cases alike — to one dtype and overrides the file header; the forced-path ctest targets use it |
+| `--dt` default | no header = run every dtype the operator serves (matmul: f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3, mxfp8e5m2, s8, u8); explicit = run only that dtype and **assert** it is served (see exit codes) |
+| `--dt` CLI | differential `--dt=f32\|f16\|bf16\|f8_e4m3\|f8_e5m2\|mxfp8e4m3\|mxfp8e5m2\|s8\|u8` restricts the whole run — fixed contract sections and corpus cases alike — to one dtype and overrides the file header; the forced-path ctest targets use it |
 | label | unique per file (duplicate = parse error); a case without a label gets the normalized `MxNxK` string as its label |
 | double triple | the two K values must be equal, else parse error; normalized to MxNxK |
 | bounds | any dimension outside 1..4096 = parse error (foot-guard against runaway shapes on QEMU) |

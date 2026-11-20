@@ -217,6 +217,19 @@ dtypes upconvert every byte through a shared 256-entry f32 lookup table in
 kernel agree bit-for-bit — including NaN / Inf propagation through the
 fp32 accumulation.
 
+**INT8 (s8 / u8) full chain** is the worked example of an integer dtype:
+both tuples `(s8, s8, s32, s32)` and `(u8, u8, s32, s32)` accumulate
+exactly in int32 (bias first, ascending K), so golden, C and JIT agree
+bit-for-bit with no rounding. The JIT sign-/zero-extends each byte with
+two widening multiplies by the scalar 1 (`vwmul.vx` for s8, `vwmulu.vx`
+for u8: e8 -> e16 -> e32 — the D-7-mandated replacement for `vsext.vf2`,
+which traps on some hardware) and advances the int32 accumulator with one
+`vmacc.vx` per K; the scalar A element is widened in the GPR with `lb` /
+`lbu`. The two dtypes differ only in signedness, so a single templated
+body serves both. The corpus `--dt` set includes `s8` and `u8`, and
+requantization is out of scope (v0.5); `quant.enabled` stays rejected by
+the backend validate.
+
 **Block-scale dtypes** (MX / NV formats) carry a per-block exponent or
 scale, exposed through two accessors rather than trait-struct fields
 (`rvcl_dtype_traits_t` is returned by value, so appending a field would

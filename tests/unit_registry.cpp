@@ -207,6 +207,13 @@ static int preinit_fallback_case(void) {
 static int preinit_lone_bounded_case(void) {
     printf("init-path: lone bounded tuple registered before init\n");
     rvcl_kernel_desc_t bounded = make_desc("pre_lone_bounded");
+    /* INT32 tuple: no built-in kernel occupies it (s8/u8 now own the INT8 /
+     * UINT8 tuples), so this is the only candidate and out-of-bounds shapes
+     * are UNSUPPORTED rather than served by a builtin. */
+    bounded.dtype_a = RVCL_DTYPE_INT32;
+    bounded.dtype_b = RVCL_DTYPE_INT32;
+    bounded.dtype_acc = RVCL_DTYPE_INT32;
+    bounded.dtype_c = RVCL_DTYPE_INT32;
     bounded.max_n = 32;
     CHECK(rvcl_register_kernel(&bounded, test_create) == RVCL_SUCCESS,
             "pre-init bounded registration succeeds");
@@ -218,13 +225,13 @@ static int preinit_lone_bounded_case(void) {
             "built-ins are fully registered after the successful init");
 
     /* The bounded kernel serves in-bounds shapes and the tuple is UNSUPPORTED
-     * outside them (no other INT8 entry exists). */
+     * outside them (no other INT32 entry exists). */
     const rvcl_matmul_desc_t in = {
             .m = 16,
             .n = 16,
             .k = 16,
-            .dtype_a = RVCL_DTYPE_INT8,
-            .dtype_b = RVCL_DTYPE_INT8,
+            .dtype_a = RVCL_DTYPE_INT32,
+            .dtype_b = RVCL_DTYPE_INT32,
             .dtype_acc = RVCL_DTYPE_INT32,
             .dtype_c = RVCL_DTYPE_INT32,
             .dtype_bias = RVCL_DTYPE_AUTO,
