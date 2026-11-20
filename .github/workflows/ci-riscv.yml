@@ -64,6 +64,12 @@ jobs:
           content="${content//[$'\t\r\n$ ']}"
           echo "output=$content" >> $GITHUB_OUTPUT
 
+      # ImageOS is a runner-provided environment variable, not an `env`
+      # context key, so capture it into a step output for the cache key.
+      - name: Resolve runner image
+        id: image
+        run: echo "name=${ImageOS}" >> "$GITHUB_OUTPUT"
+
       # The deb archive is carried across runs so `apt-get install` resolves
       # from the local cache instead of the mirror; the key follows the
       # pinned cross gcc minor and the runner image generation.
@@ -71,7 +77,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: apt-debs.tar
-          key: apt-riscv-gcc${{ fromJson(steps.get-versions.outputs.output).dependencies.gcc }}-${{ env.ImageOS }}-v1
+          key: apt-riscv-gcc${{ fromJson(steps.get-versions.outputs.output).dependencies.gcc }}-${{ steps.image.outputs.name }}-v1
 
       - name: Install build tools
         run: |
