@@ -607,6 +607,12 @@ int main(int argc, char **argv) {
     const int dt_only_mxfp8_e5m2 = dt_only == RVCL_DTYPE_MXFP8_E5M2;
     const int dt_only_other = dt_only_fp8_e4m3 || dt_only_fp8_e5m2
             || dt_only_mxfp8_e4m3 || dt_only_mxfp8_e5m2;
+    /* Integer dtypes (s8/u8) have no fixed float sections of their own:
+     * a dtype-restricted run must not execute the float fixed sections
+     * below, or a forced-c run exposes the portable f32 fallback to the
+     * vector-tier compile-march 1-ulp artifact (the f32_c skip-list reason). */
+    const int dt_only_int
+            = dt_only == RVCL_DTYPE_INT8 || dt_only == RVCL_DTYPE_UINT8;
 
     CHECK(rvcl_init() == RVCL_SUCCESS, "rvcl_init succeeds");
 
@@ -655,7 +661,7 @@ int main(int argc, char **argv) {
         float *c_ref = (float *)malloc((size_t)M * N * 4),
               *c_rvv = (float *)malloc((size_t)M * N * 4);
         float *golden = (float *)malloc((size_t)M * N * 4);
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             a = (float *)malloc((size_t)M * K * 4);
             b = (float *)malloc((size_t)K * N * 4);
             for (int i = 0; i < M * K; i++)
@@ -678,7 +684,7 @@ int main(int argc, char **argv) {
                 .quant = {},
         };
 
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             golden_f32(a, b, bias, golden, M, N, K);
 
             CHECK(run_matmul_kernel("rvcl_matmul_f32_reference", &d32, a, NULL,
@@ -721,7 +727,7 @@ int main(int argc, char **argv) {
 
         /* ---- fp16 differential: rvv f16 vs golden soft-convert ---- */
         uint16_t *ah = NULL, *bh = NULL;
-        if (!dt_only_f32 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f32 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             const dtype_ops_t *op16 = dtype_ops_for(RVCL_DTYPE_FP16);
             ah = (uint16_t *)malloc((size_t)M * K * 2);
             bh = (uint16_t *)malloc((size_t)K * N * 2);
@@ -756,7 +762,7 @@ int main(int argc, char **argv) {
 
         /* ---- bf16 differential: rvv bf16 vs golden soft-convert ---- */
         uint16_t *abh = NULL, *bbh = NULL;
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_other) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_other && !dt_only_int) {
             const dtype_ops_t *opb = dtype_ops_for(RVCL_DTYPE_BF16);
             abh = (uint16_t *)malloc((size_t)M * K * 2);
             bbh = (uint16_t *)malloc((size_t)K * N * 2);
@@ -790,7 +796,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- fp8 special-value smoke ---- */
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16 && !dt_only_int) {
             enum { FM = 5, FN = 3, FK = 7 };
             static const uint8_t e4m3_special[]
                     = {0x7F, 0xFF, 0x01, 0x03, 0x7E, 0x78, 0x00, 0x80};
@@ -847,7 +853,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- mxfp8 block-scale smoke: e8m0 boundary conversions ---- */
-        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16) {
+        if (!dt_only_f32 && !dt_only_f16 && !dt_only_bf16 && !dt_only_int) {
             /* E8M0 up-conversion boundaries, asserted directly on the shared
              * table so the full exponent range is covered on any compiler.
              * 0x00 -> 2^-127 (subnormal), 0xFE -> 2^127 (largest normal
@@ -1005,7 +1011,7 @@ int main(int argc, char **argv) {
         }
 
         /* ---- work-range honoring inside a kernel ---- */
-        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other) {
+        if (!dt_only_f16 && !dt_only_bf16 && !dt_only_other && !dt_only_int) {
             /* run_matmul_kernel uses the full range; exercise a sub-range by
          * passing an explicit row span [4,9). */
             memset(c_rvv, 0, (size_t)M * N * 4);
