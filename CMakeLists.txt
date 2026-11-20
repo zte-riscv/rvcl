@@ -367,6 +367,15 @@ if(RVCL_BUILD_TESTS)
     add_test(NAME unit_registry_preinit_lone_bounded
         COMMAND rvcl_unit_registry --preinit-lone-bounded)
 
+    # Per-operation registry structure tests (always registered,
+    # independent of RVCL_TEST_SET): cross-operation name uniqueness,
+    # shared global capacity, mixed-operation iteration order, pre-main
+    # registration safety and cross-operation fallback-invariant
+    # independence.
+    add_executable(rvcl_unit_registry_expand tests/unit_registry_expand.cpp)
+    target_link_libraries(rvcl_unit_registry_expand PRIVATE rvcl)
+    add_test(NAME unit_registry_expand COMMAND rvcl_unit_registry_expand)
+
     # Capability unit tests (always registered, independent of
     # RVCL_TEST_SET): detection output, snapshot caching and concurrent
     # first-call consistency, summary contract, VLEN-tier conversion.
