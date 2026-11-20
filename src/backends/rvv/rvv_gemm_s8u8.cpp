@@ -24,6 +24,12 @@
  * requantization/quantization is performed here (v0.5 INT8 line). The two
  * dtypes differ only in the signedness of the load, so one templated body
  * serves both. The JIT counterpart lives in jit/rvv_gemm_s8u8_jit.cpp.
+ *
+ * K limit: the int32 accumulator is exact only while the product sum stays
+ * in int32 range. The worst per-element product is 127*127 (s8) or 255*255
+ * (u8), so a K reduction of length K can reach 16129*K or 65025*K and wraps
+ * the int32 accumulator once K exceeds ~133k (s8) or ~33k (u8). Keep K below
+ * those integer-exact bounds; larger shapes are not silently valid.
  ******************************************************************************/
 
 #include "rvv_internal.hpp"

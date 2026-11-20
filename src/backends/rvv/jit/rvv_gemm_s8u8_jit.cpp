@@ -37,6 +37,12 @@
  * one template serves both. One code object serves every VLEN (the AVL is
  * clamped like the f32 JIT).
  *
+ * K limit: like the C path, the int32 accumulator is exact only while the
+ * product sum stays in int32 range. The worst per-element product is 127*127
+ * (s8) or 255*255 (u8), so a K reduction of length K can reach 16129*K or
+ * 65025*K and wraps the int32 accumulator once K exceeds ~133k (s8) or ~33k
+ * (u8). Keep K below those integer-exact bounds.
+ *
  * Host side mirrors rvv_gemm_fp8_jit.cpp: the entry is built once per
  * process (magic static) and a generation failure is latched as NULL so
  * auto selection degrades to the C kernel.

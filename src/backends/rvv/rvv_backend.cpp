@@ -44,6 +44,13 @@
  *     rvcl_matmul_u8_rvv_c / rvcl_matmul_mxfp8_e4m3_rvv_c /
  *     rvcl_matmul_mxfp8_e5m2_rvv_c, no feature requirement
  *
+ * The INT8/UINT8 kernels (s8 and u8 tuples) accumulate in int32 and are
+ * integer-exact only while the product sum stays in int32 range: the worst
+ * per-element product is 127*127 (s8) or 255*255 (u8), so a K reduction of
+ * length K reaches 16129*K or 65025*K and wraps once K exceeds ~133k (s8)
+ * or ~33k (u8). K must stay below those integer-exact bounds. See the K
+ * limit note in rvv_gemm_s8u8.cpp and jit/rvv_gemm_s8u8_jit.cpp.
+ *
  * Every variant's factory routes through the knob-aware micro-kernel
  * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
  * path semantics stay uniform across all entries; per-tier tuning later
