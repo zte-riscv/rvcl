@@ -407,10 +407,13 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
         return -1;
     }
 
-    /* Build the operator descriptor through the slot. */
+    /* Build the operator descriptor through the slot. The C dtype and the
+     * bias dtype follow the input's acc habit (int32 for the integer s8/u8
+     * acc habit, fp32 otherwise). */
     rvcl_op_desc_t od;
-    slot->build_desc(&od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO,
-            RVCL_DTYPE_FP32, RVCL_DTYPE_FP32);
+    const rvcl_dtype_t cdtype = dtype_ops_out_dtype(dt);
+    slot->build_desc(
+            &od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO, cdtype, cdtype);
 
     /* A block-scale (MXFP8) dtype requires K divisible by its block size;
      * a corpus shape whose K is not is invalid for that dtype, so skip it
@@ -433,7 +436,10 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
     int fails = 0;
 
     float *bias = (float *)malloc((size_t)bias_elems * 4);
-    lcg_fill_f32(bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    if (cdtype == RVCL_DTYPE_INT32)
+        lcg_fill_i32((int32_t *)bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    else
+        lcg_fill_f32(bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
 
     /* dtype-storage A/B buffers, sized and filled through the test table */
     void *a = malloc((size_t)a_elems * op->elt);
@@ -548,7 +554,8 @@ int main(int argc, char **argv) {
         else {
             fprintf(stderr,
                     "usage: %s [--batch=<corpus-file>] "
-                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2] "
+                    "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2|"
+                    "s8|u8] "
                     "[--op=matmul|gemv]\n",
                     argv[0]);
             return 2;
@@ -585,8 +592,8 @@ int main(int argc, char **argv) {
         } else {
             fprintf(stderr,
                     "error: bad value for --dt: '%s' "
-                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3 or "
-                    "mxfp8e5m2)\n",
+                    "(want f32, f16, bf16, f8_e4m3, f8_e5m2, mxfp8e4m3, "
+                    "mxfp8e5m2, s8 or u8)\n",
                     dt_arg);
             return 2;
         }

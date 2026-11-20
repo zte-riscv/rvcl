@@ -198,7 +198,7 @@ static void bparse_header(
         } else {
             bcorpus_fatal(file, line,
                     "bad value for --dt: '%s' "
-                    "(want f32, f16, f8_e4m3 or f8_e5m2)",
+                    "(want f32, f16, f8_e4m3, f8_e5m2, s8 or u8)",
                     val);
         }
     }
@@ -443,6 +443,10 @@ static rvv_gemm_fn pick_gemm(rvcl_dtype_t dt, const char *path) {
         case RVCL_DTYPE_FP8_E5M2:
             return path ? rvv_pick_gemm_fp8_e5m2_by_name(path)
                         : rvv_pick_gemm_fp8_e5m2();
+        case RVCL_DTYPE_INT8:
+            return path ? rvv_pick_gemm_s8_by_name(path) : rvv_pick_gemm_s8();
+        case RVCL_DTYPE_UINT8:
+            return path ? rvv_pick_gemm_u8_by_name(path) : rvv_pick_gemm_u8();
         default: return NULL;
     }
 }
@@ -480,10 +484,20 @@ static void fill_case(case_t *cs, const dtype_ops_t *op, bench_mode_t mode) {
     cs->bias = (float *)calloc((size_t)bias_elems, 4);
     lcg_fill_f32(cs->a, (size_t)a_elems, seed);
     lcg_fill_f32(cs->b, (size_t)b_elems, seed ^ 0x9e3779b9u);
-    lcg_fill_f32(cs->bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    /* Bias follows the output dtype: int32 for the integer s8/u8 acc
+     * habit, fp32 otherwise (both 4 bytes per element). */
+    if (dtype_ops_out_dtype(op->dtype) == RVCL_DTYPE_INT32)
+        lcg_fill_i32(
+                (int32_t *)cs->bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
+    else
+        lcg_fill_f32(cs->bias, (size_t)bias_elems, seed ^ 0x85ebca6bu);
     if (!narrow) return;
 
-    if (mode == MODE_P) {
+    if (mode == MODE_P && op->f32_to_storage) {
+        /* Legacy P path: narrow-from-f32 via the dtype's f32->storage
+         * conversion. Integer dtypes (s8/u8) have no such conversion
+         * (f32_to_storage is NULL), so they take the direct-fill path
+         * below in every mode. */
         cs->ah = (uint16_t *)calloc((size_t)a_elems, op->elt);
         cs->bh = (uint16_t *)calloc((size_t)b_elems, op->elt);
         for (int64_t i = 0; i < a_elems; i++) {
@@ -732,8 +746,9 @@ int main(int argc, char **argv) {
             const char *dtstr = dop->dtstr;
 
             cs.slot = slot;
+            const rvcl_dtype_t cdtype = dtype_ops_out_dtype(dop->dtype);
             slot->build_desc(&cs.od, cs.m, cs.n, cs.k, dop->dtype, dop->dtype,
-                    RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO);
+                    RVCL_DTYPE_AUTO, cdtype, cdtype);
             fill_case(&cs, dop, mode);
             const double flops
                     = 2.0 * (double)cs.m * (double)cs.n * (double)cs.k;

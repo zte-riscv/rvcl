@@ -206,12 +206,17 @@ void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
     rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_B, tb);
     rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
     if (bias) {
-        /* bias length is the output length: n for matmul, m for gemv. */
+        /* bias length is the output length: n for matmul, m for gemv. Its
+         * dtype follows the operator's C dtype (int32 for the integer
+         * s8/u8 acc habit, fp32 otherwise). */
         const int64_t bias_len = slot->op == RVCL_OP_MATMUL ? n : m;
+        const rvcl_dtype_t bias_dt = slot->op == RVCL_OP_MATMUL
+                ? dtype_ops_out_dtype(od->matmul.dtype_a)
+                : RVCL_DTYPE_FP32;
         rvcl_tensor_desc_t bd = {.ndims = 1,
                 .dims = {bias_len},
                 .strides = {1},
-                .dtype = RVCL_DTYPE_FP32};
+                .dtype = bias_dt};
         rvcl_tensor_init(tbias, &bd, (void *)bias);
         rvcl_tensor_pack_add(pack, RVCL_TENSOR_BIAS, tbias);
     }
@@ -383,7 +388,8 @@ static rvcl_status_t gemv_run_named(const char *name, const rvcl_op_desc_t *od,
 
 static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
         RVCL_DTYPE_BF16, RVCL_DTYPE_FP8_E4M3, RVCL_DTYPE_FP8_E5M2,
-        RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_AUTO};
+        RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_MXFP8_E5M2, RVCL_DTYPE_INT8,
+        RVCL_DTYPE_UINT8, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_gemv_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO};
 
