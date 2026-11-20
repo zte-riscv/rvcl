@@ -14,29 +14,27 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * omp_scheduler.cpp — built-in OpenMP scheduler backend
- *
- * Zero-injection default parallelism for the standalone product shape
- * (PR-3 §5.3.1): hosts get a parallel matmul without injecting a scheduler.
- * Compiled only into OpenMP builds (RVCL_ENABLE_OMP=ON); the non-OpenMP stub
- * lives in scheduler.cpp.
+ ******************************************************************************/
+
+/* Zero-injection default parallelism for the standalone product shape: hosts
+ * get a parallel matmul without injecting a scheduler. Compiled only into
+ * OpenMP builds (RVCL_ENABLE_OMP=ON); the non-OpenMP stub lives in
+ * scheduler.cpp.
  *
  * Execution follows the oneDNN orientation of "one coarse task per thread,
  * no OpenMP dynamic scheduling": a single `omp parallel` region splits the M
  * dimension into diff-1 balanced slices, one per thread, and each thread
  * executes its own slice. Splitting only M (never K) keeps every slice's
  * accumulation order identical to the serial run, so results are bit-exact
- * independent of the thread count.
- ******************************************************************************/
+ * independent of the thread count. */
 
 #include "rvcl/scheduler.h"
 
 #include <omp.h>
 
-/* Diff-1 balanced slice [idx] of [parts] over [total] (D-9): every slice
- * carries either `step` or `step+1` rows so sizes differ by at most one.
- * n/k intervals pass through unchanged (plain GEMM keeps full K per slice). */
+/* Diff-1 balanced slice [idx] of [parts] over [total]: every slice carries
+ * either `step` or `step+1` rows so sizes differ by at most one. n/k
+ * intervals pass through unchanged (plain GEMM keeps full K per slice). */
 static void omp_slice(rvcl_work_range_t *out, const rvcl_work_range_t *total,
         int64_t idx, int64_t parts) {
     const int64_t rows = total->m_end - total->m_begin;
@@ -53,8 +51,8 @@ static void omp_parallel_for(rvcl_ischeduler_t *s,
         void *user_ctx) {
     const int64_t rows = total->m_end - total->m_begin;
 
-    /* Guarantee 4: never nest inside an already-active parallel region —
-     * inline the whole range so an OMP runtime does not recurse. */
+    /* Never nest inside an already-active parallel region — inline the
+     * whole range so an OMP runtime does not recurse. */
     if (omp_in_parallel()) {
         task(s, total, user_ctx);
         return;

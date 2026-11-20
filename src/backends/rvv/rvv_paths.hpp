@@ -14,24 +14,18 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_paths.hpp — per-dtype micro-kernel path table
- *
- * One table row per micro-kernel path (c / intrinsics / jit). A row
- * carries the path name, a getter for the live function pointer, an
- * availability probe (compile-time macros upgraded by the run-time
- * capability probe for the JIT path), the auto-selection priority and the
- * loud-failure message for a forced-but-unavailable request. The f32 and
- * f16 selection (rvv_pick_gemm_*) and the bench --path resolver all walk
- * these tables, so a new dtype adds a table row and nothing else — the
- * resolver never branches on the dtype. Semantics stay bit-identical to
- * the hand-written selectors they replace:
- *   f32 auto = JIT-when-RVV-else-C
- *   f16 auto = JIT-when-FP16-else-C (intrinsics kept as by-name only)
- *   bf16 auto = JIT-when-RVV-else-C
- *
- * Internal to the backend; included only by rvv_backend.cpp.
  ******************************************************************************/
+
+/* One table row per micro-kernel path (c / intrinsics / jit). A row carries
+ * the path name, a getter for the live function pointer, an availability
+ * probe (compile-time macros upgraded by the run-time capability probe for
+ * the JIT path), the auto-selection priority and the loud-failure message
+ * for a forced-but-unavailable request. The f32 and f16 selection
+ * (rvv_pick_gemm_*) and the bench --path resolver all walk these tables, so
+ * a new dtype adds a table row and nothing else — the resolver never
+ * branches on the dtype. Semantics stay bit-identical to the hand-written
+ * selectors they replace (f32/f16/bf16 auto = JIT-when-capable-else-C).
+ * Internal to the backend; included only by rvv_backend.cpp. */
 
 #ifndef RVCL_RVV_PATHS_H
 #define RVCL_RVV_PATHS_H

@@ -14,23 +14,21 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/op_slots.hpp — test-side operator slot table
- *
- * One row per operator under test. A row carries everything the test
+ ******************************************************************************/
+
+/* One row per operator under test. A row carries everything the test
  * executables need to drive the operator without an operator branch in the
  * main: the corpus/CLI name, the operator enum, the supported test-dtype
  * set, the input/output element counts for buffer sizing, the golden
- * routing, the descriptor builder and the run family. The run family is
- * the dispatch-driven path through the internal rvcl_dispatch_op entry
+ * routing, the descriptor builder and the run family. The run family is the
+ * dispatch-driven path through the internal rvcl_dispatch_op entry
  * (run_dispatch) plus the factory-bypass path that runs one named kernel
  * (run_named, the differential per-kernel coverage).
  *
  * The library counterpart is the dispatch op table in src/runtime/
- * dispatch.cpp; the test table is the landing point a new operator
- * registers its test facts in. Adding an operator = adding one row here
- * plus its corpus directory and one rvcl_add_corpus() line.
- ******************************************************************************/
+ * dispatch.cpp; the test table is the landing point a new operator registers
+ * its test facts in. Adding an operator = adding one row here plus its
+ * corpus directory and one rvcl_add_corpus() line. */
 
 #ifndef RVCL_TEST_OP_SLOTS_H
 #define RVCL_TEST_OP_SLOTS_H

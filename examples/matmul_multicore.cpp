@@ -14,23 +14,19 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * examples/matmul_multicore.cpp — multi-core matmul example (injectable pool)
- *
- * Demonstrates host-owned parallelism (PLAN §4.9) end to end: a resident
- * dynamic-fetching thread pool slices the M dimension and drives the same
- * rvcl_matmul() across a 1/2/4/8 thread scan. Correctness is backed by a
- * triple bit-exact comparison (vs element-wise golden, vs the T=1 result,
- * and ragged panel-boundary shapes); scaling is measured with a warmup +
- * best-of-5 timing table on the host only.
+ ******************************************************************************/
+
+/* Demonstrates host-owned parallelism end to end: a resident dynamic-fetching
+ * thread pool slices the M dimension and drives the same rvcl_matmul() across
+ * a 1/2/4/8 thread scan. Correctness is backed by a triple bit-exact
+ * comparison; scaling is measured with a warmup + best-of-5 timing table.
  *
  * CLI: example_multicore [mode] [max_threads] [M] [N] [K]
  *   mode:  pool (default) — inject this example's worker pool
- *          builtin — zero-injection direct run on the built-in OpenMP
- *                    scheduler; needs an OpenMP build (RVCL_ENABLE_OMP)
+ *          builtin — zero-injection run on the built-in OpenMP scheduler
+ *                    (needs RVCL_ENABLE_OMP)
  *   default max_threads = nproc; default shape = 512x512x512.
- *   Timing is enabled with RVCL_MULTICORE_BENCH=1 (ctest never times).
- ******************************************************************************/
+ *   Timing is enabled with RVCL_MULTICORE_BENCH=1 (ctest never times). */
 
 #include <pthread.h>
 #include <stdint.h>

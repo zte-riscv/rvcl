@@ -14,35 +14,31 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * dispatch.cpp — generic kernel selection pipeline
- *
- * Six-stage filtering, then cost-based selection:
- *   1. operation     — descriptor operation equals the request operation
- *   2. datatype      — exact (A,B,acc,C) match after AUTO resolution,
- *                      plus quantization support for quantized requests
- *   3. capability    — every required feature is present in the snapshot
- *   4. vlen tier     — kernel tier is 0 (any) or not above the host tier
- *   5. shape         — m/n/k inside the kernel's inclusive bounds
- *   6. validate      — the instantiated kernel accepts the request
- * Surviving candidates are ordered by their cost callback; the smallest
- * cost wins and equal costs keep the earliest registration. Kernels are
- * instantiated only when they can still win, so rejections at stage 6
- * simply move on to the next candidate.
+ ******************************************************************************/
+
+/* Six-stage filtering, then cost-based selection:
+ *   1. operation   - descriptor operation equals the request operation
+ *   2. datatype    - exact (A,B,acc,C) match after AUTO resolution, plus
+ *                    quantization support for quantized requests
+ *   3. capability  - every required feature is present in the snapshot
+ *   4. vlen tier   - kernel tier is 0 (any) or not above the host tier
+ *   5. shape       - m/n/k inside the kernel's inclusive bounds
+ *   6. validate    - the instantiated kernel accepts the request
+ * Surviving candidates are ordered by their cost callback; the smallest cost
+ * wins and equal costs keep the earliest registration. Kernels are
+ * instantiated only when they can still win, so rejections at stage 6 simply
+ * move on to the next candidate.
  *
  * The pipeline is operator-generic: each operator contributes one op-table
  * entry (a request validator that resolves the datatype/shape filter inputs
  * and a cache-key generator), and every registered operator automatically
  * gets the whole pipeline and dispatch cache. rvcl_dispatch_op() is the
  * internal generic entry; the public per-operator wrappers look their entry
- * up and call it.
- *
- * Dispatch only selects and configures; it never runs computations and
- * holds no ISA-specific code. Selection works on a registry snapshot so
- * a concurrent registration or unregistration is never observed
+ * up and call it. Dispatch only selects and configures; it never runs
+ * computations and holds no ISA-specific code. Selection works on a registry
+ * snapshot so a concurrent registration or unregistration is never observed
  * half-applied, and cached selections are tagged with the registry
- * generation observed at selection time.
- ******************************************************************************/
+ * generation observed at selection time. */
 
 #include "rvcl/dispatch.h"
 
@@ -316,8 +312,8 @@ static int dtype_is_request_valid(rvcl_dtype_t dt) {
         case RVCL_DTYPE_MXFP8_E5M2:
         case RVCL_DTYPE_NVFP4:
         case RVCL_DTYPE_MXFP4: return 1;
-        /* RVCL_DTYPE_E8M0 is a scale-only role (D-2): it stays illegal as
-         * a compute-tuple member and is rejected here as such. */
+        /* RVCL_DTYPE_E8M0 is a scale-only role: it stays illegal as a
+         * compute-tuple member and is rejected here as such. */
         default: return 0;
     }
 }
@@ -365,7 +361,7 @@ static rvcl_status_t matmul_dims_validate(
     if (st != RVCL_SUCCESS) return st;
     /* Block-scale input dtypes require K divisible by their block size: the
      * scale tensors are [·, K/blk], so a non-divisible K has no scale
-     * shape (D-5). */
+     * shape. */
     const size_t blk_a = rvcl_dtype_block_size(d->dtype_a);
     const size_t blk_b = rvcl_dtype_block_size(d->dtype_b);
     if ((blk_a && (size_t)d->k % blk_a) || (blk_b && (size_t)d->k % blk_b))

@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/smoke_test.cpp — Phase 0 smoke test
- *
- * Covers the Phase-0 acceptance surface (PLAN §8.1, minimal form):
+ ******************************************************************************/
+
+/* Smoke test covering the acceptance surface:
  *   - registry: register / duplicate / lookup / count
  *   - capability: detection runs, cached pointer stable
  *   - scheduler: set-once semantics, serial parallel_for executes task
@@ -25,12 +24,11 @@
  *     layout rejected
  *   - dispatch: (A,B,acc,C) filtering — unsupported tuple rejected,
  *     supported tuple selects a registered capability-matched kernel
- *     (invariant-checked; precise selection is pinned by the dispatch
- *     unit tests), wrong shape rejected
+ *     (invariant-checked; precise selection is pinned by the dispatch unit
+ *     tests), wrong shape rejected
  *   - kernel lifecycle: configure reports the selected kernel's workspace
  *     demand
- *   - end-to-end: rvcl_matmul matches naive golden
- ******************************************************************************/
+ *   - end-to-end: rvcl_matmul matches naive golden */
 
 #include <math.h>
 #include <stdio.h>

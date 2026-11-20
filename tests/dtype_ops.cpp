@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/dtype_ops.cpp — test-side dtype fact table (see dtype_ops.hpp)
  ******************************************************************************/
 
 #include "dtype_ops.hpp"

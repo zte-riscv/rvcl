@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/golden.cpp — shared golden helpers (see golden.hpp for the contract)
  ******************************************************************************/
 
 #include "golden.hpp"

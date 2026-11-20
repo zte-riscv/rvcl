@@ -14,55 +14,26 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_backend.cpp — RVV backend framework adapter: validate/configure/run
- *
- * One registry entry per variant (RFC-0002 FR1.2), grouped by dtype tuple
- * and registered in the order dispatch relies on for cost ties:
- *   vector builds:
- *     rvcl_matmul_f32_rvv_<tier>  (f32,f32,f32,f32)   requires RVV, per
- *         VLEN tier high -> low (RVCL_RVV_TIERS_<T> decides what compiles)
- *     rvcl_matmul_f32_rvv         (f32,f32,f32,f32)   generic, requires RVV
- *     rvcl_matmul_f16_rvv_<tier>  (f16,f16,f32,f32)   requires RVV + FP16
- *     rvcl_matmul_f16_rvv         (f16,f16,f32,f32)   generic
- *     rvcl_matmul_bf16_rvv_<tier> (bf16,bf16,f32,f32) requires RVV
- *     rvcl_matmul_bf16_rvv        (bf16,bf16,f32,f32) generic
- *     rvcl_matmul_fp8_e4m3_rvv[_<tier>] (fp8_e4m3,fp8_e4m3,f32,f32) requires
- *         RVV
- *     rvcl_matmul_fp8_e5m2_rvv[_<tier>] (fp8_e5m2,fp8_e5m2,f32,f32) requires
- *         RVV
- *     rvcl_matmul_s8_rvv[_<tier>]       (s8,s8,s32,s32)  requires RVV
- *     rvcl_matmul_u8_rvv[_<tier>]       (u8,u8,s32,s32)  requires RVV
- *     rvcl_matmul_mxfp8_e4m3_rvv[_<tier>] (mxfp8_e4m3,mxfp8_e4m3,f32,f32)
- *         block-scale (E8M0), requires RVV
- *     rvcl_matmul_mxfp8_e5m2_rvv[_<tier>] (mxfp8_e5m2,mxfp8_e5m2,f32,f32)
- *         block-scale (E8M0), requires RVV
- *   non-vector builds (portable scalar C entries):
- *     rvcl_matmul_f32_rvv_c / rvcl_matmul_f16_rvv_c /
- *     rvcl_matmul_bf16_rvv_c / rvcl_matmul_fp8_e4m3_rvv_c /
- *     rvcl_matmul_fp8_e5m2_rvv_c / rvcl_matmul_s8_rvv_c /
- *     rvcl_matmul_u8_rvv_c / rvcl_matmul_mxfp8_e4m3_rvv_c /
- *     rvcl_matmul_mxfp8_e5m2_rvv_c, no feature requirement
- *
- * The INT8/UINT8 kernels (s8 and u8 tuples) accumulate in int32 and are
- * integer-exact only while the product sum stays in int32 range: the worst
- * per-element product is 127*127 (s8) or 255*255 (u8), so a K reduction of
- * length K reaches 16129*K or 65025*K and wraps once K exceeds ~133k (s8)
- * or ~33k (u8). K must stay below those integer-exact bounds. See the K
- * limit note in rvv_gemm_s8u8.cpp and jit/rvv_gemm_s8u8_jit.cpp.
- *
- * Every variant's factory routes through the knob-aware micro-kernel
- * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so the
- * path semantics stay uniform across all entries; per-tier tuning later
- * only specializes the factory bindings below.
- *
- * run() contract (PLAN §4.3): consumes only pack memory; workspace is the
- * packed-B panel buffer (AUX_0) reported by configure(); when the host
- * endorses pack->src_b_packed the panels were packed once via
- * rvcl_kernel_pack_b() and run() only reads them, otherwise run() packs
- * B itself; never mallocs, never creates threads. The work range is
- * honored exactly.
  ******************************************************************************/
+
+/* One registry entry per variant, grouped by dtype tuple and registered in
+ * the order dispatch relies on for cost ties:
+ *   vector builds: rvcl_matmul_{f32,f16,bf16}_rvv[_<tier>] plus the
+ *       fp8_e4m3/e5m2 and mxfp8_e4m3/e5m2 variants, per VLEN tier high -> low
+ *       (RVCL_RVV_TIERS_<T> decides what compiles); each also has a generic
+ *       entry. Vector variants require RVV (f16 additionally FP16).
+ *   non-vector builds (portable scalar C entries): rvcl_matmul_*_rvv_c with
+ *       no feature requirement.
+ * Every variant's factory routes through the knob-aware micro-kernel
+ * selector (auto = JIT-when-RVV-else-C, RVCL_RVV_KERNEL forcing), so path
+ * semantics stay uniform across all entries; per-tier tuning later only
+ * specializes the factory bindings below.
+ *
+ * run() contract: consumes only pack memory; workspace is the packed-B
+ * panel buffer (AUX_0) reported by configure(). When the host endorses
+ * pack->src_b_packed the panels were packed once via rvcl_kernel_pack_b()
+ * and run() only reads them, otherwise run() packs B itself; never
+ * mallocs, never creates threads. The work range is honored exactly. */
 
 #include "rvv_internal.hpp"
 #include "rvv_paths.hpp"
@@ -248,16 +219,6 @@ rvv_pick_gemm_fp8_e5m2_by_name(const char *name) {
     return rvv_path_by_name(&rvv_fp8_e5m2_paths, name);
 }
 
-__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_s8_by_name(
-        const char *name) {
-    return rvv_path_by_name(&rvv_s8_paths, name);
-}
-
-__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_u8_by_name(
-        const char *name) {
-    return rvv_path_by_name(&rvv_u8_paths, name);
-}
-
 __attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
 rvv_pick_gemm_mxfp8_e4m3_by_name(const char *name) {
     return rvv_path_by_name_t<rvv_gemm_mxfp8_fn, rvv_path_mxfp8_entry_t>(
@@ -305,18 +266,6 @@ __attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_fp8_e5m2(
     const char *knob = rvv_kernel_knob();
     if (knob && *knob) return rvv_pick_gemm_fp8_e5m2_by_name(knob);
     return rvv_pick_gemm_fp8_e5m2_by_name("auto");
-}
-
-__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_s8(void) {
-    const char *knob = rvv_kernel_knob();
-    if (knob && *knob) return rvv_pick_gemm_s8_by_name(knob);
-    return rvv_pick_gemm_s8_by_name("auto");
-}
-
-__attribute__((visibility("default"))) rvv_gemm_fn rvv_pick_gemm_u8(void) {
-    const char *knob = rvv_kernel_knob();
-    if (knob && *knob) return rvv_pick_gemm_u8_by_name(knob);
-    return rvv_pick_gemm_u8_by_name("auto");
 }
 
 __attribute__((visibility("default"))) rvv_gemm_mxfp8_fn
@@ -402,20 +351,6 @@ static rvcl_status_t create_fp8_e4m3(
 static rvcl_status_t create_fp8_e5m2(
         rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
     rvv_gemm_fn gemm = rvv_pick_gemm_fp8_e5m2();
-    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
-    return make_rvv_kernel(out, desc, gemm, 1);
-}
-
-static rvcl_status_t create_s8(
-        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
-    rvv_gemm_fn gemm = rvv_pick_gemm_s8();
-    if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
-    return make_rvv_kernel(out, desc, gemm, 1);
-}
-
-static rvcl_status_t create_u8(
-        rvcl_kernel_t **out, const rvcl_kernel_desc_t *desc) {
-    rvv_gemm_fn gemm = rvv_pick_gemm_u8();
     if (!gemm) return RVCL_ERROR_INVALID_ARGUMENT;
     return make_rvv_kernel(out, desc, gemm, 1);
 }
@@ -515,24 +450,6 @@ static rvcl_status_t register_one(const char *name, rvcl_dtype_t da,
                 RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, \
                 RVCL_DTYPE_FP32, RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, \
                 RVCL_FEATURE_NONE, create_fp8_e5m2); \
-        if (st != RVCL_SUCCESS) return st; \
-    } while (0)
-
-#define RVCL_REG_S8_TIER(tier) \
-    do { \
-        st = register_one("rvcl_matmul_s8_rvv_" #tier, RVCL_DTYPE_INT8, \
-                RVCL_DTYPE_INT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, \
-                RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, \
-                create_s8); \
-        if (st != RVCL_SUCCESS) return st; \
-    } while (0)
-
-#define RVCL_REG_U8_TIER(tier) \
-    do { \
-        st = register_one("rvcl_matmul_u8_rvv_" #tier, RVCL_DTYPE_UINT8, \
-                RVCL_DTYPE_UINT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, \
-                RVCL_VLEN_TIER_##tier, RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, \
-                create_u8); \
         if (st != RVCL_SUCCESS) return st; \
     } while (0)
 
@@ -647,43 +564,6 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void) {
             create_fp8_e5m2);
     if (st != RVCL_SUCCESS) return st;
 
-        /* s8/u8 dedicated tiers + generic entries: (s8,s8,s32,s32) and
-     * (u8,u8,s32,s32), integer-exact accumulation, requires RVV only (the
-     * JIT sign-/zero-extends the bytes with widening multiplies). */
-#if defined(RVCL_RVV_TIERS_1024)
-    RVCL_REG_S8_TIER(1024);
-#endif
-#if defined(RVCL_RVV_TIERS_512)
-    RVCL_REG_S8_TIER(512);
-#endif
-#if defined(RVCL_RVV_TIERS_256)
-    RVCL_REG_S8_TIER(256);
-#endif
-#if defined(RVCL_RVV_TIERS_128)
-    RVCL_REG_S8_TIER(128);
-#endif
-    st = register_one("rvcl_matmul_s8_rvv", RVCL_DTYPE_INT8, RVCL_DTYPE_INT8,
-            RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, RVCL_VLEN_TIER_ANY,
-            RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, create_s8);
-    if (st != RVCL_SUCCESS) return st;
-
-#if defined(RVCL_RVV_TIERS_1024)
-    RVCL_REG_U8_TIER(1024);
-#endif
-#if defined(RVCL_RVV_TIERS_512)
-    RVCL_REG_U8_TIER(512);
-#endif
-#if defined(RVCL_RVV_TIERS_256)
-    RVCL_REG_U8_TIER(256);
-#endif
-#if defined(RVCL_RVV_TIERS_128)
-    RVCL_REG_U8_TIER(128);
-#endif
-    st = register_one("rvcl_matmul_u8_rvv", RVCL_DTYPE_UINT8, RVCL_DTYPE_UINT8,
-            RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, RVCL_VLEN_TIER_ANY,
-            RVCL_FEATURE_RVV, RVCL_FEATURE_NONE, create_u8);
-    if (st != RVCL_SUCCESS) return st;
-
         /* mxfp8 dedicated tiers + generic entries: (mxfp8_e4m3,mxfp8_e4m3,
      * f32,f32) and (mxfp8_e5m2,mxfp8_e5m2,f32,f32), requires RVV only (the
      * JIT up-converts FP8 and E8M0 by integer widen+shift, no fp8 hw). */
@@ -759,15 +639,6 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void) {
             RVCL_DTYPE_FP8_E5M2, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,
             RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
             create_fp8_e5m2);
-    if (st != RVCL_SUCCESS) return st;
-    st = register_one("rvcl_matmul_s8_rvv_c", RVCL_DTYPE_INT8, RVCL_DTYPE_INT8,
-            RVCL_DTYPE_INT32, RVCL_DTYPE_INT32, RVCL_VLEN_TIER_ANY,
-            RVCL_FEATURE_NONE, RVCL_FEATURE_NONE, create_s8);
-    if (st != RVCL_SUCCESS) return st;
-    st = register_one("rvcl_matmul_u8_rvv_c", RVCL_DTYPE_UINT8,
-            RVCL_DTYPE_UINT8, RVCL_DTYPE_INT32, RVCL_DTYPE_INT32,
-            RVCL_VLEN_TIER_ANY, RVCL_FEATURE_NONE, RVCL_FEATURE_NONE,
-            create_u8);
     if (st != RVCL_SUCCESS) return st;
     st = register_one("rvcl_matmul_mxfp8_e4m3_rvv_c", RVCL_DTYPE_MXFP8_E4M3,
             RVCL_DTYPE_MXFP8_E4M3, RVCL_DTYPE_FP32, RVCL_DTYPE_FP32,

@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * dispatch_internal.h — generic dispatch entry (not installed)
- *
- * Declarations shared between the library and its test executables only.
+ ******************************************************************************/
+
+/* Declarations shared between the library and its test executables only.
  * This header is deliberately outside include/rvcl/: it is not part of the
  * public API, is never installed, and carries no stability promise.
  *
@@ -27,10 +26,7 @@
  * one op-table entry: a request validator that resolves the filter inputs
  * the generic pipeline consumes, plus a cache-key generator (hash and
  * equality) over the operation descriptor's full width. A new operator is
- * served by the whole pipeline and cache once its entry is registered.
- * rvcl_dispatch_op() is the internal generic entry; the public per-operator
- * wrappers (rvcl_dispatch_matmul) look their entry up and call it.
- ******************************************************************************/
+ * served by the whole pipeline and cache once its entry is registered. */
 
 #ifndef RVCL_DISPATCH_INTERNAL_H
 #define RVCL_DISPATCH_INTERNAL_H

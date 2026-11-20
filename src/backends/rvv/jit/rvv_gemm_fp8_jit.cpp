@@ -14,35 +14,25 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_fp8_jit.cpp — FP8 (E4M3 / E5M2) GEMM JIT micro-kernel (xbyak_riscv)
- *
- * Run-time generated counterpart of the C kernels in rvv_gemm_fp8.cpp:
- * this translation unit compiles at the baseline rv64gc -march, and
- * vector code exists only after a run-time capability probe — the
- * property that keeps the whole backend in a single baseline binary.
- *
- * FP8 has no base hardware extension, so the generated loop upconverts
- * every byte to f32. The scalar A element is loaded with lbu and indexed
- * into the shared 256-entry f32 table (a scalar load, not a vector
- * gather), and the NC-wide B strip is upconverted arithmetically: its
- * 8-bit bytes are loaded with vle8.v, zero-extended to 32-bit indices
- * with vzext.vf4, then sign/exponent/mantissa are extracted and rebuilt
- * into the exact f32 bit pattern of the shared tables using base-RVV
- * element-wise integer and float ops. The arithmetic path is bit-identical
- * to the tables (verified for every one of the 256 encodings of both
- * dtypes) and depends on no indexed-load gather, so the kernel runs on
- * emulators and hardware alike. The table address is a compile-time
- * static, so it is embedded as a 64-bit immediate once, before the K
- * loop. Per output column j the accumulator starts at bias[j] and takes
- * one fused multiply-add per k in ascending order — bit-identical to the
- * C path under the same inputs. One code object serves every VLEN (the
- * AVL is clamped like the f32 JIT).
- *
- * Host side mirrors rvv_gemm_f32_jit.cpp: the entry is built once per
- * process (magic static) and a generation failure is latched as NULL so
- * auto selection degrades to the C kernel.
  ******************************************************************************/
+
+/* Run-time generated counterpart of the C kernels in rvv_gemm_fp8.cpp: this
+ * translation unit compiles at the baseline rv64gc -march, and vector code
+ * exists only after a run-time capability probe, keeping the whole backend
+ * in a single baseline binary.
+ *
+ * FP8 has no base hardware extension, so the generated loop upconverts every
+ * byte to f32. The scalar A element is loaded with lbu and indexed into the
+ * shared 256-entry f32 table (a scalar load, not a vector gather); the
+ * NC-wide B strip is zero-extended to 32-bit indices with vzext.vf4 and then
+ * upconverted arithmetically with base-RVV element-wise integer and float
+ * ops. This arithmetic path is bit-identical to the tables and depends on no
+ * indexed-load gather, so the kernel runs on emulators and hardware alike.
+ * Per output column j the accumulator starts at bias[j] and takes one fused
+ * multiply-add per k in ascending order — bit-identical to the C path. One
+ * code object serves every VLEN (the AVL is clamped like the f32 JIT). Host
+ * side builds the entry once per process (magic static); a generation failure
+ * is latched as NULL so auto selection degrades to the C kernel. */
 
 #include "../rvv_fp8.hpp"
 #include "../rvv_internal.hpp"
@@ -195,17 +185,13 @@ private:
         slli(tp, tp, 2); /* index x 4 bytes per f32 table entry */
         add(tp, tp, tb);
         flw(fa, tp, 0); /* broadcast scalar A[i, p] upconverted */
-        /* Load the NC-wide B strip as 8-bit bytes and widen them to 32-bit
-         * with vzext.vf4. The widening vtype must be e32/m4: for vzext.vf4
-         * the vtype SEW is the *destination* size (32) and the 8-bit source
-         * group EMUL = LMUL x 1/4, so LMUL=m4 makes both the source
-         * (EMUL=1) and destination (EMUL=4) groups full-length. The AVL is
-         * below VLMAX at e8/m1, hence also at e32/m4, so VL is preserved.
-         * The first register of the m4 destination group (v4) holds the VL
-         * active zero-extended bytes, re-read at e32/m1. The byte indices
-         * are then upconverted to f32 arithmetically (bit-identical to the
-         * shared tables) with base-RVV element-wise ops, so the kernel
-         * needs no indexed-load gather at all. */
+        /* Load the NC-wide B strip as 8-bit bytes and widen to 32-bit
+         * indices with vzext.vf4. The widening vtype must be e32/m4: for
+         * vzext.vf4 the SEW is the *destination* size (32), so the 8-bit
+         * source group is EMUL=1 and the destination group EMUL=4, keeping
+         * both full-length. The indices are then upconverted to f32
+         * arithmetically (bit-identical to the shared tables), so the
+         * kernel needs no indexed-load gather. */
         vsetvli(vl, av, SEW::e8, LMUL::m1, VTA::ta, VMA::ma); /* e8/m1 */
         vle8_v(vb, bcur); /* B[p, j0 .. j0+vl) as byte indices */
         vsetvli(vl, av, SEW::e32, LMUL::m4, VTA::ta, VMA::ma); /* widen */

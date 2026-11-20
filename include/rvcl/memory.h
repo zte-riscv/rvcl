@@ -14,19 +14,17 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * memory.h — memory contract (tensor import / tensor pack / workspace)
- *
- * Mirrors the ACL trio import_memory / ITensorPack / MemoryRequirements
- * (PLAN §4.10):
- *   - rvcl_tensor_init(): zero-copy import of host memory; RVCL never takes
+ ******************************************************************************/
+
+/* Memory contract mirrors the ACL trio import_memory / ITensorPack /
+ * MemoryRequirements:
+ *   - rvcl_tensor_init(): zero-copy import of host memory; rvcl never takes
  *     ownership and never allocates on behalf of the host.
- *   - rvcl_tensor_pack_t: slot-aggregated tensors for one run() call;
- *     decouples execution from object state so one kernel handle can run
+ *   - rvcl_tensor_pack_t: slot-aggregated tensors for one run() call,
+ *     decoupling execution from object state so one kernel handle can run
  *     concurrently with different packs.
  *   - rvcl_workspace_req_t: workspace demands reported by configure() and
- *     allocated by the caller, then fed back via AUX slots.
- ******************************************************************************/
+ *     allocated by the caller, then fed back via AUX slots. */
 
 #ifndef RVCL_MEMORY_H
 #define RVCL_MEMORY_H
@@ -56,7 +54,7 @@ typedef struct {
  * Initializes a tensor from an external pointer. Only records metadata —
  * no allocation, no copy, no ownership transfer.
  * Rejects non-plain layouts (innermost stride != 1) with
- * RVCL_UNSUPPORTED per the layout negotiation rule (PLAN §4.10).
+ * RVCL_UNSUPPORTED per the layout negotiation rule.
  */
 RVCL_API rvcl_status_t rvcl_tensor_init(
         rvcl_tensor_t *t, const rvcl_tensor_desc_t *desc, void *external_ptr);

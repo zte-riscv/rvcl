@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * scheduler.cpp — serial scheduler + host injection (set-once)
  ******************************************************************************/
 
 #include "rvcl/scheduler.h"
@@ -64,7 +62,7 @@ rvcl_status_t rvcl_scheduler_set(rvcl_ischeduler_t *scheduler) {
     pthread_mutex_lock(&g_mutex);
     if (g_set_done) {
         pthread_mutex_unlock(&g_mutex);
-        return RVCL_ERROR_ALREADY_INITIALIZED; /* set-once (PLAN §4.9) */
+        return RVCL_ERROR_ALREADY_INITIALIZED; /* set-once */
     }
     g_scheduler = scheduler ? scheduler : rvcl_serial_scheduler();
     g_set_done = 1;
@@ -75,8 +73,8 @@ rvcl_status_t rvcl_scheduler_set(rvcl_ischeduler_t *scheduler) {
 rvcl_ischeduler_t *rvcl_scheduler_get(void) {
     if (g_scheduler) return g_scheduler;
     /* Lazy default resolves the built-in backend without touching set-once:
-     * OpenMP scheduler when compiled in, serial scheduler otherwise (PLAN
-     * §4.9 guarantee 3 — a later explicit rvcl_scheduler_set still wins). */
+     * OpenMP scheduler when compiled in, serial scheduler otherwise — a later
+     * explicit rvcl_scheduler_set still wins. */
     rvcl_ischeduler_t *d = rvcl_omp_scheduler();
     return d ? d : rvcl_serial_scheduler();
 }

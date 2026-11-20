@@ -14,14 +14,12 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/unit_dtype_traits.cpp — dtype trait table + assertion-level tests
- *
- * Asserts the library dtype fact table (src/common/dtype_traits.hpp):
+ ******************************************************************************/
+
+/* Asserts the library dtype fact table (src/common/dtype_traits.hpp):
  * element size facts, the AUTO accumulation habit, the default assertion
  * level and the tolerance class, plus the f16 TOLERANT routing on the
- * registry and the dispatched kernel.
- ******************************************************************************/
+ * registry and the dispatched kernel. */
 
 #include <stdio.h>
 #include <string.h>
@@ -111,7 +109,7 @@ static void tc01_trait_table(void) {
 }
 
 /* TC-05: the block-scale dtype facts — trait rows for E8M0 and the four
- * MX/NV formats, plus the block-size / scale-dtype accessors (D-1). */
+ * MX/NV formats, plus the block-size / scale-dtype accessors. */
 static void tc05_block_scale_dtypes(void) {
     printf("TC-05 block-scale dtype traits and accessors\n");
 

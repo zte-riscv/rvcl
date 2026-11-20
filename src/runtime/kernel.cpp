@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * kernel.cpp — kernel instance lifecycle helpers
  ******************************************************************************/
 
 #include "rvcl/kernel.h"

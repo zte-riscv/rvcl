@@ -14,16 +14,12 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_fp16.hpp — IEEE 754 half-precision soft conversions (internal)
- *
- * Used by the f16 kernels on hosts without Zvfh (x86 CI) and as the
- * bit-exact reference for differential tests. Round-to-nearest-even on
- * f32->f16, exact on f16->f32.
- *
- * Storage type is uint16_t so tests and kernels compile independent of
- * compiler _Float16 support.
  ******************************************************************************/
+
+/* Used by the f16 kernels on hosts without Zvfh and as the bit-exact
+ * reference for differential tests. Round-to-nearest-even on f32->f16,
+ * exact on f16->f32. Storage type is uint16_t so tests and kernels compile
+ * independent of compiler _Float16 support. */
 
 #ifndef RVCL_RVV_FP16_H
 #define RVCL_RVV_FP16_H

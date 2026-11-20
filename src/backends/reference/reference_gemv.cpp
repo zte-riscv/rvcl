@@ -14,14 +14,12 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * reference_gemv.cpp — golden FP32 GEMV (reference backend)
- *
- * Reference backend: correctness-first reduction loop, zero workspace,
- * no packing. Also the differential-testing golden implementation that
- * the GEMV kernels are compared against.
- * y[m] = bias? + A[m,k] x[k], row-major A, length-m output vector.
  ******************************************************************************/
+
+/* Reference backend: correctness-first reduction loop, zero workspace, no
+ * packing. Also the differential-testing golden implementation the GEMV
+ * kernels are compared against: y[m] = bias? + A[m,k] x[k], row-major A,
+ * length-m output vector. */
 
 #include "rvcl/kernel.h"
 #include "rvcl/registry.h"
@@ -119,7 +117,7 @@ static rvcl_status_t ref_create(
  * The reference GEMV kernel is the f32 tuple's unbounded fallback: no
  * feature requirement, no shape limit, registered after the dedicated,
  * generic and portable variants so it only wins when nothing else survives
- * filtering (RFC-0002 FR1.5).
+ * filtering.
  */
 RVCL_API rvcl_status_t rvcl_gemv_reference_register(void) {
     rvcl_kernel_desc_t d;

@@ -14,10 +14,11 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
+ ******************************************************************************/
+
+/* Benchmark harness with mode separation + JSONL output.
  *
- * tests/bench_matmul.cpp — benchmark harness with mode separation + JSONL
- *
- * PLAN §6.2 item 10 + §8.2: four metric classes per (shape, dtype):
+ * Four metric classes per (shape, dtype):
  *   kernel-only  — micro-kernel on pre-packed data (panelized B); goes
  *                  through rvv_pick_gemm_* — the same selector the
  *                  backend create binds, so it always measures what
@@ -47,15 +48,14 @@
  * `scheduler` key is an additive, schema-stable attribution field: it
  * names the scheduler that handles the end-to-end metrics
  * (rvcl_scheduler_get(): lazy default or an injected one), so multi-thread
- * timing is attributable (D-11). Being additive, it does not advance the
- * JSON schema — the schema stays at v1 and existing consumers reading
- * schema v1 remain valid.
+ * timing is attributable. Being additive, it does not advance the JSON
+ * schema — the schema stays at v1 and existing consumers reading schema v1
+ * remain valid.
  *
- * This file holds corpus parser implementation #2 (differential has
- * #1): both follow the error table in tests/inputs/README.md, and the
- * same corpus runs green through both — cross-validation is the
- * feature.
- ******************************************************************************/
+ * Two corpus parsers cross-validate: this file is implementation #2
+ * (differential has #1) — both consume the same corpus and run green
+ * through it, cross-validation being the feature.
+ */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -683,10 +683,10 @@ int main(int argc, char **argv) {
 
     if (rvcl_init() != RVCL_SUCCESS) return 1;
 
-    /* Scheduler attribution (D-11): which scheduler handles the end-to-end
-     * metrics. kernel-only / pack+kernel micro-kernel direct calls are
-     * naturally single-core; only rvcl_matmul() end-to-end goes through the
-     * current scheduler (lazy default or an injected one). */
+    /* Scheduler attribution: which scheduler handles the end-to-end metrics.
+     * kernel-only / pack+kernel micro-kernel direct calls are naturally
+     * single-core; only rvcl_matmul() end-to-end goes through the current
+     * scheduler (lazy default or an injected one). */
     rvcl_ischeduler_t *sched = rvcl_scheduler_get();
     const char *sched_name = sched->name;
     const unsigned sched_num_threads = sched->num_threads;

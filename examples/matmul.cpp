@@ -14,14 +14,10 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * examples/matmul.cpp — first runnable: dispatch → reference kernel → check
- *
- * The Phase-0 vertical slice (PLAN §6.2): one semantic call exercising
- * capability → registry → dispatch (stages 1-4) → validate/configure →
- * zero-copy import → scheduler → run. RVCL_VERBOSE support lands with
- * observability (PLAN §8.4); for now the selected kernel is printed.
  ******************************************************************************/
+
+/* First runnable: one semantic call exercising capability -> registry ->
+ * dispatch -> validate/configure -> zero-copy import -> scheduler -> run. */
 
 #include <stdio.h>
 #include <stdlib.h>

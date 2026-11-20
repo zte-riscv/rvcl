@@ -14,12 +14,10 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/scheduler_omp_test.cpp — built-in OpenMP scheduler backend tests
- *
- * Registered as its own ctest process (OpenMP builds only) so the
- * lazy-default and nested-guard assertions run before any set-once
- * injection (guarantee 3). Covers:
+ ******************************************************************************/
+
+/* Registered as its own ctest process (OpenMP builds only) so the lazy-default
+ * and nested-guard assertions run before any set-once injection. Covers:
  *   - lazy default: not injected -> rvcl_scheduler_get() is "omp";
  *     explicit serial injection later wins (last write wins, set-once).
  *   - nested guard: parallel_for inside an active omp region inlines serial.
@@ -27,8 +25,7 @@
  *     != 0 case.
  *   - multithread bit-exact: rvcl_matmul vs golden on ragged shapes, T=4.
  *   - T scan: omp_set_num_threads(1/2/4/8) all agree bit-exact with golden
- *     (M split never reorders K accumulation, guarantee 5).
- ******************************************************************************/
+ *     (the M split never reorders K accumulation). */
 
 #include <omp.h>
 #include <pthread.h>
@@ -214,9 +211,9 @@ int main(void) {
 
     /* ---- 5. T scan: 1/2/4/8 mutually equal and bit-exact with golden ----
      * Mutual equality is the machine proof that M slicing never reorders K
-     * accumulation (guarantee 5) — it is evaluated independently of the
-     * golden comparison so a host-side kernel 1-ulp drift from the scalar
-     * golden cannot mask a genuine T dependence. */
+     * accumulation — it is evaluated independently of the golden comparison
+     * so a host-side kernel 1-ulp drift from the scalar golden cannot mask a
+     * genuine T dependence. */
     printf("T scan\n");
     {
         const int scan[] = {1, 2, 4, 8};

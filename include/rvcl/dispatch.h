@@ -14,12 +14,10 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * dispatch.h — kernel selection (Layer: Dispatch)
- *
- * Filters candidates and picks the best legal kernel. Dispatch never
- * contains ISA-specific kernel code and never executes kernels.
  ******************************************************************************/
+
+/* Filters kernel candidates and picks the best legal one. Dispatch never
+ * contains ISA-specific kernel code and never executes kernels. */
 
 #ifndef RVCL_DISPATCH_H
 #define RVCL_DISPATCH_H

@@ -14,20 +14,17 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_fp8.cpp — FP8 (E4M3 / E5M2) GEMM C-portable micro-kernels
- *
- * Tuple (fp8, fp8, f32, f32): storage fp8 (one byte per element),
+ ******************************************************************************/
+
+/* Tuple (fp8, fp8, f32, f32): storage fp8 (one byte per element),
  * accumulation and output fp32. FP8 has no ratified base hardware
  * extension, so both kernels upconvert every byte through the shared
- * 256-entry f32 lookup tables in rvv_fp8.hpp — the same tables the
- * golden and the JIT kernels use, so all three agree bit-for-bit on FP8
- * inputs. The JIT counterpart lives in jit/rvv_gemm_fp8_jit.cpp.
- *
- * K accumulates in ascending order (bias first), bit-identical to the
- * golden and the JIT path. E4M3 and E5M2 differ only in the upconversion
- * function, so a single templated body serves both dtypes.
- ******************************************************************************/
+ * 256-entry f32 lookup tables in rvv_fp8.hpp — the same tables the golden
+ * and the JIT kernels use, so all three agree bit-for-bit on FP8 inputs.
+ * The JIT counterpart lives in jit/rvv_gemm_fp8_jit.cpp. K accumulates in
+ * ascending order (bias first), bit-identical to the golden and the JIT
+ * path. E4M3 and E5M2 differ only in the upconversion function, so a
+ * single templated body serves both dtypes. */
 
 #include "rvv_fp8.hpp"
 #include "rvv_internal.hpp"

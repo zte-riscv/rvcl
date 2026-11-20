@@ -14,18 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_bf16.hpp — bfloat16 soft conversions (internal)
- *
- * bf16 is the top 16 bits of an IEEE 754 fp32 value, so the up-conversion
- * is an exact integer widen-and-shift (u16 << 16) that needs no Zvfbfmin.
- * The down-conversion rounds the dropped low 16 bits to nearest-even so
- * the storage round-trip is the deterministic reference for golden and
- * differential tests on hosts without the bf16 vector instructions.
- *
- * Storage type is uint16_t so tests and kernels compile independent of
- * compiler _Float16 / bf16 support.
  ******************************************************************************/
+
+/* bf16 is the top 16 bits of an IEEE 754 fp32 value, so the up-conversion
+ * is an exact integer widen-and-shift (u16 << 16) that needs no Zvfbfmin.
+ * The down-conversion rounds the dropped low 16 bits to nearest-even so the
+ * storage round-trip is the deterministic reference for golden and
+ * differential tests on hosts without the bf16 vector instructions. Storage
+ * type is uint16_t so tests and kernels compile independent of compiler
+ * _Float16 / bf16 support. */
 
 #ifndef RVCL_RVV_BF16_H
 #define RVCL_RVV_BF16_H

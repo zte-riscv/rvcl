@@ -14,15 +14,14 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/op_slots.cpp — test-side operator slot table (see op_slots.hpp)
- *
- * The matmul row is the first table entry (migrated from the differential
- * and bench mains); the gemv row is the second, the demonstration of the
- * "add an operator = one row + a corpus dir" contract. Both run paths are
- * shared below and only branch on the operator inside the table
- * implementation, never in the test mains.
  ******************************************************************************/
+
+/* Test-side operator slot table (see op_slots.hpp for the contract). The
+ * matmul row is the first table entry (migrated from the differential and
+ * bench mains); the gemv row is the second, demonstrating the "add an
+ * operator = one row + a corpus dir" contract. Both run paths are shared
+ * below and only branch on the operator inside the table implementation,
+ * never in the test mains. */
 
 #include "op_slots.hpp"
 

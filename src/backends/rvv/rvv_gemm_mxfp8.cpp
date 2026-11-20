@@ -14,32 +14,26 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_gemm_mxfp8.cpp — MXFP8 (E4M3 / E5M2) block-scale GEMM C kernel
- *
- * OCP MX block-scale matmul: A/B are FP8 (E4M3 or E5M2) bytes, each 32-wide
+ ******************************************************************************/
+
+/* OCP MX block-scale matmul: A/B are FP8 (E4M3 or E5M2) bytes, each 32-wide
  * block of K carries a shared 1-byte E8M0 exponent scale, and the output is
  * fp32. The element dequantization is
- *
  *     a[i][p]  -> UP_fp8(a[i][p]) * UP_e8m0(sa[i][p/32])
  *     b[p][j]  -> UP_fp8(b[p][j]) * UP_e8m0(sb[p/32][j])
- *
- * so C[i][j] = bias[j] + sum_p (a-scale) * (b-scale). Both upconversions
- * are the same 256-entry f32 lookup-table infrastructure the golden and the
- * JIT kernels share (rvv_fp8.hpp, rvv_e8m0.hpp), so all three agree
- * bit-for-bit on the same bytes — including E8M0 0x00 (smallest subnormal
- * 2^-127) and 0xFF (NaN propagation). Scale layouts: sa is [m][K/blk]
- * row-major; sb is [K/blk][n] row-major (oneDNN-aligned, K-blocks on the
- * outer axis), accessed as sb[(p/blk)*n + j].
+ * so C[i][j] = bias[j] + sum_p (a-scale) * (b-scale). Both upconversions are
+ * the same 256-entry f32 lookup-table infrastructure the golden and the JIT
+ * kernels share (rvv_fp8.hpp, rvv_e8m0.hpp), so all three agree bit-for-bit
+ * on the same bytes — including E8M0 0x00 (smallest subnormal 2^-127) and
+ * 0xFF (NaN propagation). Scale layouts: sa is [m][K/blk] row-major; sb is
+ * [K/blk][n] row-major, accessed as sb[(p/blk)*n + j].
  *
  * Each K term folds both E8M0 scales into the B value and accumulates with a
- * single fused multiply-add, acc = fma(A, B*ascale*bscale, acc). The
- * combined scale is an exact power of two, so B*ascale*bscale does not round,
- * and the lone rounding per K step matches the JIT's vfmacc_vf grouping
- * bit-for-bit. K accumulates in ascending order (bias first), bit-identical
- * to the golden and the JIT path. The JIT counterpart lives in
- * jit/rvv_gemm_mxfp8_jit.cpp.
- ******************************************************************************/
+ * single fused multiply-add, acc = fma(A, B*ascale*bscale, acc). The combined
+ * scale is an exact power of two, so B*ascale*bscale does not round, and the
+ * lone rounding per K step matches the JIT's vfmacc_vf grouping bit-for-bit.
+ * K accumulates in ascending order (bias first), bit-identical to the golden
+ * and the JIT path. The JIT counterpart lives in jit/rvv_gemm_mxfp8_jit.cpp. */
 
 #include "rvv_e8m0.hpp"
 #include "rvv_fp8.hpp"

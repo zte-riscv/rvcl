@@ -16,12 +16,12 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-#
+# *******************************************************************************
+
 # Table-driven tests for commit-msg-check.py. Standard library only, so CI can
 # run them with the system python3:
 #
 #   python3 .github/automation/test_commit_msg_check.py
-# *******************************************************************************
 
 import contextlib
 import importlib.util

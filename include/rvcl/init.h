@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * init.h — library initialization and version
  ******************************************************************************/
 
 #ifndef RVCL_INIT_H
@@ -45,8 +43,7 @@ extern "C" {
  */
 RVCL_API rvcl_status_t rvcl_init(void);
 
-/* "MAJOR.MINOR.PATCH[-dev]" — consumed by FindRVCL-style version gating
- * (PLAN §4.11 item 7, the ACL 53.1-gate equivalent). */
+/* "MAJOR.MINOR.PATCH[-dev]" — consumed by FindRVCL-style version gating. */
 RVCL_API const char *rvcl_get_version(void);
 
 #ifdef __cplusplus

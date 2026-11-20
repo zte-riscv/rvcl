@@ -14,8 +14,6 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * memory.cpp — memory contract implementation
  ******************************************************************************/
 
 #include "rvcl/memory.h"
@@ -28,9 +26,9 @@ rvcl_status_t rvcl_tensor_init(
     if (desc->ndims <= 0 || desc->ndims > 6) return RVCL_ERROR_INVALID_ARGUMENT;
     if (rvcl_dtype_size(desc->dtype) == 0) return RVCL_ERROR_INVALID_ARGUMENT;
 
-    /* Layout negotiation (PLAN §4.10): plain tensors only — innermost
-     * stride must be 1. Non-blocking/exotic layouts are explicitly
-     * rejected with RVCL_UNSUPPORTED, never silently accepted. */
+    /* Layout negotiation: plain tensors only — innermost stride must be 1.
+     * Non-blocking/exotic layouts are explicitly rejected with
+     * RVCL_UNSUPPORTED, never silently accepted. */
     if (desc->strides[desc->ndims - 1] != 1) return RVCL_UNSUPPORTED;
 
     t->desc = *desc;

@@ -14,24 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * rvv_e8m0.hpp — E8M0 block-scale up-conversion (internal)
- *
- * E8M0 is the 1-byte exponent-only block scale used by the OCP MX block-
- * scale dtypes (MXFP8 E4M3 / E5M2, MXFP4). The byte is the biased-127
- * exponent field with no sign and no mantissa, so the up-conversion is
- * mostly a single left shift:
- *   - 0x00 -> 2^-127 (smallest subnormal, 0x00400000), not a literal zero;
- *   - 0xFF -> quiet NaN (0x7fc00000), propagated (never clipped);
- *   - every other byte e -> 2^(e-127), i.e. the f32 with exponent field e
- *     and zero mantissa (bit pattern e << 23).
- *
- * The 256-entry f32 (bit-pattern) table is shared verbatim by the golden,
- * the C-portable kernels and the JIT kernels so all three agree bit-for-bit
- * on the same E8M0 bytes. Storage type is uint8_t for the scale values, so
- * kernels compile independent of any compiler E8M0 support; the table stores
- * the f32 bit patterns as uint32_t.
  ******************************************************************************/
+
+/* E8M0 is the 1-byte exponent-only block scale used by the OCP MX block-scale
+ * dtypes (MXFP8 E4M3 / E5M2, MXFP4): the biased-127 exponent field with no
+ * sign and no mantissa. The 256-entry f32 (bit-pattern) table is shared
+ * verbatim by the golden, the C-portable kernels and the JIT kernels so all
+ * three agree bit-for-bit on the same E8M0 bytes. Storage type is uint8_t
+ * for the scale values and uint32_t for the f32 bit patterns, so kernels
+ * compile independent of any compiler E8M0 support. */
 
 #ifndef RVCL_RVV_E8M0_H
 #define RVCL_RVV_E8M0_H
