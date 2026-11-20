@@ -127,11 +127,11 @@ static void tc05_block_scale_dtypes(void) {
         CHECK(rvcl_dtype_size(block_dtypes[i]) == 1, msg);
         /* The FP4 formats are sub-byte (4 bits, nibble-packed) while E8M0
          * and the FP8 formats are full-byte (8 bits). */
-        const int want_bits = (block_dtypes[i] == RVCL_DTYPE_NVFP4
-                                      || block_dtypes[i] == RVCL_DTYPE_MXFP4)
+        const size_t want_bits = (block_dtypes[i] == RVCL_DTYPE_NVFP4
+                                         || block_dtypes[i] == RVCL_DTYPE_MXFP4)
                 ? 4
                 : 8;
-        snprintf(msg, sizeof(msg), "%s rvcl_dtype_bits = %d", labels[i],
+        snprintf(msg, sizeof(msg), "%s rvcl_dtype_bits = %zu", labels[i],
                 want_bits);
         CHECK(rvcl_dtype_bits(block_dtypes[i]) == want_bits, msg);
         snprintf(msg, sizeof(msg), "%s family = FP", labels[i]);
