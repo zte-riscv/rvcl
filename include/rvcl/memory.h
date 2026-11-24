@@ -75,6 +75,10 @@ typedef enum {
     RVCL_TENSOR_AUX_3,
     RVCL_TENSOR_SRC_SCALE_A, /* block scale tensor for SRC_A */
     RVCL_TENSOR_SRC_SCALE_B, /* block scale tensor for SRC_B */
+    RVCL_TENSOR_STAT_MEAN, /* mean tensor for norm operators */
+    RVCL_TENSOR_STAT_VARIANCE, /* variance tensor for norm operators */
+    RVCL_TENSOR_STAT_SCALE, /* scale tensor for norm operators */
+    RVCL_TENSOR_STAT_SHIFT, /* shift tensor for norm operators */
     RVCL_TENSOR_SLOT_COUNT,
 } rvcl_tensor_slot_t;
 
