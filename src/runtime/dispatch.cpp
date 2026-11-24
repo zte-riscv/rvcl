@@ -102,8 +102,8 @@ static void result_unref(rvcl_dispatch_result_t *r);
 /* --------------------------------------------------------------- op table
  * One entry per operator: a request validator resolving the datatype/shape
  * filter inputs and a cache-key generator. The table is populated at
- * startup with the matmul entry; internal callers and tests may append
- * entries via rvcl_dispatch_register_op(). */
+ * startup with one row per built-in operator; internal callers and tests
+ * may append entries via rvcl_dispatch_register_op(). */
 #define RVCL_DISPATCH_MAX_OPS 8
 
 /* forward: the matmul entry's validator and key generator (defined in the
@@ -120,12 +120,35 @@ static rvcl_status_t gemv_dims_validate(
 static uint32_t gemv_key_hash(const rvcl_op_desc_t *key);
 static int gemv_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
 
+/* forward: the conv2d entry's validator and key generator (request / keys
+ * sections below) */
+static rvcl_status_t conv2d_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t conv2d_key_hash(const rvcl_op_desc_t *key);
+static int conv2d_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
+/* One row per built-in operator, in registration-order tie-break order. The
+ * table is sized to the full capacity because rvcl_dispatch_register_op()
+ * appends free entries (tests, internal callers) after the built-in rows:
+ * the initializer's row count is pinned by the assertion below, so adding a
+ * built-in operator fails to compile until RVCL_DISPATCH_MAX_OPS is raised
+ * in the same change, instead of the table silently overflowing or free
+ * registration running out of slots. */
 static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
         {RVCL_OP_MATMUL, matmul_dims_validate, matmul_key_hash,
                 matmul_key_equal},
         {RVCL_OP_GEMV, gemv_dims_validate, gemv_key_hash, gemv_key_equal},
+        {RVCL_OP_CONV2D, conv2d_dims_validate, conv2d_key_hash,
+                conv2d_key_equal},
 };
-static int g_op_count = 2;
+
+/* Number of initializer rows, i.e. the built-in operators. */
+static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 3;
+
+static_assert(RVCL_DISPATCH_BUILTIN_OPS <= RVCL_DISPATCH_MAX_OPS,
+        "built-in operator rows must fit RVCL_DISPATCH_MAX_OPS");
+
+static int g_op_count = RVCL_DISPATCH_BUILTIN_OPS;
 
 static const rvcl_dispatch_op_entry_t *op_entry(rvcl_operation_t op) {
     for (int i = 0; i < g_op_count; i++)
@@ -219,6 +242,60 @@ static uint32_t gemv_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_acc);
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_c);
     h = hash_mix(h, (uint64_t)(unsigned)key->gemv.dtype_bias);
+    return h;
+}
+
+static int conv2d_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    const rvcl_conv2d_desc_t *x = &a->conv2d;
+    const rvcl_conv2d_desc_t *y = &b->conv2d;
+    return x->mb == y->mb && x->ic == y->ic && x->ih == y->ih && x->iw == y->iw
+            && x->oc == y->oc && x->kh == y->kh && x->kw == y->kw
+            && x->sh == y->sh && x->sw == y->sw && x->dil_h == y->dil_h
+            && x->dil_w == y->dil_w && x->pad_t == y->pad_t
+            && x->pad_b == y->pad_b && x->pad_l == y->pad_l
+            && x->pad_r == y->pad_r && x->groups == y->groups
+            && x->dtype_a == y->dtype_a && x->dtype_b == y->dtype_b
+            && x->dtype_acc == y->dtype_acc && x->dtype_c == y->dtype_c
+            && x->dtype_bias == y->dtype_bias
+            && x->quant.enabled == y->quant.enabled
+            && float_bits(x->quant.scale_a) == float_bits(y->quant.scale_a)
+            && float_bits(x->quant.scale_b) == float_bits(y->quant.scale_b)
+            && float_bits(x->quant.scale_c) == float_bits(y->quant.scale_c)
+            && x->quant.zp_a == y->quant.zp_a && x->quant.zp_b == y->quant.zp_b
+            && x->quant.zp_c == y->quant.zp_c;
+}
+
+static uint32_t conv2d_key_hash(const rvcl_op_desc_t *key) {
+    const rvcl_conv2d_desc_t *d = &key->conv2d;
+    unsigned h = 2166136261u;
+    h = hash_mix(h, (uint64_t)d->mb);
+    h = hash_mix(h, (uint64_t)d->ic);
+    h = hash_mix(h, (uint64_t)d->ih);
+    h = hash_mix(h, (uint64_t)d->iw);
+    h = hash_mix(h, (uint64_t)d->oc);
+    h = hash_mix(h, (uint64_t)d->kh);
+    h = hash_mix(h, (uint64_t)d->kw);
+    h = hash_mix(h, (uint64_t)d->sh);
+    h = hash_mix(h, (uint64_t)d->sw);
+    h = hash_mix(h, (uint64_t)d->dil_h);
+    h = hash_mix(h, (uint64_t)d->dil_w);
+    h = hash_mix(h, (uint64_t)d->pad_t);
+    h = hash_mix(h, (uint64_t)d->pad_b);
+    h = hash_mix(h, (uint64_t)d->pad_l);
+    h = hash_mix(h, (uint64_t)d->pad_r);
+    h = hash_mix(h, (uint64_t)d->groups);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.enabled);
+    h = hash_mix(h, float_bits(d->quant.scale_a));
+    h = hash_mix(h, float_bits(d->quant.scale_b));
+    h = hash_mix(h, float_bits(d->quant.scale_c));
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_c);
     return h;
 }
 
@@ -399,7 +476,54 @@ static rvcl_status_t gemv_dims_validate(
     return RVCL_SUCCESS;
 }
 
-/* ------------------------------------------------------------- filters */
+/* Per-axis output size of the conv2d descriptor's pad/stride/dilation
+ * formula: (in + pad_begin + pad_end - (k - 1)*dil - 1) / s + 1, or 0 when
+ * the kernel window does not fit the padded input. */
+static int64_t conv2d_out_dim(int64_t in, int64_t k, int64_t s, int64_t dil,
+        int64_t pad_lo, int64_t pad_hi) {
+    const int64_t span = in + pad_lo + pad_hi - (k - 1) * dil - 1;
+    if (span < 0) return 0;
+    return span / s + 1;
+}
+
+/* The conv2d op-table entry. The filter inputs are the GEMM view of the
+ * convolution: m = mb*OH*OW rows, n = oc columns, k = ic*kh*kw reduction.
+ * Grouped convolution is not served yet, and quantization is rejected by
+ * validate() on the kernel side; both are request errors here. */
+static rvcl_status_t conv2d_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_conv2d_desc_t *d = &od->conv2d;
+    if (d->mb <= 0 || d->ic <= 0 || d->ih <= 0 || d->iw <= 0 || d->oc <= 0
+            || d->kh <= 0 || d->kw <= 0 || d->sh <= 0 || d->sw <= 0
+            || d->dil_h <= 0 || d->dil_w <= 0 || d->pad_t < 0 || d->pad_b < 0
+            || d->pad_l < 0 || d->pad_r < 0)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (d->groups != 1) return RVCL_ERROR_INVALID_ARGUMENT;
+    const int64_t oh
+            = conv2d_out_dim(d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
+    const int64_t ow
+            = conv2d_out_dim(d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
+    if (oh <= 0 || ow <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_dtype_tuple(
+            d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
+    if (st != RVCL_SUCCESS) return st;
+    /* Block-scale input dtypes need K divisible by their block size, the
+     * same constraint the matmul entry applies. */
+    const int64_t k = d->ic * d->kh * d->kw;
+    const size_t blk_a = rvcl_dtype_block_size(d->dtype_a);
+    const size_t blk_b = rvcl_dtype_block_size(d->dtype_b);
+    if ((blk_a && (size_t)k % blk_a) || (blk_b && (size_t)k % blk_b))
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    out->m = d->mb * oh * ow;
+    out->n = d->oc;
+    out->k = k;
+    out->dtype_a = d->dtype_a;
+    out->dtype_b = d->dtype_b;
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
 /* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
  * stays operator-generic. */
 
@@ -593,6 +717,15 @@ rvcl_status_t rvcl_dispatch_matmul(
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_op_desc_t od = {.matmul = *desc};
     return rvcl_dispatch_op(RVCL_OP_MATMUL, &od, result);
+}
+
+/* Public conv2d entry: same generic pipeline keyed on the CONV2D op-table
+ * row. */
+rvcl_status_t rvcl_dispatch_conv2d(
+        const rvcl_conv2d_desc_t *desc, rvcl_dispatch_result_t **result) {
+    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_op_desc_t od = {.conv2d = *desc};
+    return rvcl_dispatch_op(RVCL_OP_CONV2D, &od, result);
 }
 
 const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r) {

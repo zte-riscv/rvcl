@@ -53,7 +53,12 @@
 
 /* Workspace layout index for the packed-B buffer (slot AUX_0). */
 #define RVV_WS_PACKED_B 0
+/* Slot AUX_1: matmul reserves it for split-K accumulation (inactive), and
+ * conv2d uses it as the single per-run band (im2col patches + the f32
+ * GEMM output). The two backends are separate kernels, so one slot serves
+ * both under their own name. */
 #define RVV_WS_ACC 1
+#define RVV_WS_BAND RVV_WS_ACC
 
 /* bytes needed for the packed B panel buffer: k x n elements, panelized */
 static inline size_t rvv_packed_b_bytes(int64_t k, int64_t n, size_t elt) {
@@ -149,6 +154,12 @@ RVCL_API rvcl_status_t rvcl_rvv_register(void);
 /* Portable (scalar C) entries for builds without vector compilation;
  * no-op on vector builds. */
 RVCL_API rvcl_status_t rvcl_rvv_register_portable(void);
+
+/* Conv2D entries (rvv_conv2d.cpp): im2col + the dtype's gemm micro-kernel
+ * selected through rvv_pick_gemm_* above. The generic entries require RVV
+ * on vector builds; the portable entries serve any host otherwise. */
+RVCL_API rvcl_status_t rvcl_rvv_register_conv2d(void);
+RVCL_API rvcl_status_t rvcl_rvv_register_conv2d_portable(void);
 
 /* Micro-kernel function type (backend adapter holds one per dtype). */
 typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,

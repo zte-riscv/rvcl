@@ -1274,10 +1274,11 @@ static uint32_t test_op_key_hash(const rvcl_op_desc_t *key) {
 }
 
 /* TC-AC3-19: generic op-table dispatch — unregistered op rejected,
- * registered op runs the full pipeline with cache hit, and per-op cache
- * key isolation (same hash, different op, no slot cross-talk). The two
- * freely registerable test ops are the reserved extension slot and CONV2D
- * — neither has a built-in table entry, so the test owns their entries. */
+ * registered op runs the full pipeline with cache hit, and cache key
+ * isolation under a forced slot collision. RVCL_OP_RESERVED is the one
+ * operator with no built-in table entry, so it alone carries the "freely
+ * registerable" semantics; every other operator in RVCL_OP_COUNT is
+ * built in and would be rejected as ALREADY_REGISTERED here. */
 static void tc19_op_table(void) {
     printf("TC-AC3-19 generic op-table dispatch\n");
     rvcl_dispatch_cache_clear();
@@ -1291,15 +1292,11 @@ static void tc19_op_table(void) {
             "op with no table entry is rejected");
     CHECK(r == NULL, "no result leaked on an unregistered op");
 
-    /* (b) Register the op entries once (they persist for this case). */
+    /* (b) Register the op entry once (it persists for this case). */
     const rvcl_dispatch_op_entry_t resv_e = {RVCL_OP_RESERVED,
-            test_op_dims_validate, test_op_key_hash, test_op_key_equal};
-    const rvcl_dispatch_op_entry_t conv_e = {RVCL_OP_CONV2D,
             test_op_dims_validate, test_op_key_hash, test_op_key_equal};
     CHECK(rvcl_dispatch_register_op(&resv_e) == RVCL_SUCCESS,
             "reserved op table entry registered");
-    CHECK(rvcl_dispatch_register_op(&conv_e) == RVCL_SUCCESS,
-            "CONV2D op table entry registered");
     CHECK(rvcl_dispatch_register_op(&resv_e) == RVCL_ERROR_ALREADY_REGISTERED,
             "duplicate op table entry rejected");
 
@@ -1335,8 +1332,11 @@ static void tc19_op_table(void) {
     unregister_quiet("t19_resv");
     rvcl_dispatch_cache_clear();
 
-    /* (d) Per-op cache key isolation: both test ops collide on slot 0,
-     * but the op discriminant keeps their entries apart. */
+    /* (d) Per-op cache key isolation: the two requests below collide on
+     * cache slot 0 (the test entry hashes every key to 0; the conv2d
+     * geometry was picked so its own key hashes there too), yet the op
+     * discriminant keeps their entries apart. This also exercises the
+     * built-in conv2d table row through the generic pipeline. */
     const rvcl_dtype_t a = RVCL_DTYPE_INT4;
     const rvcl_dtype_t acc = RVCL_DTYPE_INT32;
     rvcl_kernel_desc_t resv = make_desc("t19c_resv", a, a, acc, acc);
@@ -1349,8 +1349,22 @@ static void tc19_op_table(void) {
 
     const rvcl_op_desc_t resv_od
             = {.matmul = make_request(8, 8, 8, a, a, acc, acc)};
-    rvcl_op_desc_t conv_od = resv_od;
-    conv_od.matmul.m = 9; /* distinct key, still the same slot-0 hash */
+
+    rvcl_op_desc_t conv_od;
+    memset(&conv_od, 0, sizeof(conv_od));
+    conv_od.conv2d.mb = 1;
+    conv_od.conv2d.ic = 2;
+    conv_od.conv2d.ih = conv_od.conv2d.iw = 2;
+    conv_od.conv2d.oc = 3;
+    conv_od.conv2d.kh = conv_od.conv2d.kw = 2;
+    conv_od.conv2d.sh = conv_od.conv2d.sw = 1;
+    conv_od.conv2d.dil_h = conv_od.conv2d.dil_w = 1;
+    conv_od.conv2d.groups = 1;
+    conv_od.conv2d.dtype_a = a;
+    conv_od.conv2d.dtype_b = a;
+    conv_od.conv2d.dtype_acc = acc;
+    conv_od.conv2d.dtype_c = acc;
+    conv_od.conv2d.dtype_bias = RVCL_DTYPE_AUTO;
 
     rvcl_dispatch_result_t *rg = NULL;
     CHECK(rvcl_dispatch_op(RVCL_OP_RESERVED, &resv_od, &rg) == RVCL_SUCCESS,

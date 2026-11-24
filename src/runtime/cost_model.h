@@ -62,6 +62,15 @@ RVCL_API uint64_t rvcl_cost_matmul_reference(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
 /*
+ * Conv2D, RVV backend category (im2col + packed-B GEMM): same per-element
+ * cheap coefficient and VLEN-tier gain as rvcl_cost_matmul_rvv, scored on
+ * the GEMM view of the convolution (m = mb*OH*OW, n = oc, k = ic*kh*kw).
+ * The im2col materialization overhead is folded into the coefficient.
+ */
+RVCL_API uint64_t rvcl_cost_conv2d_rvv(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
  * VLEN tier gain (fixed-point, 256 = 1.0x) applied to the matmul-rvv
  * category: wider vector registers amortize the micro-kernel overhead, so
  * the gain shrinks as the host tier grows. Exported for the test

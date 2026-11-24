@@ -20,10 +20,16 @@
  * executables need to drive the operator without an operator branch in the
  * main: the corpus/CLI name, the operator enum, the supported test-dtype
  * set, the input/output element counts for buffer sizing, the golden
- * routing, the descriptor builder and the run family. The run family is the
- * dispatch-driven path through the internal rvcl_dispatch_op entry
- * (run_dispatch) plus the factory-bypass path that runs one named kernel
- * (run_named, the differential per-kernel coverage).
+ * routing, the descriptor builder, the tensor-pack setup, the full work
+ * range and the run family. The run family is the dispatch-driven path
+ * through the internal rvcl_dispatch_op entry (run_dispatch) plus the
+ * factory-bypass path that runs one named kernel (run_named, the
+ * differential per-kernel coverage).
+ *
+ * Shape, dtype and layout knowledge lives in the row: the shared rig only
+ * does "pack init -> row's pack_setup -> workspace -> run", so it never
+ * reads the operation descriptor itself and a new operator cannot land in
+ * another operator's descriptor branch.
  *
  * The library counterpart is the dispatch op table in src/runtime/
  * dispatch.cpp; the test table is the landing point a new operator registers
@@ -46,11 +52,34 @@ typedef void (*op_slot_golden_fn)(const rvcl_op_desc_t *od, const void *a,
         const void *sa, const void *b, const void *sb, const float *bias,
         float *c);
 
-/* Build the operator descriptor for a case. dacc is RVCL_DTYPE_AUTO unless
- * the caller pins it. */
-typedef void (*op_slot_build_desc_fn)(rvcl_op_desc_t *od, int64_t m, int64_t n,
-        int64_t k, rvcl_dtype_t da, rvcl_dtype_t db, rvcl_dtype_t dacc,
-        rvcl_dtype_t dc, rvcl_dtype_t dbias);
+/* Build the operator descriptor for a case. m/n/k are the corpus triple;
+ * params is the case's operator-specific parameter column (empty string
+ * when the operator needs none). dacc is RVCL_DTYPE_AUTO unless the caller
+ * pins it. A row parses params into the descriptor fields the corpus
+ * triple cannot express; a malformed params column, or one that disagrees
+ * with the shape triple, is rejected with RVCL_ERROR_INVALID_ARGUMENT so
+ * the consumer can report a corpus error instead of running a shape the
+ * case does not describe. */
+typedef rvcl_status_t (*op_slot_build_desc_fn)(rvcl_op_desc_t *od, int64_t m,
+        int64_t n, int64_t k, const char *params, rvcl_dtype_t da,
+        rvcl_dtype_t db, rvcl_dtype_t dacc, rvcl_dtype_t dc,
+        rvcl_dtype_t dbias);
+
+/* Fill the tensor pack from the descriptor and the caller's buffers: the
+ * row owns the tensor layouts (dims, strides, dtypes), the bias length and
+ * which slots exist. The rig calls rvcl_tensor_pack_init() first. */
+typedef void (*op_slot_pack_setup_fn)(rvcl_tensor_pack_t *pack,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
+        rvcl_tensor_t *tc, rvcl_tensor_t *tbias);
+
+/* The full work range of a case in the operator's own GEMM view. */
+typedef rvcl_work_range_t (*op_slot_range_fn)(const rvcl_op_desc_t *od);
+
+/* Output width used to print a mismatch index as (i, j); 1 for a
+ * vector-shaped output. */
+typedef int64_t (*op_slot_width_fn)(const rvcl_op_desc_t *od);
 
 /* Run the dispatch-selected kernel via rvcl_dispatch_op into fp32 c. */
 typedef rvcl_status_t (*op_slot_run_dispatch_fn)(const rvcl_op_desc_t *od,
@@ -77,6 +106,9 @@ typedef struct {
     op_slot_elems_fn out_elems;
     op_slot_golden_fn golden;
     op_slot_build_desc_fn build_desc;
+    op_slot_pack_setup_fn pack_setup;
+    op_slot_range_fn full_range;
+    op_slot_width_fn out_width;
     op_slot_run_dispatch_fn run_dispatch;
     op_slot_run_named_fn run_named;
     /* 1 when the operator has a micro-kernel timing path (bench P/S). */
@@ -96,17 +128,9 @@ const op_slot_t *op_slot_from_batch_path(const char *path);
 /* The default operator when none is named on the CLI (matmul). */
 const op_slot_t *op_slot_default(void);
 
-/* Tensor-pack helpers for a dispatch rig (the bench harness builds and
- * keeps a pack so the dispatched kernel can be run repeatedly for timing;
- * op_slots owns the op-specific tensor layout so the harness stays free of
- * operator branches). bias may be NULL. sa/sb are the E8M0 scale tensors
- * (NULL for non-block-scale dtypes); tsa/tsb carry the descriptors the
- * pack references and must outlive the pack. */
-void op_slot_pack_setup(const op_slot_t *slot, rvcl_tensor_pack_t *pack,
-        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
-        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
-        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
-        rvcl_tensor_t *tc, rvcl_tensor_t *tbias);
+/* Allocates the workspaces configure() reported and feeds the AUX slots.
+ * Operator-agnostic: a kernel reports its workspace demands and the slots
+ * are the AUX group. */
 rvcl_status_t op_slot_pack_ws(const rvcl_workspace_req_t *ws, int num_ws,
         void *ws_buf[], rvcl_tensor_t ws_t[], rvcl_tensor_pack_t *pack);
 void op_slot_pack_free_ws(void *ws_buf[], int num_ws);

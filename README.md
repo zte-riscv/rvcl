@@ -81,7 +81,7 @@ Two cross-cutting contracts stay under host control and invisible to kernels:
 
 ```text
 ┌───────────────────────────────────────────────────┐
-│ Operator API   rvcl_matmul / rvcl_matmul_scaled   │
+│ Operator API   rvcl_matmul / _scaled / rvcl_conv2d│
 ├───────────────────────────────────────────────────┤
 │ Dispatch       six-stage filter + cost ordering   │
 ├───────────────────────────────────────────────────┤
@@ -252,6 +252,16 @@ mains then drive the new operator unchanged.
 implements the micro-kernel and `src/backends/reference/reference_gemv.cpp` the
 golden reduction, both registered through the same table row.
 
+**CONV2D** is the first operator whose shape does not fit the GEMM triple:
+`src/operators/conv2d.cpp` is the semantic layer, `src/backends/rvv/rvv_conv2d.cpp`
+the kernel. It reuses the per-dtype GEMM micro-kernels — the patch matrix is
+materialised per row band (im2col) and the result is transposed back to NCHW — so
+a convolution and a matmul of the same dtype always run the same inner kernel.
+Because the convolution geometry (batch, channels, spatial sizes, kernel, stride,
+dilation, padding) cannot travel in the corpus shape column, its corpus cases
+carry a params column; see `tests/inputs/README.md`. Its dtypes are f32, f16 and
+bf16, always accumulating into and writing out f32.
+
 ### Add a backend
 
 A new backend takes four fixed steps, and no framework code changes:
@@ -331,19 +341,19 @@ orchestration:
 ```text
 rvcl/
 ├── include/rvcl/        # public C ABI: types/init/capability/memory/scheduler/
-│                        # kernel/registry/dispatch/matmul + the rvcl.h umbrella
+│                        # kernel/registry/dispatch/matmul/conv2d + rvcl.h umbrella
 ├── src/
 │   ├── common/          # type, dtype-trait and memory contract implementations
 │   ├── runtime/         # capability / registry / dispatch / cost model / init
 │   │   └── scheduler/   # serial + OpenMP scheduler backends
-│   ├── operators/       # semantic-layer operators (matmul)
+│   ├── operators/       # semantic-layer operators (matmul, conv2d)
 │   └── backends/
 │       ├── reference/   # golden implementations (matmul, gemv)
 │       └── rvv/         # C / intrinsics kernels, panel packing, path table
 │           └── jit/     # xbyak_riscv JIT kernels (f32/f16/fp8/mxfp8/s8u8)
 ├── examples/            # matmul, dispatch, scheduler, matmul_multicore, vendor_kernel
 ├── tests/               # unit + smoke + differential + concurrent + bench
-│   └── inputs/          # declarative shape corpora (matmul/, gemv/)
+│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/)
 ├── third_party/         # vendored xbyak_riscv (tag 1.31, BSD-3)
 └── CMakeLists.txt
 ```
@@ -405,10 +415,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The essentials:
 - **Kernel PRs** are reviewed against the five invariants above — the contract
   is enforced by review, not by the compiler.
 - **Public API stability** is tiered: `types.h`, `init.h`, `capability.h`,
-  `memory.h`, `scheduler.h`, `matmul.h` are the stable surface and accept
-  additive-only changes before v1.0; `kernel.h`, `registry.h`, `dispatch.h` are
-  the project-stable kernel ABI, where breaking changes need an RFC and
-  maintainer consensus. Any descriptor layout change — including a mere appended
+  `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h` are the stable surface and
+  accept additive-only changes before v1.0; `kernel.h`, `registry.h` and
+  `dispatch.h` are the project-stable kernel ABI, where breaking changes need an
+  RFC and maintainer consensus. Any descriptor layout change — even an appended
   field — must bump `RVCL_KERNEL_ABI_VERSION`, so old plugins stop registering
   instead of passing a short struct.
 - **Review bar**: at least one area maintainer who did not author the change;
