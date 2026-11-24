@@ -1481,6 +1481,76 @@ static void tc21_block_scale(void) {
     rvcl_dispatch_cache_clear();
 }
 
+/* TC-AC3-22: tensor stat slots. The four norm-statistics slots trail the
+ * enum (additive-only), so every pre-existing slot value is pinned and the
+ * AUX group width is unaffected by the growth. */
+static void tc22_stat_slots(void) {
+    printf("TC-AC3-22 tensor stat slots\n");
+
+    /* (a) Existing slot values do not drift; the stat slots append. */
+    CHECK(RVCL_TENSOR_DST == 3, "DST slot value pinned");
+    CHECK(RVCL_TENSOR_SRC_SCALE_A == 8, "SRC_SCALE_A slot value pinned");
+    CHECK(RVCL_TENSOR_STAT_MEAN == 10, "STAT_MEAN follows the scale slots");
+    CHECK(RVCL_TENSOR_STAT_SHIFT == 13, "STAT_SHIFT is the last stat slot");
+    CHECK(RVCL_TENSOR_SLOT_COUNT == 14, "slot count grows to 14");
+
+    /* (b) AUX group width is unaffected by the trailing slots. */
+    CHECK(RVCL_TENSOR_AUX_COUNT == 4, "AUX group width stays 4");
+    CHECK(RVCL_TENSOR_AUX_0 + RVCL_TENSOR_AUX_COUNT - 1 == RVCL_TENSOR_AUX_3,
+            "AUX group ends at AUX_3");
+
+    /* (c) Stat slot round-trip: const stats via add, mutable via add_out. */
+    rvcl_tensor_pack_t p;
+    rvcl_tensor_pack_init(&p);
+    const rvcl_tensor_desc_t sd = {.ndims = 2,
+            .dims = {2, 1},
+            .strides = {1, 1},
+            .dtype = RVCL_DTYPE_FP32};
+    rvcl_tensor_t tmean, tvar, tscale, tshift;
+    rvcl_tensor_init(&tmean, &sd, (void *)0x1);
+    rvcl_tensor_init(&tvar, &sd, (void *)0x2);
+    rvcl_tensor_init(&tscale, &sd, (void *)0x3);
+    rvcl_tensor_init(&tshift, &sd, (void *)0x4);
+    CHECK(rvcl_tensor_pack_add(&p, RVCL_TENSOR_STAT_MEAN, &tmean)
+                    == RVCL_SUCCESS,
+            "stat mean slot add ok");
+    CHECK(rvcl_tensor_pack_add(&p, RVCL_TENSOR_STAT_VARIANCE, &tvar)
+                    == RVCL_SUCCESS,
+            "stat variance slot add ok");
+    CHECK(rvcl_tensor_pack_add_out(&p, RVCL_TENSOR_STAT_SCALE, &tscale)
+                    == RVCL_SUCCESS,
+            "stat scale slot add_out ok");
+    CHECK(rvcl_tensor_pack_add_out(&p, RVCL_TENSOR_STAT_SHIFT, &tshift)
+                    == RVCL_SUCCESS,
+            "stat shift slot add_out ok");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_STAT_MEAN) == &tmean,
+            "stat mean slot round-trips");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_STAT_VARIANCE) == &tvar,
+            "stat variance slot round-trips");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_STAT_SCALE) == &tscale,
+            "stat scale slot round-trips");
+    CHECK(rvcl_tensor_pack_get(&p, RVCL_TENSOR_STAT_SHIFT) == &tshift,
+            "stat shift slot round-trips");
+    CHECK(p.is_const[RVCL_TENSOR_STAT_MEAN] == 1
+                    && p.is_const[RVCL_TENSOR_STAT_VARIANCE] == 1,
+            "add marks stat inputs const");
+    CHECK(p.is_const[RVCL_TENSOR_STAT_SCALE] == 0
+                    && p.is_const[RVCL_TENSOR_STAT_SHIFT] == 0,
+            "add_out marks stat outputs mutable");
+    CHECK(rvcl_tensor_pack_add(&p, RVCL_TENSOR_STAT_MEAN, &tmean)
+                    == RVCL_ERROR_INVALID_ARGUMENT,
+            "stat slot reuse is rejected");
+
+    /* (d) Out-of-range slots are rejected on add and get. */
+    CHECK(rvcl_tensor_pack_add(
+                  &p, (rvcl_tensor_slot_t)RVCL_TENSOR_SLOT_COUNT, &tmean)
+                    == RVCL_ERROR_INVALID_ARGUMENT,
+            "add past SLOT_COUNT -> INVALID_ARGUMENT");
+    CHECK(rvcl_tensor_pack_get(&p, (rvcl_tensor_slot_t)RVCL_TENSOR_SLOT_COUNT)
+                    == NULL,
+            "get past SLOT_COUNT -> NULL");
+}
+
 /* ------------------------------------------------- capability injection */
 
 static rvcl_capability_t make_snapshot(
@@ -1862,6 +1932,7 @@ int main(int argc, char **argv) {
     tc19_op_table();
     tc20_cost_scoring();
     tc21_block_scale();
+    tc22_stat_slots();
 
     if (g_failures) printf("FAILURES: %d\n", g_failures);
     return g_failures ? 1 : 0;
