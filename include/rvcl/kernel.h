@@ -61,7 +61,7 @@ typedef union rvcl_op_desc rvcl_op_desc_t;
  * RVCL_KERNEL_ABI_VERSION so old plugins stop registering rather than
  * passing a short struct.
  */
-#define RVCL_KERNEL_ABI_VERSION 2
+#define RVCL_KERNEL_ABI_VERSION 1
 
 /* Returns the kernel ABI version of this library build. */
 RVCL_API unsigned rvcl_kernel_abi_version(void);

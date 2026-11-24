@@ -1488,8 +1488,12 @@ static void tc22_stat_slots(void) {
     printf("TC-AC3-22 tensor stat slots\n");
 
     /* (a) Existing slot values do not drift; the stat slots append. */
+    CHECK(RVCL_TENSOR_SRC_A == 0, "SRC_A slot value pinned");
+    CHECK(RVCL_TENSOR_SRC_B == 1, "SRC_B slot value pinned");
+    CHECK(RVCL_TENSOR_BIAS == 2, "BIAS slot value pinned");
     CHECK(RVCL_TENSOR_DST == 3, "DST slot value pinned");
     CHECK(RVCL_TENSOR_SRC_SCALE_A == 8, "SRC_SCALE_A slot value pinned");
+    CHECK(RVCL_TENSOR_SRC_SCALE_B == 9, "SRC_SCALE_B slot value pinned");
     CHECK(RVCL_TENSOR_STAT_MEAN == 10, "STAT_MEAN follows the scale slots");
     CHECK(RVCL_TENSOR_STAT_SHIFT == 13, "STAT_SHIFT is the last stat slot");
     CHECK(RVCL_TENSOR_SLOT_COUNT == 14, "slot count grows to 14");
