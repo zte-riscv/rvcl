@@ -1,0 +1,22 @@
+# conv2d smoke — PR gate: parameter families + batch + ragged tails
+#
+# Shape column = the case's GEMM view: MxNxK with
+#   M = mb*OH*OW, N = oc, K = ic*kh*kw
+# and the params column carries the convolution geometry in the fixed key
+# order mb,ic,ih,iw,oc,kh,kw[,sh,sw][,dh,dw][,pt,pb,pl,pr] (see
+# tests/inputs/README.md). The two columns must agree; a mismatch is a
+# parse error.
+#
+#   OH = (ih + pt + pb - (kh-1)*dh - 1)/sh + 1   (OW likewise)
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul corpora).
+25x4x3 mb1ic3ih5iw5oc4kh1kw1 n"k1s1p0"
+16x4x27 mb1ic3ih7iw7oc4kh3kw3sh2sw2pt1pb1pl1pr1 n"k3s2p1"
+25x3x18 mb1ic2ih9iw9oc3kh3kw3dh2dw2 n"dil2"
+35x3x18 mb1ic2ih6iw6oc3kh3kw3pt1pb2pl0pr1 n"asym_pad"
+16x5x4 mb1ic4ih4iw4oc5kh1kw1 n"k1x1_degenerate"
+50x3x18 mb2ic2ih5iw5oc3kh3kw3pt1pb1pl1pr1 n"mb2_same"
+9x9x12 mb1ic3ih4iw4oc9kh2kw2 n"ic_oc_tail"

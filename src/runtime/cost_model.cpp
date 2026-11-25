@@ -132,6 +132,16 @@ RVCL_API uint64_t rvcl_cost_matmul_reference(
             desc, cap, (uint64_t)RVCL_COST_ELEM_MATMUL_REF * RVCL_COST_FP);
 }
 
+RVCL_API uint64_t rvcl_cost_conv2d_rvv(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
+    /* The convolution is served by the same cheap vector micro-kernel, so
+     * it shares the matmul-rvv coefficient; the shape heuristic is neutral
+     * (no preferred tile hints yet), matching the matmul categories. */
+    (void)desc;
+    const uint64_t gain = vlen_tier_gain(cap);
+    return score(RVCL_COST_ELEM_MATMUL_RVV, RVCL_COST_FP, gain);
+}
+
 /* ------------------------------------------------------------- public hint
  *
  * The out-of-tree counterpart of the category wrappers: same shape heuristic

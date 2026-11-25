@@ -57,9 +57,14 @@ typedef union rvcl_op_desc rvcl_op_desc_t;
  *
  * Desc layout discipline: the descriptor only ever grows by appending
  * fields at the end (offset-preserving additions, like assert_level), and
- * ANY layout change, including a merely appended field, must bump
+ * a reorder or field-size change of an existing field must bump
  * RVCL_KERNEL_ABI_VERSION so old plugins stop registering rather than
- * passing a short struct.
+ * reading a moved field. An appended field alone is offset-preserving and
+ * needs no bump: the descriptor is passed by pointer, so an old plugin
+ * keeps reading its own fields at their unchanged offsets and never
+ * touches the appended tail. Growing the rvcl_op_desc_t union (a new or
+ * larger member) follows the same rule — the existing members keep their
+ * offsets, so no bump is needed.
  */
 #define RVCL_KERNEL_ABI_VERSION 1
 
@@ -200,9 +205,36 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_gemv_desc_t;
 
+/*
+ * Plain NCHW 2D convolution:
+ *   out[mb,oc,oh,ow] = bias[oc]
+ *       + sum_{ic,kh,kw} src[mb,ic,ih,iw] * w[oc,ic,kh,kw]
+ * with ih = oh*sh - pad_t + kh*dil_h and iw = ow*sw - pad_l + kw*dil_w;
+ * samples outside the input are skipped. Output size per axis is
+ * (in + pad_begin + pad_end - (k - 1)*dil - 1) / s + 1. Asymmetric pads
+ * and dilation are plain index arithmetic; `groups` is reserved and must
+ * stay 1 (grouped convolution is not served yet). dtype_bias is
+ * RVCL_DTYPE_AUTO when there is no bias. Quantization is not part of the
+ * v0.x CONV2D path: validate() rejects a quantized request.
+ */
+typedef struct {
+    int64_t mb; /* batch */
+    int64_t ic, ih, iw; /* input channels, height, width */
+    int64_t oc; /* output channels */
+    int64_t kh, kw; /* kernel height, width */
+    int64_t sh, sw; /* strides */
+    int64_t dil_h, dil_w; /* dilations */
+    int64_t pad_t, pad_b, pad_l, pad_r; /* top, bottom, left, right */
+    int64_t groups; /* reserved; must be 1 */
+    rvcl_dtype_t dtype_a, dtype_b, dtype_acc, dtype_c;
+    rvcl_dtype_t dtype_bias; /* RVCL_DTYPE_AUTO when no bias */
+    rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
+} rvcl_conv2d_desc_t;
+
 typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
     rvcl_gemv_desc_t gemv;
+    rvcl_conv2d_desc_t conv2d;
 } rvcl_op_desc_t;
 
 /* ------------------------------------------------------------ kernel vtable */

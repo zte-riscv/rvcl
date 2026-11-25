@@ -28,7 +28,8 @@
  *     tests), wrong shape rejected
  *   - kernel lifecycle: configure reports the selected kernel's workspace
  *     demand
- *   - end-to-end: rvcl_matmul matches naive golden */
+ *   - end-to-end: rvcl_matmul and rvcl_conv2d match a naive golden, the
+ *     latter with and without a bias */
 
 #include <math.h>
 #include <stdio.h>
@@ -196,6 +197,84 @@ int main(void) {
             if (fabsf(c[i * N + j] - acc) > 1e-5f) mismatches++;
         }
     CHECK(mismatches == 0, "end-to-end matches naive golden");
+
+    /* --- conv2d end-to-end: bias and no-bias --- */
+    /* A small NCHW convolution with stride 1, dilation 1 and one pad on
+     * every side, checked against a direct scalar loop. The no-bias pass
+     * reuses the same buffers so a bias left behind by the first pass would
+     * show up as a difference. */
+    enum { CMB = 1, CIC = 2, CIH = 5, CIW = 5, COC = 3, CKH = 3, CKW = 3 };
+    enum { COH = CIH, COW = CIW }; /* pad 1, stride 1, kernel 3 */
+    float csrc[CMB * CIC * CIH * CIW];
+    float cw[COC * CIC * CKH * CKW];
+    float cbias[COC];
+    float cdst[CMB * COC * COH * COW];
+    for (int i = 0; i < CMB * CIC * CIH * CIW; i++)
+        csrc[i] = (float)((i * 11) % 23) / 23.0f - 0.5f;
+    for (int i = 0; i < COC * CIC * CKH * CKW; i++)
+        cw[i] = (float)((i * 5) % 17) / 17.0f - 0.5f;
+    for (int i = 0; i < COC; i++)
+        cbias[i] = 0.25f * (float)(i + 1);
+
+    rvcl_conv2d_desc_t cd = {
+            .mb = CMB,
+            .ic = CIC,
+            .ih = CIH,
+            .iw = CIW,
+            .oc = COC,
+            .kh = CKH,
+            .kw = CKW,
+            .sh = 1,
+            .sw = 1,
+            .dil_h = 1,
+            .dil_w = 1,
+            .pad_t = 1,
+            .pad_b = 1,
+            .pad_l = 1,
+            .pad_r = 1,
+            .groups = 1,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {},
+    };
+
+    for (int with_bias = 1; with_bias >= 0; with_bias--) {
+        const float *bp = with_bias ? cbias : NULL;
+        /* dtype_bias and the pointer must agree: AUTO is the descriptor's
+         * "there is no bias" marker, an explicit dtype demands a pointer. */
+        cd.dtype_bias = with_bias ? RVCL_DTYPE_FP32 : RVCL_DTYPE_AUTO;
+        memset(cdst, 0, sizeof(cdst));
+        CHECK(rvcl_conv2d(&cd, csrc, cw, bp, cdst) == RVCL_SUCCESS,
+                with_bias ? "rvcl_conv2d with bias succeeds"
+                          : "rvcl_conv2d without bias succeeds");
+
+        int cmis = 0;
+        for (int oc = 0; oc < COC; oc++)
+            for (int y = 0; y < COH; y++)
+                for (int x = 0; x < COW; x++) {
+                    float acc = bp ? bp[oc] : 0.0f;
+                    for (int ic = 0; ic < CIC; ic++)
+                        for (int kh = 0; kh < CKH; kh++) {
+                            const int ih = y - 1 + kh;
+                            if (ih < 0 || ih >= CIH) continue;
+                            for (int kw = 0; kw < CKW; kw++) {
+                                const int iw = x - 1 + kw;
+                                if (iw < 0 || iw >= CIW) continue;
+                                acc += csrc[(ic * CIH + ih) * CIW + iw]
+                                        * cw[((oc * CIC + ic) * CKH + kh) * CKW
+                                                + kw];
+                            }
+                        }
+                    const float got = cdst[(oc * COH + y) * COW + x];
+                    if (fabsf(got - acc) > 1e-4f) cmis++;
+                }
+        CHECK(cmis == 0,
+                with_bias ? "conv2d with bias matches naive golden"
+                          : "conv2d without bias matches naive golden");
+    }
 
     /* --- duplicate registration rejected --- */
     /* (re-register the reference kernel by name via public API is not

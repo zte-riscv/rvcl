@@ -20,6 +20,7 @@
 #define RVCL_H
 
 #include "rvcl/capability.h"
+#include "rvcl/conv2d.h"
 #include "rvcl/dispatch.h"
 #include "rvcl/init.h"
 #include "rvcl/kernel.h"

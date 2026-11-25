@@ -1,0 +1,49 @@
+# conv2d ci — three dtypes x the main parameter families
+#
+# Shape column = the case's GEMM view: MxNxK with
+#   M = mb*OH*OW, N = oc, K = ic*kh*kw
+# and the params column carries the convolution geometry (see
+# tests/inputs/README.md for the lexical form). The two columns must agree.
+#
+# Families covered: k1s1p0, k3s2p1, dilation, asymmetric pad, the 1x1
+# degenerate form, mb>1, ragged ic/oc tails, non-square kernels/strides,
+# larger k5/k7 windows, and single-channel edge cases.
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul corpora).
+25x4x3 mb1ic3ih5iw5oc4kh1kw1 n"k1s1p0_a"
+49x6x8 mb1ic8ih7iw7oc6kh1kw1 n"k1s1p0_b"
+162x7x4 mb2ic4ih9iw9oc7kh1kw1 n"k1s1p0_c"
+16x4x27 mb1ic3ih7iw7oc4kh3kw3sh2sw2pt1pb1pl1pr1 n"k3s2p1_a"
+36x6x45 mb1ic5ih11iw11oc6kh3kw3sh2sw2pt1pb1pl1pr1 n"k3s2p1_b"
+18x5x27 mb2ic3ih8iw8oc5kh3kw3sh2sw2 n"k3s2p0_c"
+25x3x18 mb1ic2ih9iw9oc3kh3kw3dh2dw2 n"dil2_a"
+100x5x36 mb1ic4ih10iw10oc5kh3kw3dh2dw2pt2pb2pl2pr2 n"dil2_pad_b"
+16x4x12 mb1ic3ih7iw7oc4kh2kw2dh3dw3 n"dil3_c"
+35x3x18 mb1ic2ih6iw6oc3kh3kw3pt1pb2pl0pr1 n"asym_pad_a"
+32x4x27 mb1ic3ih9iw8oc4kh3kw3sh2sw1pt0pb1pl2pr0 n"asym_pad_b"
+45x5x60 mb1ic4ih5iw9oc5kh5kw3pt2pb2pl1pr1 n"asym_pad_c"
+16x5x4 mb1ic4ih4iw4oc5kh1kw1 n"k1x1_degenerate_a"
+9x8x16 mb1ic16ih3iw3oc8kh1kw1 n"k1x1_degenerate_b"
+75x3x2 mb3ic2ih5iw5oc3kh1kw1 n"mb3_k1x1_c"
+50x3x18 mb2ic2ih5iw5oc3kh3kw3pt1pb1pl1pr1 n"mb2_same_a"
+64x4x27 mb4ic3ih6iw6oc4kh3kw3 n"mb4_valid_b"
+9x9x12 mb1ic3ih4iw4oc9kh2kw2 n"oc_tail_a"
+25x11x63 mb1ic7ih5iw5oc11kh3kw3pt1pb1pl1pr1 n"ic_oc_tail_b"
+98x13x45 mb2ic5ih7iw7oc13kh3kw3pt1pb1pl1pr1 n"mb2_tail_c"
+64x1x9 mb1ic1ih8iw8oc1kh3kw3pt1pb1pl1pr1 n"single_ic_oc"
+1x4x3 mb1ic3ih1iw1oc4kh1kw1 n"spatial1x1"
+1x4x18 mb1ic2ih3iw3oc4kh3kw3 n"kernel_is_input"
+144x8x75 mb1ic3ih12iw12oc8kh5kw5pt2pb2pl2pr2 n"k5s1p2"
+36x8x75 mb1ic3ih12iw12oc8kh5kw5sh2sw2pt2pb2pl2pr2 n"k5s2p2"
+81x6x294 mb1ic6ih9iw9oc6kh7kw7pt3pb3pl3pr3 n"k7s1p3"
+16x6x64 mb1ic4ih8iw8oc6kh4kw4sh2sw2pt1pb1pl1pr1 n"k4s2p1_even"
+35x4x27 mb1ic3ih7iw5oc4kh3kw3pt1pb1pl1pr1 n"non_square_input"
+48x4x45 mb1ic3ih8iw8oc4kh3kw5pt1pb1pl1pr1 n"non_square_kernel"
+30x5x18 mb2ic3ih6iw7oc5kh2kw3sh2sw1 n"non_square_stride"
+49x8x72 mb1ic8ih9iw9oc8kh3kw3dh2dw2pt1pb1pl1pr1 n"dil2_ic8"
+9x6x27 mb1ic3ih10iw10oc6kh3kw3sh3sw3 n"s3p0"
+49x7x45 mb1ic5ih7iw7oc7kh3kw3pt1pb1pl1pr1 n"oc_eq_ic"
+49x3x18 mb1ic2ih13iw13oc3kh3kw3sh2sw2pt1pb1pl1pr1 n"odd_ih_13"

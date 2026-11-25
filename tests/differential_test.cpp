@@ -93,8 +93,16 @@ static rvcl_status_t run_matmul_kernel(const char *name,
 
 typedef struct {
     int64_t m, n, k;
+    /* Operator-specific parameter column ("" when the case has none); the
+     * operator's descriptor builder owns its lexical form. */
+    char *params;
     char *label; /* effective label: n"…" or the normalized shape */
+    int line; /* corpus line, for errors found after parsing */
 } corpus_case_t;
+
+/* Path of the corpus being parsed: late errors (a params column that does
+ * not describe its shape) point back at the file like parse errors do. */
+static const char *g_corpus_path = "<corpus>";
 
 typedef struct {
     corpus_case_t *cases;
@@ -157,7 +165,7 @@ static void parse_triple(const char **pp, int64_t t[3], const char *file,
 }
 
 static void corpus_add(corpus_t *c, int64_t m, int64_t n, int64_t k,
-        char *label, const char *file, int line) {
+        char *params, char *label, const char *file, int line) {
     /* label uniqueness (the point: unambiguous failure localization) */
     for (int i = 0; i < c->count; i++)
         if (strcmp(c->cases[i].label, label) == 0)
@@ -172,7 +180,7 @@ static void corpus_add(corpus_t *c, int64_t m, int64_t n, int64_t k,
         }
         c->cases = narr;
     }
-    c->cases[c->count++] = corpus_case_t {m, n, k, label};
+    c->cases[c->count++] = corpus_case_t {m, n, k, params, label, line};
 }
 
 static void parse_header(
@@ -251,14 +259,35 @@ static void parse_case(corpus_t *c, char *text, const char *file, int line) {
 
     tok[tlen] = saved;
 
-    /* separator then optional label */
+    /* separator, then the optional params column, then the optional label.
+     * The lexical form is shared with the bench parser (op_slot_lex_params)
+     * so the two consumers cannot drift; this side copies the run out
+     * because the line buffer is reused per line. */
     char *rest = text + tlen;
     rest += strspn(rest, " \t_");
+    char *params = NULL;
+    const char *prun = NULL;
+    size_t plen = 0;
+    const int lexed = op_slot_lex_params(rest, &prun, &plen);
+    if (lexed < 0)
+        corpus_fatal(file, line, "unparsable params column in '%s'", text);
+    if (lexed > 0) {
+        params = (char *)malloc(plen + 1);
+        if (!params) {
+            fprintf(stderr, "error: out of memory\n");
+            exit(2);
+        }
+        memcpy(params, prun, plen);
+        params[plen] = '\0';
+        rest += plen;
+        rest += strspn(rest, " \t_");
+    }
     if (*rest == '\0' || *rest == '#') { /* no label: shape is the label */
         char shape_s[64];
         snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)m,
                 (long long)n, (long long)k);
-        corpus_add(c, m, n, k, strdup(shape_s), file, line);
+        corpus_add(c, m, n, k, params ? params : strdup(""), strdup(shape_s),
+                file, line);
         return;
     }
     if (rest[0] != 'n' || rest[1] != '"')
@@ -283,11 +312,13 @@ static void parse_case(corpus_t *c, char *text, const char *file, int line) {
     if (*close != '\0' && *close != '#')
         corpus_fatal(file, line, "trailing junk after label in '%s'", text);
 
-    corpus_add(c, m, n, k, strdup(name), file, line);
+    corpus_add(
+            c, m, n, k, params ? params : strdup(""), strdup(name), file, line);
 }
 
 static void parse_corpus(const char *path, corpus_t *c) {
     memset(c, 0, sizeof(*c));
+    g_corpus_path = path;
     FILE *f = fopen(path, "r");
     if (!f) {
         fprintf(stderr, "error: cannot open corpus '%s'\n", path);
@@ -401,11 +432,18 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
 
     /* Build the operator descriptor through the slot. The C dtype and the
      * bias dtype follow the input's acc habit (int32 for the integer s8/u8
-     * acc habit, fp32 otherwise). */
+     * acc habit, fp32 otherwise). A rejected descriptor means the case's
+     * params column does not describe the shape it is filed under: a
+     * corpus error (exit 2), not a numeric failure. */
     rvcl_op_desc_t od;
     const rvcl_dtype_t cdtype = dtype_ops_out_dtype(dt);
-    slot->build_desc(
-            &od, cc->m, cc->n, cc->k, dt, dt, RVCL_DTYPE_AUTO, cdtype, cdtype);
+    if (slot->build_desc(&od, cc->m, cc->n, cc->k, cc->params, dt, dt,
+                RVCL_DTYPE_AUTO, cdtype, cdtype)
+            != RVCL_SUCCESS)
+        corpus_fatal(g_corpus_path, cc->line,
+                "params '%s' does not describe the shape '%lldx%lldx%lld'",
+                cc->params, (long long)cc->m, (long long)cc->n,
+                (long long)cc->k);
 
     /* A block-scale (MXFP8) dtype requires K divisible by its block size;
      * a corpus shape whose K is not is invalid for that dtype, so skip it
@@ -470,7 +508,7 @@ static int run_case(const op_slot_t *slot, const corpus_case_t *cc,
             printf("  ok: %s (%s, %s) %s\n", cc->label, shape_s, dtstr,
                     names[i]);
         } else {
-            const int64_t width = slot->op == RVCL_OP_MATMUL ? cc->n : 1;
+            const int64_t width = slot->out_width(&od);
             printf("FAIL %s (%s, %s): %s: first mismatch at "
                    "(i=%lld,j=%lld) exp=%g got=%g (%lld mismatch)\n",
                     cc->label, shape_s, dtstr, names[i],
@@ -549,7 +587,7 @@ int main(int argc, char **argv) {
                     "usage: %s [--batch=<corpus-file>] "
                     "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2|"
                     "nvfp4|mxfp4|s8|u8] "
-                    "[--op=matmul|gemv]\n",
+                    "[--op=matmul|gemv|conv2d]\n",
                     argv[0]);
             return 2;
         }
@@ -1146,8 +1184,10 @@ int main(int argc, char **argv) {
             printf("\n");
         }
         batch_fail = fail;
-        for (int i = 0; i < corpus.count; i++)
+        for (int i = 0; i < corpus.count; i++) {
             free(corpus.cases[i].label);
+            free(corpus.cases[i].params);
+        }
         free(corpus.cases);
         /* free() of a calloc'd const char** array; the multi-level -> void*
          * conversion is inherent to free() and cannot be avoided. */

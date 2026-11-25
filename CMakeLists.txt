@@ -108,6 +108,7 @@ set(RVCL_RUNTIME_SOURCES
     src/runtime/init.cpp
     src/runtime/scheduler/scheduler.cpp
     src/operators/matmul.cpp
+    src/operators/conv2d.cpp
     src/backends/reference/reference_matmul.cpp
     src/backends/reference/reference_gemv.cpp
 )
@@ -129,6 +130,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_mxfp8.cpp
         src/backends/rvv/rvv_gemm_fp4.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
+        src/backends/rvv/rvv_conv2d.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the
     # baseline -march and never under the RVCL_RVV_MARCH override below:
@@ -171,7 +173,7 @@ set_target_properties(rvcl PROPERTIES
         "include/rvcl/rvcl.h;include/rvcl/types.h;include/rvcl/init.h;\
 include/rvcl/capability.h;include/rvcl/memory.h;include/rvcl/scheduler.h;\
 include/rvcl/kernel.h;include/rvcl/registry.h;include/rvcl/dispatch.h;\
-include/rvcl/matmul.h"
+include/rvcl/matmul.h;include/rvcl/conv2d.h"
 )
 
 target_include_directories(rvcl
@@ -454,7 +456,16 @@ if(RVCL_BUILD_TESTS)
     if(NOT RVCL_TEST_SET MATCHES "^(smoke|ci|all)$")
         message(FATAL_ERROR "RVCL_TEST_SET must be smoke, ci or all")
     endif()
-    function(rvcl_add_corpus op set file dtypes)
+    # <gemm> marks the operators whose compute is carried by a per-dtype
+    # micro-kernel that rvv_pick_gemm_* selects: matmul, and conv2d whose
+    # im2col GEMM rides the same per-dtype entries. Only those have
+    # forced-path targets worth registering, because the RVCL_RVV_KERNEL pin
+    # is read by rvv_pick_gemm_* alone: for such an operator the forced
+    # variant really does drive a different inner kernel, while for any
+    # other operator it would just repeat the auto target. Per-kernel
+    # coverage for the non-gemm operators comes from legal_kernels_for +
+    # run_named inside the differential instead.
+    function(rvcl_add_corpus op set file dtypes gemm)
         if(RVCL_TEST_SET STREQUAL "all"
                 OR (RVCL_TEST_SET STREQUAL "ci" AND NOT "${set}" STREQUAL "weekly")
                 OR (RVCL_TEST_SET STREQUAL "smoke" AND "${set}" STREQUAL "smoke"))
@@ -470,10 +481,10 @@ if(RVCL_BUILD_TESTS)
             # JIT-when-RVV, c is the portable oracle, intrinsics exist only
             # under the RVCL_RVV_MARCH vector override). <dtypes> scopes the
             # forced targets to the dtypes the operator serves (matmul:
-            # f32/f16/bf16/fp8, gemv: f32), so a dtype with no kernel for the op
-            # never gets a forced target. The intrinsics path exists only
-            # for f32. RISC-V hosts only — the x86 build stays host-agnostic.
-            if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+            # f32/f16/bf16/fp8), so a dtype with no kernel for the op never
+            # gets a forced target. The intrinsics path exists only for f32.
+            # RISC-V hosts only — the x86 build stays host-agnostic.
+            if(${gemm} AND RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
                 # dtypes with a JIT micro-kernel (fp4's JIT is deferred, so
                 # its forced variants are scoped to the portable C oracle).
                 set(rvcl_jit_dtypes
@@ -501,10 +512,12 @@ if(RVCL_BUILD_TESTS)
         endif()
     endfunction()
 
-    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4")
-    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4")
-    rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32")
-    rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32")
+    rvcl_add_corpus(matmul smoke test_matmul_smoke "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4" TRUE)
+    rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4" TRUE)
+    rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32" FALSE)
+    rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32" FALSE)
+    rvcl_add_corpus(conv2d smoke test_conv2d_smoke "f32;f16;bf16" TRUE)
+    rvcl_add_corpus(conv2d ci    test_conv2d_ci    "f32;f16;bf16" TRUE)
 endif()
 
 # ---------------------------------------------------------------- examples

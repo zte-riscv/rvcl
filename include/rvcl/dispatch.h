@@ -57,6 +57,11 @@ typedef struct rvcl_dispatch_result rvcl_dispatch_result_t;
 RVCL_API rvcl_status_t rvcl_dispatch_matmul(
         const rvcl_matmul_desc_t *desc, rvcl_dispatch_result_t **result);
 
+/* Same pipeline keyed on the CONV2D op-table row. The shape stage sees the
+ * GEMM view of the convolution: m = mb*OH*OW, n = oc, k = ic*kh*kw. */
+RVCL_API rvcl_status_t rvcl_dispatch_conv2d(
+        const rvcl_conv2d_desc_t *desc, rvcl_dispatch_result_t **result);
+
 /* Kernel name of the selection (for verbose / tests). */
 RVCL_API const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r);
 

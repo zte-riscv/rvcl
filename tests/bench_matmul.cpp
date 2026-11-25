@@ -104,6 +104,7 @@ static double time_once(void (*fn)(void *), void *ctx) {
 typedef struct {
     int64_t m, n, k;
     char label[96]; /* n"…" or the normalized shape string */
+    char params[96]; /* operator-specific parameter column ("" when none) */
 } bcase_t;
 
 typedef struct {
@@ -145,7 +146,7 @@ static void bcheck_dim(
 }
 
 static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
-        const char *label, const char *file, int line) {
+        const char *params, const char *label, const char *file, int line) {
     for (int i = 0; i < c->count; i++)
         if (!strcmp(c->cases[i].label, label))
             bcorpus_fatal(file, line, "duplicate label n\"%s\"", label);
@@ -164,6 +165,7 @@ static void bcorpus_push(bcorpus_t *c, int64_t m, int64_t n, int64_t k,
     bc->n = n;
     bc->k = k;
     snprintf(bc->label, sizeof(bc->label), "%s", label);
+    snprintf(bc->params, sizeof(bc->params), "%s", params);
 }
 
 static void bparse_header(
@@ -262,11 +264,27 @@ static void bparse_case(bcorpus_t *c, char *text, const char *file, int line) {
 
     char *rest = text + tlen;
     rest += strspn(rest, " \t_");
+    /* The optional params column precedes the label. The lexical form is
+     * shared with the differential parser (op_slot_lex_params); this side
+     * keeps its own fixed-buffer policy and reports an over-long run as a
+     * corpus error. */
+    char params[96] = "";
+    const char *prun = NULL;
+    size_t plen = 0;
+    const int lexed = op_slot_lex_params(rest, &prun, &plen);
+    if (lexed < 0 || plen >= sizeof(params))
+        bcorpus_fatal(file, line, "unparsable params column in '%s'", text);
+    if (lexed > 0) {
+        memcpy(params, prun, plen);
+        params[plen] = '\0';
+        rest += plen;
+        rest += strspn(rest, " \t_");
+    }
     if (*rest == '\0' || *rest == '#') { /* no label: shape is the label */
         char shape_s[64];
         snprintf(shape_s, sizeof(shape_s), "%lldx%lldx%lld", (long long)m,
                 (long long)n, (long long)k);
-        bcorpus_push(c, m, n, k, shape_s, file, line);
+        bcorpus_push(c, m, n, k, params, shape_s, file, line);
         return;
     }
     if (rest[0] != 'n' || rest[1] != '"')
@@ -291,7 +309,7 @@ static void bparse_case(bcorpus_t *c, char *text, const char *file, int line) {
     if (*close != '\0' && *close != '#')
         bcorpus_fatal(file, line, "trailing junk after label in '%s'", text);
 
-    bcorpus_push(c, m, n, k, name, file, line);
+    bcorpus_push(c, m, n, k, params, name, file, line);
 }
 
 static void bparse_corpus(const char *path, bcorpus_t *c) {
@@ -335,11 +353,22 @@ typedef struct {
     float *a, *b, *c;
     float *bias;
     uint16_t *ah, *bh;
+    /* 1 when the dtype stores narrower than fp32, so the dtype-stored
+     * buffers ah/bh (not the fp32 a/b) carry the case's operands. */
+    int narrow;
     /* E8M0 block-scale tensors for MXFP8 dtypes (NULL otherwise). */
     uint8_t *sa, *sb;
     const op_slot_t *slot;
     rvcl_op_desc_t od;
 } case_t;
+
+/* The case's operand buffers in the dtype's own storage. */
+static const void *case_a(const case_t *cs) {
+    return cs->narrow ? (const void *)cs->ah : (const void *)cs->a;
+}
+static const void *case_b(const case_t *cs) {
+    return cs->narrow ? (const void *)cs->bh : (const void *)cs->b;
+}
 
 typedef struct {
     const case_t *cs;
@@ -348,23 +377,24 @@ typedef struct {
     rvv_gemm_mxfp8_fn gemm_mxfp8; /* set for mxfp8 dtypes (else NULL) */
 } konly_ctx_t;
 
+/* Kernel-only timing drives a GEMM micro-kernel directly, so it is reached
+ * only for rows with can_timing == 1 — i.e. operators whose compute IS one
+ * of the per-dtype gemm entries (matmul today). An operator that owns its
+ * whole vtable reports can_timing == 0 and is measured through the
+ * correctness path instead. */
 static void bench_kernel_only(void *p) {
     konly_ctx_t *kc = (konly_ctx_t *)p;
     const case_t *cs = kc->cs;
-    rvcl_work_range_t full = rvcl_work_range_full(cs->m, cs->n, cs->k);
+    const rvcl_work_range_t full = cs->slot->full_range(&cs->od);
     if (kc->gemm_mxfp8) {
-        const void *a = cs->od.matmul.dtype_a == RVCL_DTYPE_FP32
-                ? (const void *)cs->a
-                : (const void *)cs->ah;
         const int64_t blk
                 = (int64_t)rvcl_dtype_block_size(cs->od.matmul.dtype_a);
-        kc->gemm_mxfp8(a, kc->packed, cs->sa, cs->sb, cs->bias, cs->c, cs->m,
-                cs->n, cs->k, blk, &full);
+        kc->gemm_mxfp8(case_a(cs), kc->packed, cs->sa, cs->sb, cs->bias, cs->c,
+                cs->m, cs->n, cs->k, blk, &full);
         return;
     }
-    kc->gemm(cs->od.matmul.dtype_a == RVCL_DTYPE_FP32 ? (const void *)cs->a
-                                                      : (const void *)cs->ah,
-            kc->packed, cs->bias, cs->c, cs->m, cs->n, cs->k, &full);
+    kc->gemm(case_a(cs), kc->packed, cs->bias, cs->c, cs->m, cs->n, cs->k,
+            &full);
 }
 
 typedef struct {
@@ -573,15 +603,11 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
     const rvcl_workspace_req_t *ws = rvcl_dispatch_ws_req(g->r, &num_ws);
     g->num_ws = num_ws;
 
-    /* narrow (2-byte) storage lives in the ah/bh buffers; fp32 in a/b. */
-    /* Narrow-dtype storage lives in the byte-packed ah/bh buffers;
-     * fp32 in a/b. */
-    const int narrow = cs->slot->op == RVCL_OP_MATMUL
-            && cs->od.matmul.dtype_a != RVCL_DTYPE_FP32;
-    const void *a = narrow ? (const void *)cs->ah : (const void *)cs->a;
-    const void *b = narrow ? (const void *)cs->bh : (const void *)cs->b;
-    op_slot_pack_setup(cs->slot, &g->pack, &cs->od, a, cs->sa, b, cs->sb,
-            cs->bias, cs->c, &g->ta, &g->tsa, &g->tb, &g->tsb, &g->tc,
+    /* The row owns the tensor layouts; narrow storage lives in the
+     * byte-packed ah/bh buffers, fp32 in a/b. */
+    rvcl_tensor_pack_init(&g->pack);
+    cs->slot->pack_setup(&g->pack, &cs->od, case_a(cs), cs->sa, case_b(cs),
+            cs->sb, cs->bias, cs->c, &g->ta, &g->tsa, &g->tb, &g->tsb, &g->tc,
             &g->tbias);
 
     if (op_slot_pack_ws(ws, num_ws, g->ws_buf, g->ws_t, &g->pack)
@@ -592,12 +618,7 @@ static int rig_setup(dispatch_rig_t *g, const case_t *cs) {
         return 0;
     }
 
-    const int64_t m
-            = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.m : cs->od.gemv.m;
-    const int64_t n = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.n : 1;
-    const int64_t k
-            = cs->slot->op == RVCL_OP_MATMUL ? cs->od.matmul.k : cs->od.gemv.k;
-    g->full = rvcl_work_range_full(m, n, k);
+    g->full = cs->slot->full_range(&cs->od);
     return 1;
 }
 
@@ -731,11 +752,13 @@ int main(int argc, char **argv) {
     int nok = 0, nfail = 0, nskip = 0;
     for (int s = 0; s < total; s++) {
         case_t cs = {};
+        const char *params = "";
         if (batch) {
             cs.m = corpus.cases[s].m;
             cs.n = corpus.cases[s].n;
             cs.k = corpus.cases[s].k;
             cs.label = corpus.cases[s].label;
+            params = corpus.cases[s].params;
         } else {
             cs.m = shapes[s][0];
             cs.n = shapes[s][1];
@@ -756,9 +779,16 @@ int main(int argc, char **argv) {
             const char *dtstr = dop->dtstr;
 
             cs.slot = slot;
+            cs.narrow = narrow;
             const rvcl_dtype_t cdtype = dtype_ops_out_dtype(dop->dtype);
-            slot->build_desc(&cs.od, cs.m, cs.n, cs.k, dop->dtype, dop->dtype,
-                    RVCL_DTYPE_AUTO, cdtype, cdtype);
+            /* A params column that does not describe the shape is a corpus
+             * error (exit 2), the same verdict the differential gives. */
+            if (slot->build_desc(&cs.od, cs.m, cs.n, cs.k, params, dop->dtype,
+                        dop->dtype, RVCL_DTYPE_AUTO, cdtype, cdtype)
+                    != RVCL_SUCCESS)
+                bcorpus_fatal(batch, 0,
+                        "params '%s' does not describe the shape '%s'", params,
+                        shape_s);
             fill_case(&cs, dop, mode);
             const double flops
                     = 2.0 * (double)cs.m * (double)cs.n * (double)cs.k;
@@ -788,20 +818,14 @@ int main(int argc, char **argv) {
                         ok = 0;
                     } else {
                         float *golden = (float *)malloc((size_t)out_elems * 4);
-                        slot->golden(&cs.od,
-                                narrow ? (const void *)cs.ah
-                                       : (const void *)cs.a,
-                                cs.sa,
-                                narrow ? (const void *)cs.bh
-                                       : (const void *)cs.b,
+                        slot->golden(&cs.od, case_a(&cs), cs.sa, case_b(&cs),
                                 cs.sb, cs.bias, golden);
                         const rvcl_kernel_t *k = rvcl_dispatch_kernel(rig.r);
                         golden_cmp_t cmp = dop->compare(cs.c, golden, out_elems,
                                 k->desc.assert_level, dop->dtype);
                         free(golden);
                         if (cmp.mismatches) {
-                            const int64_t width
-                                    = slot->op == RVCL_OP_MATMUL ? cs.n : 1;
+                            const int64_t width = slot->out_width(&cs.od);
                             snprintf(dbuf, sizeof(dbuf),
                                     "first mismatch (i=%lld,j=%lld) "
                                     "exp=%g got=%g",
@@ -858,8 +882,7 @@ int main(int argc, char **argv) {
                         .dims = {cs.k, cs.n},
                         .strides = {cs.n, 1},
                         .dtype = cs.od.matmul.dtype_b};
-                rvcl_tensor_init(
-                        &b_src, &td, narrow ? (void *)cs.bh : (void *)cs.b);
+                rvcl_tensor_init(&b_src, &td, (void *)case_b(&cs));
                 rvcl_tensor_desc_t pd = {.ndims = 1,
                         .dims = {(int64_t)pbytes},
                         .strides = {1},
