@@ -23,6 +23,7 @@
 #include "rvcl/conv2d.h"
 #include "rvcl/dispatch.h"
 #include "rvcl/init.h"
+#include "rvcl/inner_product.h"
 #include "rvcl/kernel.h"
 #include "rvcl/matmul.h"
 #include "rvcl/memory.h"

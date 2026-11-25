@@ -51,6 +51,10 @@ rvcl_status_t rvcl_rvv_register_gemv_portable(void);
  * entries, same ordering habit as the matmul and GEMV entries. */
 rvcl_status_t rvcl_rvv_register_conv2d(void);
 rvcl_status_t rvcl_rvv_register_conv2d_portable(void);
+/* rvv inner_product: transposing pack_b + the dtype's GEMM micro-kernel,
+ * generic + portable entries, same ordering habit. */
+rvcl_status_t rvcl_rvv_register_inner_product(void);
+rvcl_status_t rvcl_rvv_register_inner_product_portable(void);
 /* ime/vme/ame backends: experimental, land in v0.2/v0.3 */
 
 /* Registration failures propagate: a partially registered backend set
@@ -74,6 +78,11 @@ static rvcl_status_t register_all(void) {
     st = rvcl_rvv_register_conv2d();
     if (st != RVCL_SUCCESS) return st;
     st = rvcl_rvv_register_conv2d_portable();
+    if (st != RVCL_SUCCESS) return st;
+    /* Inner product generic + portable entries. */
+    st = rvcl_rvv_register_inner_product();
+    if (st != RVCL_SUCCESS) return st;
+    st = rvcl_rvv_register_inner_product_portable();
     if (st != RVCL_SUCCESS) return st;
 #endif
     /* GEMV golden fallback, before the matmul fallback (same family). */

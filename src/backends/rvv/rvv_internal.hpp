@@ -161,6 +161,13 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void);
 RVCL_API rvcl_status_t rvcl_rvv_register_conv2d(void);
 RVCL_API rvcl_status_t rvcl_rvv_register_conv2d_portable(void);
 
+/* Inner product entries (rvv_inner_product.cpp): a transposing pack_b plus
+ * the dtype's gemm micro-kernel selected through rvv_pick_gemm_* above. The
+ * generic entries require RVV on vector builds; the portable entries serve
+ * any host otherwise. */
+RVCL_API rvcl_status_t rvcl_rvv_register_inner_product(void);
+RVCL_API rvcl_status_t rvcl_rvv_register_inner_product_portable(void);
+
 /* Micro-kernel function type (backend adapter holds one per dtype). */
 typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,
         const void *bias, void *c, int64_t m, int64_t n, int64_t k_dim,

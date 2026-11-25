@@ -28,8 +28,8 @@
  *     tests), wrong shape rejected
  *   - kernel lifecycle: configure reports the selected kernel's workspace
  *     demand
- *   - end-to-end: rvcl_matmul and rvcl_conv2d match a naive golden, the
- *     latter with and without a bias */
+ *   - end-to-end: rvcl_matmul, rvcl_conv2d and rvcl_inner_product match a
+ *     naive golden, the latter two with and without a bias */
 
 #include <math.h>
 #include <stdio.h>
@@ -274,6 +274,55 @@ int main(void) {
         CHECK(cmis == 0,
                 with_bias ? "conv2d with bias matches naive golden"
                           : "conv2d without bias matches naive golden");
+    }
+
+    /* --- inner_product end-to-end: bias and no-bias --- */
+    /* [mb,k] x [oc,k]^T + bias[oc] -> [mb,oc], checked against a direct
+     * scalar loop. The transposing packer is exercised by the [oc][k]
+     * weight layout. The no-bias pass reuses the same buffers. */
+    enum { IPMB = 3, IPK = 5, IPOC = 4 };
+    float ipsrc[IPMB * IPK];
+    float ipw[IPOC * IPK];
+    float ipbias[IPOC];
+    float ipdst[IPMB * IPOC];
+    for (int i = 0; i < IPMB * IPK; i++)
+        ipsrc[i] = (float)((i * 7) % 19) / 19.0f - 0.5f;
+    for (int i = 0; i < IPOC * IPK; i++)
+        ipw[i] = (float)((i * 3) % 13) / 13.0f - 0.5f;
+    for (int i = 0; i < IPOC; i++)
+        ipbias[i] = 0.5f * (float)(i + 1);
+
+    rvcl_inner_product_desc_t ipd = {
+            .mb = IPMB,
+            .k = IPK,
+            .oc = IPOC,
+            .dtype_a = RVCL_DTYPE_FP32,
+            .dtype_b = RVCL_DTYPE_FP32,
+            .dtype_acc = RVCL_DTYPE_AUTO,
+            .dtype_c = RVCL_DTYPE_FP32,
+            .dtype_bias = RVCL_DTYPE_FP32,
+            .quant = {},
+    };
+
+    for (int with_bias = 1; with_bias >= 0; with_bias--) {
+        const float *bp = with_bias ? ipbias : NULL;
+        ipd.dtype_bias = with_bias ? RVCL_DTYPE_FP32 : RVCL_DTYPE_AUTO;
+        memset(ipdst, 0, sizeof(ipdst));
+        CHECK(rvcl_inner_product(&ipd, ipsrc, ipw, bp, ipdst) == RVCL_SUCCESS,
+                with_bias ? "rvcl_inner_product with bias succeeds"
+                          : "rvcl_inner_product without bias succeeds");
+
+        int ipmis = 0;
+        for (int mb = 0; mb < IPMB; mb++)
+            for (int oc = 0; oc < IPOC; oc++) {
+                float acc = bp ? bp[oc] : 0.0f;
+                for (int kk = 0; kk < IPK; kk++)
+                    acc += ipsrc[mb * IPK + kk] * ipw[oc * IPK + kk];
+                if (fabsf(ipdst[mb * IPOC + oc] - acc) > 1e-5f) ipmis++;
+            }
+        CHECK(ipmis == 0,
+                with_bias ? "inner_product with bias matches naive golden"
+                          : "inner_product without bias matches naive golden");
     }
 
     /* --- duplicate registration rejected --- */

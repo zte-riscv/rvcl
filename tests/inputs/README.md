@@ -19,6 +19,9 @@ tests/inputs/
 ├── conv2d/                  # params column carries the convolution geometry
 │   ├── test_conv2d_smoke    # PR gate set (7 cases: parameter families)
 │   └── test_conv2d_ci       # CI set (34 cases)
+├── inner_product/           # no params column (the shape triple is the GEMM view)
+│   ├── test_inner_product_smoke # PR gate set (7 cases: MB/OC/K scan + tails)
+│   └── test_inner_product_ci    # CI set (19 cases)
 └── <op>/ …                  # new operator = new directory (v0.5+, follows the library)
 ```
 
@@ -113,6 +116,13 @@ forced targets (`test_conv2d_modeC_smoke_f32_c`, `test_conv2d_modeC_ci_f32_c`)
 are skipped on the vector CI tier, the same compile-march artifact the
 matmul `f32_c` targets carry; the tolerant `f16`/`bf16` forced targets and
 the baseline tier run them.
+
+`--dt` for inner_product: the same `f32`, `f16` and `bf16` set, with
+accumulation and output always fp32, and the same vector-tier skip of the
+`f32_c` forced targets (`test_inner_product_modeC_smoke_f32_c`,
+`test_inner_product_modeC_ci_f32_c`). Its shape triple already is the GEMM
+projection (`M = mb`, `N = oc`, `K` = folded reduction), so its cases carry
+no params column.
 
 ## Semantics
 

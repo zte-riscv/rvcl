@@ -295,6 +295,12 @@ public:
     conv2d_registry_t() : kernel_registry_base_t(RVCL_OP_CONV2D) {}
 };
 
+class inner_product_registry_t final : public kernel_registry_base_t {
+public:
+    inner_product_registry_t()
+        : kernel_registry_base_t(RVCL_OP_INNER_PRODUCT) {}
+};
+
 class reserved_registry_t final : public kernel_registry_base_t {
 public:
     reserved_registry_t() : kernel_registry_base_t(RVCL_OP_RESERVED) {}
@@ -336,6 +342,7 @@ private:
         by_op_[RVCL_OP_GEMV] = &gemv_;
         by_op_[RVCL_OP_CONV2D] = &conv2d_;
         by_op_[RVCL_OP_RESERVED] = &reserved_;
+        by_op_[RVCL_OP_INNER_PRODUCT] = &inner_product_;
     }
     registry_set_t(const registry_set_t &) = delete;
     registry_set_t &operator=(const registry_set_t &) = delete;
@@ -368,6 +375,7 @@ private:
     gemv_registry_t gemv_;
     conv2d_registry_t conv2d_;
     reserved_registry_t reserved_;
+    inner_product_registry_t inner_product_;
     kernel_registry_base_t *by_op_[RVCL_OP_COUNT];
     registry_slot_t pool_[RVCL_REGISTRY_MAX_KERNELS];
     registry_handle_t global_order_[RVCL_REGISTRY_MAX_KERNELS];

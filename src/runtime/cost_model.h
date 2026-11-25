@@ -71,6 +71,16 @@ RVCL_API uint64_t rvcl_cost_conv2d_rvv(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
 /*
+ * Inner product, RVV backend category (packed-B GEMM): same per-element
+ * cheap coefficient and VLEN-tier gain as rvcl_cost_matmul_rvv, scored on
+ * the descriptor's own GEMM projection (m = mb, n = oc, k = folded
+ * reduction). The weight transpose at pack time is folded into the
+ * coefficient.
+ */
+RVCL_API uint64_t rvcl_cost_inner_product_rvv(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
  * VLEN tier gain (fixed-point, 256 = 1.0x) applied to the matmul-rvv
  * category: wider vector registers amortize the micro-kernel overhead, so
  * the gain shrinks as the host tier grows. Exported for the test

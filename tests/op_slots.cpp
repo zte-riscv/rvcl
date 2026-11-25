@@ -59,6 +59,18 @@ static int64_t gemv_bias_elems(const rvcl_op_desc_t *od) {
 static int64_t gemv_out_elems(const rvcl_op_desc_t *od) {
     return od->gemv.m;
 }
+static int64_t ip_a_elems(const rvcl_op_desc_t *od) {
+    return od->inner_product.mb * od->inner_product.k;
+}
+static int64_t ip_b_elems(const rvcl_op_desc_t *od) {
+    return od->inner_product.oc * od->inner_product.k;
+}
+static int64_t ip_bias_elems(const rvcl_op_desc_t *od) {
+    return od->inner_product.oc;
+}
+static int64_t ip_out_elems(const rvcl_op_desc_t *od) {
+    return od->inner_product.mb * od->inner_product.oc;
+}
 
 /* Conv2d output geometry from the descriptor's pad/stride/dilation
  * formula, shared by the row's elems/golden/layout helpers. The formula
@@ -222,6 +234,39 @@ static void conv2d_golden(const rvcl_op_desc_t *od, const void *a,
     free(cmm);
 }
 
+/* Inner product golden: the weights are stored [oc][k] (B transposed), so
+ * transpose them into the shared matmul golden's [k][oc] B operand and run
+ * the already bit-exact matmul contract on the untouched [mb][k] source.
+ * The weight transpose is an independently written reference, and the
+ * numerics stay on the bias-first, ascending-k, single-rounding path. */
+static void inner_product_golden(const rvcl_op_desc_t *od, const void *a,
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c) {
+    (void)sa;
+    (void)sb;
+    const rvcl_inner_product_desc_t *d = &od->inner_product;
+    const int64_t m = d->mb, n = d->oc, k = d->k;
+    const size_t elt = rvcl_dtype_size(d->dtype_a);
+    if (m <= 0 || k <= 0 || n <= 0) return;
+
+    uint8_t *wt = (uint8_t *)malloc((size_t)(k * n) * elt);
+    if (!wt) return;
+    const uint8_t *w = (const uint8_t *)b;
+    for (int64_t j = 0; j < n; j++)
+        for (int64_t p = 0; p < k; p++)
+            memcpy(wt + (size_t)(p * n + j) * elt,
+                    w + (size_t)(j * k + p) * elt, elt);
+
+    if (d->dtype_a == RVCL_DTYPE_FP32)
+        golden_f32((const float *)a, (const float *)wt, bias, c, m, n, k);
+    else if (d->dtype_a == RVCL_DTYPE_FP16)
+        golden_f16((const uint16_t *)a, (const uint16_t *)wt, bias, c, m, n, k);
+    else
+        golden_bf16(
+                (const uint16_t *)a, (const uint16_t *)wt, bias, c, m, n, k);
+    free(wt);
+}
+
 /* ------------------------------------------------------------ build desc */
 
 static rvcl_status_t matmul_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
@@ -359,6 +404,26 @@ static rvcl_status_t conv2d_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
         return RVCL_ERROR_INVALID_ARGUMENT;
 
     od->conv2d = d;
+    return RVCL_SUCCESS;
+}
+
+/* Inner product: the descriptor already is the corpus triple's GEMM
+ * projection (mb = m, oc = n, k = k), so a params column on an
+ * inner_product case is a corpus error. */
+static rvcl_status_t inner_product_build_desc(rvcl_op_desc_t *od, int64_t m,
+        int64_t n, int64_t k, const char *params, rvcl_dtype_t da,
+        rvcl_dtype_t db, rvcl_dtype_t dacc, rvcl_dtype_t dc,
+        rvcl_dtype_t dbias) {
+    if (params && *params) return RVCL_ERROR_INVALID_ARGUMENT;
+    od->inner_product = rvcl_inner_product_desc_t {.mb = m,
+            .k = k,
+            .oc = n,
+            .dtype_a = da,
+            .dtype_b = db,
+            .dtype_acc = dacc,
+            .dtype_c = dc,
+            .dtype_bias = dbias,
+            .quant = {}};
     return RVCL_SUCCESS;
 }
 
@@ -532,6 +597,51 @@ static void conv2d_pack_setup(rvcl_tensor_pack_t *pack,
     }
 }
 
+/* src [mb][k], w [oc][k] (row-major, B transposed), fp32 dst [mb][oc] and a
+ * length-oc fp32 bias. */
+static void inner_product_pack_setup(rvcl_tensor_pack_t *pack,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
+        rvcl_tensor_t *tc, rvcl_tensor_t *tbias) {
+    (void)sa;
+    (void)sb;
+    (void)tsa;
+    (void)tsb;
+    const rvcl_inner_product_desc_t *d = &od->inner_product;
+    rvcl_tensor_desc_t td = {.ndims = 2,
+            .dims = {d->mb, d->k},
+            .strides = {d->k, 1},
+            .dtype = d->dtype_a};
+    rvcl_tensor_init(ta, &td, (void *)a);
+
+    td.dims[0] = d->oc;
+    td.dims[1] = d->k;
+    td.strides[0] = d->k;
+    td.strides[1] = 1;
+    td.dtype = d->dtype_b;
+    rvcl_tensor_init(tb, &td, (void *)b);
+
+    td.dims[0] = d->mb;
+    td.dims[1] = d->oc;
+    td.strides[0] = d->oc;
+    td.strides[1] = 1;
+    td.dtype = d->dtype_c;
+    rvcl_tensor_init(tc, &td, c);
+
+    rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_A, ta);
+    rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_B, tb);
+    rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
+    if (bias) {
+        rvcl_tensor_desc_t bd = {.ndims = 1,
+                .dims = {d->oc},
+                .strides = {1},
+                .dtype = RVCL_DTYPE_FP32};
+        rvcl_tensor_init(tbias, &bd, (void *)bias);
+        rvcl_tensor_pack_add(pack, RVCL_TENSOR_BIAS, tbias);
+    }
+}
+
 /* -------------------------------------------------------- full ranges */
 
 static rvcl_work_range_t matmul_full_range(const rvcl_op_desc_t *od) {
@@ -549,6 +659,13 @@ static rvcl_work_range_t conv2d_full_range(const rvcl_op_desc_t *od) {
             d->mb * conv_oh(d) * conv_ow(d), d->oc, d->ic * d->kh * d->kw);
 }
 
+/* The inner product GEMM projection: every row over the full width and
+ * reduction. */
+static rvcl_work_range_t inner_product_full_range(const rvcl_op_desc_t *od) {
+    const rvcl_inner_product_desc_t *d = &od->inner_product;
+    return rvcl_work_range_full(d->mb, d->oc, d->k);
+}
+
 /* --------------------------------------------------------- out widths */
 
 static int64_t matmul_out_width(const rvcl_op_desc_t *od) {
@@ -560,6 +677,9 @@ static int64_t gemv_out_width(const rvcl_op_desc_t *od) {
 }
 static int64_t conv2d_out_width(const rvcl_op_desc_t *od) {
     return conv_ow(&od->conv2d);
+}
+static int64_t inner_product_out_width(const rvcl_op_desc_t *od) {
+    return od->inner_product.oc;
 }
 
 /* ------------------------------------------------------ shared run rig */
@@ -640,6 +760,13 @@ static rvcl_status_t conv2d_run_dispatch(const rvcl_op_desc_t *od,
         const float *bias, float *c) {
     return run_dispatch_impl(
             op_slot_for(RVCL_OP_CONV2D), od, a, sa, b, sb, bias, c);
+}
+
+static rvcl_status_t inner_product_run_dispatch(const rvcl_op_desc_t *od,
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c) {
+    return run_dispatch_impl(
+            op_slot_for(RVCL_OP_INNER_PRODUCT), od, a, sa, b, sb, bias, c);
 }
 
 /* ----------------------------------------------------------- run named */
@@ -731,6 +858,14 @@ static rvcl_status_t conv2d_run_named(const char *name,
             bias, c, r_m0, r_m1);
 }
 
+static rvcl_status_t inner_product_run_named(const char *name,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1) {
+    return run_named_impl(op_slot_for(RVCL_OP_INNER_PRODUCT), name, od, a, sa,
+            b, sb, bias, c, r_m0, r_m1);
+}
+
 /* ---------------------------------------------------------------- table */
 
 static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
@@ -741,6 +876,9 @@ static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
 static const rvcl_dtype_t k_gemv_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_conv2d_dtypes[]
+        = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
+
+static const rvcl_dtype_t k_inner_product_dtypes[]
         = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
 
 static const op_slot_t k_op_slots[] = {
@@ -795,6 +933,25 @@ static const op_slot_t k_op_slots[] = {
                 .run_named = conv2d_run_named,
                 /* im2col + GEMM has no micro-kernel-only timing path (the
                  * band staging is part of every run). */
+                .can_timing = 0,
+        },
+        {
+                .name = "inner_product",
+                .op = RVCL_OP_INNER_PRODUCT,
+                .dtypes = k_inner_product_dtypes,
+                .a_elems = ip_a_elems,
+                .b_elems = ip_b_elems,
+                .bias_elems = ip_bias_elems,
+                .out_elems = ip_out_elems,
+                .golden = inner_product_golden,
+                .build_desc = inner_product_build_desc,
+                .pack_setup = inner_product_pack_setup,
+                .full_range = inner_product_full_range,
+                .out_width = inner_product_out_width,
+                .run_dispatch = inner_product_run_dispatch,
+                .run_named = inner_product_run_named,
+                /* transposing pack + GEMM has no micro-kernel-only timing
+                 * path (the pack is part of every run). */
                 .can_timing = 0,
         },
 };

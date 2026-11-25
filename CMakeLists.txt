@@ -109,6 +109,7 @@ set(RVCL_RUNTIME_SOURCES
     src/runtime/scheduler/scheduler.cpp
     src/operators/matmul.cpp
     src/operators/conv2d.cpp
+    src/operators/inner_product.cpp
     src/backends/reference/reference_matmul.cpp
     src/backends/reference/reference_gemv.cpp
 )
@@ -131,6 +132,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemm_fp4.cpp
         src/backends/rvv/rvv_gemv_f32.cpp
         src/backends/rvv/rvv_conv2d.cpp
+        src/backends/rvv/rvv_inner_product.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the
     # baseline -march and never under the RVCL_RVV_MARCH override below:
@@ -173,7 +175,7 @@ set_target_properties(rvcl PROPERTIES
         "include/rvcl/rvcl.h;include/rvcl/types.h;include/rvcl/init.h;\
 include/rvcl/capability.h;include/rvcl/memory.h;include/rvcl/scheduler.h;\
 include/rvcl/kernel.h;include/rvcl/registry.h;include/rvcl/dispatch.h;\
-include/rvcl/matmul.h;include/rvcl/conv2d.h"
+include/rvcl/matmul.h;include/rvcl/conv2d.h;include/rvcl/inner_product.h"
 )
 
 target_include_directories(rvcl
@@ -518,6 +520,8 @@ if(RVCL_BUILD_TESTS)
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32" FALSE)
     rvcl_add_corpus(conv2d smoke test_conv2d_smoke "f32;f16;bf16" TRUE)
     rvcl_add_corpus(conv2d ci    test_conv2d_ci    "f32;f16;bf16" TRUE)
+    rvcl_add_corpus(inner_product smoke test_inner_product_smoke "f32;f16;bf16" TRUE)
+    rvcl_add_corpus(inner_product ci    test_inner_product_ci    "f32;f16;bf16" TRUE)
 endif()
 
 # ---------------------------------------------------------------- examples

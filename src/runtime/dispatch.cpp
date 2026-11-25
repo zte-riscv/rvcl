@@ -128,6 +128,14 @@ static rvcl_status_t conv2d_dims_validate(
 static uint32_t conv2d_key_hash(const rvcl_op_desc_t *key);
 static int conv2d_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
 
+/* forward: the inner_product entry's validator and key generator (request /
+ * keys sections below) */
+static rvcl_status_t inner_product_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t inner_product_key_hash(const rvcl_op_desc_t *key);
+static int inner_product_key_equal(
+        const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
 /* One row per built-in operator, in registration-order tie-break order. The
  * table is sized to the full capacity because rvcl_dispatch_register_op()
  * appends free entries (tests, internal callers) after the built-in rows:
@@ -141,10 +149,12 @@ static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
         {RVCL_OP_GEMV, gemv_dims_validate, gemv_key_hash, gemv_key_equal},
         {RVCL_OP_CONV2D, conv2d_dims_validate, conv2d_key_hash,
                 conv2d_key_equal},
+        {RVCL_OP_INNER_PRODUCT, inner_product_dims_validate,
+                inner_product_key_hash, inner_product_key_equal},
 };
 
 /* Number of initializer rows, i.e. the built-in operators. */
-static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 3;
+static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 4;
 
 static_assert(RVCL_DISPATCH_BUILTIN_OPS <= RVCL_DISPATCH_MAX_OPS,
         "built-in operator rows must fit RVCL_DISPATCH_MAX_OPS");
@@ -291,6 +301,43 @@ static uint32_t conv2d_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
     h = hash_mix(h, (uint64_t)(unsigned)d->quant.enabled);
+    h = hash_mix(h, float_bits(d->quant.scale_a));
+    h = hash_mix(h, float_bits(d->quant.scale_b));
+    h = hash_mix(h, float_bits(d->quant.scale_c));
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_c);
+    return h;
+}
+
+static int inner_product_key_equal(
+        const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    const rvcl_inner_product_desc_t *x = &a->inner_product;
+    const rvcl_inner_product_desc_t *y = &b->inner_product;
+    return x->mb == y->mb && x->k == y->k && x->oc == y->oc
+            && x->dtype_a == y->dtype_a && x->dtype_b == y->dtype_b
+            && x->dtype_acc == y->dtype_acc && x->dtype_c == y->dtype_c
+            && x->dtype_bias == y->dtype_bias
+            && x->quant.enabled == y->quant.enabled
+            && float_bits(x->quant.scale_a) == float_bits(y->quant.scale_a)
+            && float_bits(x->quant.scale_b) == float_bits(y->quant.scale_b)
+            && float_bits(x->quant.scale_c) == float_bits(y->quant.scale_c)
+            && x->quant.zp_a == y->quant.zp_a && x->quant.zp_b == y->quant.zp_b
+            && x->quant.zp_c == y->quant.zp_c;
+}
+
+static uint32_t inner_product_key_hash(const rvcl_op_desc_t *key) {
+    const rvcl_inner_product_desc_t *d = &key->inner_product;
+    unsigned h = 2166136261u;
+    h = hash_mix(h, (uint64_t)d->mb);
+    h = hash_mix(h, (uint64_t)d->k);
+    h = hash_mix(h, (uint64_t)d->oc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
+    h = hash_mix(h, (uint64_t)d->quant.enabled);
     h = hash_mix(h, float_bits(d->quant.scale_a));
     h = hash_mix(h, float_bits(d->quant.scale_b));
     h = hash_mix(h, float_bits(d->quant.scale_c));
@@ -514,6 +561,36 @@ static rvcl_status_t conv2d_dims_validate(
     return RVCL_SUCCESS;
 }
 
+/* The inner_product op-table entry. The descriptor already is the GEMM
+ * projection, so the filter inputs map one to one: m = mb, n = oc, k = the
+ * caller's folded reduction. A quantized request travels on to stage 2 like
+ * the conv2d one, where the RVCL_QUANT_NONE datatype filter drops every
+ * inner_product kernel. */
+static rvcl_status_t inner_product_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_inner_product_desc_t *d = &od->inner_product;
+    if (d->mb <= 0 || d->oc <= 0 || d->k <= 0)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_dtype_tuple(
+            d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
+    if (st != RVCL_SUCCESS) return st;
+    /* Block-scale input dtypes need K divisible by their block size, the
+     * same constraint the matmul entry applies. */
+    const size_t blk_a = rvcl_dtype_block_size(d->dtype_a);
+    const size_t blk_b = rvcl_dtype_block_size(d->dtype_b);
+    if ((blk_a && (size_t)d->k % blk_a) || (blk_b && (size_t)d->k % blk_b))
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    out->m = d->mb;
+    out->n = d->oc;
+    out->k = d->k;
+    out->dtype_a = d->dtype_a;
+    out->dtype_b = d->dtype_b;
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
+
 /* ------------------------------------------------------------- filters */
 /* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
  * stays operator-generic. */
@@ -716,6 +793,15 @@ rvcl_status_t rvcl_dispatch_conv2d(
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_op_desc_t od = {.conv2d = *desc};
     return rvcl_dispatch_op(RVCL_OP_CONV2D, &od, result);
+}
+
+/* Public inner_product entry: same generic pipeline keyed on the
+ * INNER_PRODUCT op-table row. */
+rvcl_status_t rvcl_dispatch_inner_product(const rvcl_inner_product_desc_t *desc,
+        rvcl_dispatch_result_t **result) {
+    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_op_desc_t od = {.inner_product = *desc};
+    return rvcl_dispatch_op(RVCL_OP_INNER_PRODUCT, &od, result);
 }
 
 const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r) {

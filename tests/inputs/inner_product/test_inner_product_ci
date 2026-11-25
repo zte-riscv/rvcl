@@ -1,0 +1,33 @@
+# inner_product ci — three dtypes x MB/OC/K scan + tails + degenerate shapes
+#
+# Shape column = the case's GEMM projection: MxNxK with M = mb, N = oc and
+# K = the folded reduction (see tests/inputs/README.md). No params column.
+#
+# Families covered: the 1x1x1 degenerate form, single-row / single-column
+# reductions, ragged mb/oc/k tails, panel-edge K, panel-multiple widths and
+# larger reductions.
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul and conv2d corpora).
+1x1x1 n"degenerate_1x1x1"
+1x8x64 n"single_row"
+64x1x64 n"single_col"
+8x1x1 n"k1"
+1x1x4096 n"k_max"
+4x3x7 n"small"
+16x8x24 n"mb_scan_a"
+32x16x48 n"mb_scan_b"
+7x13x40 n"oc_tail_a"
+13x7x40 n"oc_tail_b"
+3x5x17 n"k_tail_a"
+5x3x33 n"k_tail_b"
+9x9x33 n"ragged"
+2x64x128 n"wide_oc"
+16x16x8 n"panel_edge_k"
+8x24x16 n"panel_multiple_oc"
+1x128x256 n"single_row_wide"
+128x128x64 n"square"
+64x7x129 n"odd_k"
+17x19x23 n"all_odd"

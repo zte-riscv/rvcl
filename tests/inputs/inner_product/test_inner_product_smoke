@@ -1,0 +1,18 @@
+# inner_product smoke — PR gate: MB/OC/K scan, K tails, degenerate shapes
+#
+# Shape column = the case's GEMM projection: MxNxK with
+#   M = mb, N = oc, K = the folded reduction
+# and no params column (the descriptor is exactly the shape triple). src is
+# [mb][k], w is [oc][k] row-major and dst is [mb][oc].
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul and conv2d corpora).
+4x3x7 n"small"
+1x1x1 n"single"
+16x8x24 n"mb_scan_a"
+7x13x40 n"oc_tail"
+3x5x17 n"k_tail"
+9x9x33 n"ragged"
+2x64x128 n"wide_oc"

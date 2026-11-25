@@ -108,6 +108,7 @@ typedef enum {
      * table entry is absent until they add one. Its value stays 3; new
      * operators are appended after it so no existing value moves. */
     RVCL_OP_RESERVED,
+    RVCL_OP_INNER_PRODUCT,
     RVCL_OP_COUNT,
 } rvcl_operation_t;
 
