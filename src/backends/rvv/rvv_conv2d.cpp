@@ -189,13 +189,7 @@ static rvcl_status_t conv2d_pack_b(
     uint8_t *panels = (uint8_t *)dst->data;
     const size_t elt = rk->elt;
 
-    for (int64_t col = 0; col < n; col++) {
-        for (int64_t row = 0; row < kd; row++) {
-            const int64_t di = rvv_packed_b_index(kd, col, row);
-            memcpy(panels + (size_t)di * elt,
-                    w + (size_t)(col * kd + row) * elt, elt);
-        }
-    }
+    rvv_pack_b_transposed(kd, n, elt, w, panels);
     return RVCL_SUCCESS;
 }
 

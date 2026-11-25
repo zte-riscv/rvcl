@@ -95,7 +95,8 @@ typedef rvcl_status_t (*op_slot_run_named_fn)(const char *name,
         int64_t r_m1);
 
 typedef struct {
-    /* Corpus directory / CLI operator name ("matmul", "gemv", "conv2d"). */
+    /* Corpus directory / CLI operator name ("matmul", "gemv", "conv2d",
+     * "inner_product"). */
     const char *name;
     rvcl_operation_t op;
     /* Supported test dtypes, RVCL_DTYPE_AUTO-terminated. */

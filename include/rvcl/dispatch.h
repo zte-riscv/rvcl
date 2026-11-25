@@ -62,6 +62,12 @@ RVCL_API rvcl_status_t rvcl_dispatch_matmul(
 RVCL_API rvcl_status_t rvcl_dispatch_conv2d(
         const rvcl_conv2d_desc_t *desc, rvcl_dispatch_result_t **result);
 
+/* Same pipeline keyed on the INNER_PRODUCT op-table row. The shape stage
+ * sees the GEMM projection directly: m = mb, n = oc, k = the folded
+ * reduction. */
+RVCL_API rvcl_status_t rvcl_dispatch_inner_product(
+        const rvcl_inner_product_desc_t *desc, rvcl_dispatch_result_t **result);
+
 /* Kernel name of the selection (for verbose / tests). */
 RVCL_API const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r);
 

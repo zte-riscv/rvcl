@@ -82,6 +82,7 @@ Two cross-cutting contracts stay under host control and invisible to kernels:
 ```text
 ┌───────────────────────────────────────────────────┐
 │ Operator API  rvcl_matmul / _scaled / rvcl_conv2d │
+│               rvcl_inner_product                  │
 ├───────────────────────────────────────────────────┤
 │ Dispatch       six-stage filter + cost ordering   │
 ├───────────────────────────────────────────────────┤
@@ -262,6 +263,17 @@ dilation, padding) cannot travel in the corpus shape column, its corpus cases
 carry a params column; see `tests/inputs/README.md`. Its dtypes are f32, f16 and
 bf16, always accumulating into and writing out f32.
 
+**INNER_PRODUCT** is the GEMM projection of the inner product:
+`dst[mb,oc] = bias[oc] + sum_p src[mb,p] * w[oc,p]`, with the reduction
+`K = ic*kd*kh*kw` folded by the caller. `src/operators/inner_product.cpp` is the
+semantic layer and `src/backends/rvv/rvv_inner_product.cpp` the kernel. It reuses
+the per-dtype GEMM micro-kernels: `pack_b` transposes the `[oc][k]` weights into
+the packed panel layout once, and the GEMM writes `[mb][oc]` row-major straight
+into the destination, so there is no writeback transpose. Its shape triple is the
+GEMM view directly (`M = mb`, `N = oc`, `K` = folded reduction), so its corpus
+cases carry no params column. Its dtypes are f32, f16 and bf16, always
+accumulating into and writing out f32.
+
 ### Add a backend
 
 A new backend takes four fixed steps, and no framework code changes:
@@ -341,19 +353,19 @@ orchestration:
 ```text
 rvcl/
 ├── include/rvcl/        # public C ABI: types/init/capability/memory/scheduler/
-│                        # kernel/registry/dispatch/matmul/conv2d + rvcl.h umbrella
+│                        # kernel/registry/dispatch/matmul/conv2d/inner_product + rvcl.h umbrella
 ├── src/
 │   ├── common/          # type, dtype-trait and memory contract implementations
 │   ├── runtime/         # capability / registry / dispatch / cost model / init
 │   │   └── scheduler/   # serial + OpenMP scheduler backends
-│   ├── operators/       # semantic-layer operators (matmul, conv2d)
+│   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product)
 │   └── backends/
 │       ├── reference/   # golden implementations (matmul, gemv)
 │       └── rvv/         # C / intrinsics kernels, panel packing, path table
 │           └── jit/     # xbyak_riscv JIT kernels (f32/f16/fp8/mxfp8/s8u8)
 ├── examples/            # matmul, dispatch, scheduler, matmul_multicore, vendor_kernel
 ├── tests/               # unit + smoke + differential + concurrent + bench
-│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/)
+│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/, inner_product/)
 ├── third_party/         # vendored xbyak_riscv (tag 1.31, BSD-3)
 └── CMakeLists.txt
 ```
@@ -415,12 +427,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The essentials:
 - **Kernel PRs** are reviewed against the five invariants above — the contract
   is enforced by review, not by the compiler.
 - **Public API stability** is tiered: `types.h`, `init.h`, `capability.h`,
-  `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h` are the stable surface and
-  accept additive-only changes before v1.0; `kernel.h`, `registry.h` and
-  `dispatch.h` are the project-stable kernel ABI, where breaking changes need an
-  RFC and maintainer consensus. Any descriptor layout change — even an appended
-  field — must bump `RVCL_KERNEL_ABI_VERSION`, so old plugins stop registering
-  instead of passing a short struct.
+  `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h`, `inner_product.h` are the
+  stable surface and accept additive-only changes before v1.0; `kernel.h`,
+  `registry.h` and `dispatch.h` are the project-stable kernel ABI, where
+  breaking changes need an RFC and maintainer consensus. Any descriptor layout
+  change — even an appended field — must bump `RVCL_KERNEL_ABI_VERSION`, so old
+  plugins stop registering instead of passing a short struct.
 - **Review bar**: at least one area maintainer who did not author the change;
   public API changes additionally need the project lead. Areas and current
   reviewers are listed in [MAINTAINERS.md](MAINTAINERS.md); external maintainers

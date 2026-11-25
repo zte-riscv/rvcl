@@ -34,6 +34,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* ------------------------------------------------------------- pack format
  *
@@ -72,6 +73,26 @@ static inline int64_t rvv_packed_b_index(
     int64_t panel = col / RVV_PACK_NC;
     int64_t in = col - panel * RVV_PACK_NC;
     return (panel * k_dim + row) * RVV_PACK_NC + in;
+}
+
+/* Transposing pack for operators whose weights are stored [n][k] row-major
+ * while the GEMM wants B[k][n]: copies each weight element to its panel
+ * slot. Shared by the kernels that share the panel layout (inner product,
+ * conv2d), so the transpose lives in one place. The panels are read by the
+ * GEMM micro-kernel with non-aligned vector loads, so the panel base needs
+ * no alignment beyond the element size; configure() requests 64 bytes for
+ * performance, not correctness. */
+static inline void rvv_pack_b_transposed(
+        int64_t k_dim, int64_t n, size_t elt, const void *w, void *panels) {
+    const uint8_t *src = (const uint8_t *)w;
+    uint8_t *dst = (uint8_t *)panels;
+    for (int64_t col = 0; col < n; col++) {
+        for (int64_t row = 0; row < k_dim; row++) {
+            const int64_t di = rvv_packed_b_index(k_dim, col, row);
+            memcpy(dst + (size_t)di * elt,
+                    src + (size_t)(col * k_dim + row) * elt, elt);
+        }
+    }
 }
 
 /* ---------------------------------------------------- micro-kernel entry
@@ -160,6 +181,13 @@ RVCL_API rvcl_status_t rvcl_rvv_register_portable(void);
  * on vector builds; the portable entries serve any host otherwise. */
 RVCL_API rvcl_status_t rvcl_rvv_register_conv2d(void);
 RVCL_API rvcl_status_t rvcl_rvv_register_conv2d_portable(void);
+
+/* Inner product entries (rvv_inner_product.cpp): a transposing pack_b plus
+ * the dtype's gemm micro-kernel selected through rvv_pick_gemm_* above. The
+ * generic entries require RVV on vector builds; the portable entries serve
+ * any host otherwise. */
+RVCL_API rvcl_status_t rvcl_rvv_register_inner_product(void);
+RVCL_API rvcl_status_t rvcl_rvv_register_inner_product_portable(void);
 
 /* Micro-kernel function type (backend adapter holds one per dtype). */
 typedef void (*rvv_gemm_fn)(const void *a, const void *b_packed,

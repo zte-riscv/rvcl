@@ -587,7 +587,7 @@ int main(int argc, char **argv) {
                     "usage: %s [--batch=<corpus-file>] "
                     "[--dt=f32|f16|bf16|f8_e4m3|f8_e5m2|mxfp8e4m3|mxfp8e5m2|"
                     "nvfp4|mxfp4|s8|u8] "
-                    "[--op=matmul|gemv|conv2d]\n",
+                    "[--op=matmul|gemv|conv2d|inner_product]\n",
                     argv[0]);
             return 2;
         }
@@ -602,7 +602,7 @@ int main(int argc, char **argv) {
         if (!slot) {
             fprintf(stderr,
                     "error: bad value for --op: '%s' "
-                    "(want matmul or gemv)\n",
+                    "(want matmul, gemv, conv2d or inner_product)\n",
                     op_arg);
             return 2;
         }

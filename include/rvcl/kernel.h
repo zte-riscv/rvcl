@@ -231,10 +231,33 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_conv2d_desc_t;
 
+/*
+ * Inner product as its GEMM projection:
+ *   dst[mb,oc] = bias[oc] + sum_p src[mb,p] * w[oc,p]
+ * with src [mb][k], w [oc][k] row-major and p over the folded reduction
+ * K = ic*kd*kh*kw. The spatial folding is done by the caller: the operator
+ * itself only sees the 2D projection, so a fully connected layer, a
+ * batched dot product and a convolution flattened to rows all share it.
+ * bias is a length-oc fp32 vector, or NULL for no bias (dtype_bias is then
+ * RVCL_DTYPE_AUTO). dst is fp32 and the accumulation is fp32, so the
+ * up-conversion of a narrow input is exact and the result is
+ * bit-comparable with a scalar reference. Pass RVCL_DTYPE_AUTO for acc to
+ * apply the habit rules. Quantization is not part of the v0.x path.
+ */
+typedef struct {
+    int64_t mb; /* rows (batch) */
+    int64_t k; /* folded reduction length (ic*kd*kh*kw) */
+    int64_t oc; /* output columns */
+    rvcl_dtype_t dtype_a, dtype_b, dtype_acc, dtype_c;
+    rvcl_dtype_t dtype_bias; /* RVCL_DTYPE_AUTO when no bias */
+    rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
+} rvcl_inner_product_desc_t;
+
 typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
     rvcl_gemv_desc_t gemv;
     rvcl_conv2d_desc_t conv2d;
+    rvcl_inner_product_desc_t inner_product;
 } rvcl_op_desc_t;
 
 /* ------------------------------------------------------------ kernel vtable */
