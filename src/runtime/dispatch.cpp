@@ -43,6 +43,7 @@
 
 #include "rvcl/dispatch.h"
 
+#include "../common/conv2d_geometry.h"
 #include "../common/dtype_traits.hpp"
 #include "capability_internal.h"
 #include "dispatch_internal.h"
@@ -476,20 +477,12 @@ static rvcl_status_t gemv_dims_validate(
     return RVCL_SUCCESS;
 }
 
-/* Per-axis output size of the conv2d descriptor's pad/stride/dilation
- * formula: (in + pad_begin + pad_end - (k - 1)*dil - 1) / s + 1, or 0 when
- * the kernel window does not fit the padded input. */
-static int64_t conv2d_out_dim(int64_t in, int64_t k, int64_t s, int64_t dil,
-        int64_t pad_lo, int64_t pad_hi) {
-    const int64_t span = in + pad_lo + pad_hi - (k - 1) * dil - 1;
-    if (span < 0) return 0;
-    return span / s + 1;
-}
-
 /* The conv2d op-table entry. The filter inputs are the GEMM view of the
  * convolution: m = mb*OH*OW rows, n = oc columns, k = ic*kh*kw reduction.
- * Grouped convolution is not served yet, and quantization is rejected by
- * validate() on the kernel side; both are request errors here. */
+ * Grouped convolution is not served yet and is a request error here. A
+ * quantized request is not rejected here: it travels on to stage 2 as
+ * quant_enabled, where the datatype filter drops every conv2d kernel
+ * because they all declare RVCL_QUANT_NONE. */
 static rvcl_status_t conv2d_dims_validate(
         const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
     const rvcl_conv2d_desc_t *d = &od->conv2d;
@@ -499,10 +492,10 @@ static rvcl_status_t conv2d_dims_validate(
             || d->pad_l < 0 || d->pad_r < 0)
         return RVCL_ERROR_INVALID_ARGUMENT;
     if (d->groups != 1) return RVCL_ERROR_INVALID_ARGUMENT;
-    const int64_t oh
-            = conv2d_out_dim(d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
-    const int64_t ow
-            = conv2d_out_dim(d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
+    const int64_t oh = rvcl_conv2d_out_dim(
+            d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
+    const int64_t ow = rvcl_conv2d_out_dim(
+            d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
     if (oh <= 0 || ow <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_status_t st = validate_dtype_tuple(
             d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
@@ -524,9 +517,10 @@ static rvcl_status_t conv2d_dims_validate(
     out->quant_enabled = d->quant.enabled;
     return RVCL_SUCCESS;
 }
+
+/* ------------------------------------------------------------- filters */
 /* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
  * stays operator-generic. */
-
 static int filter_datatype(
         const rvcl_kernel_desc_t *kd, const rvcl_dispatch_filter_t *f) {
     if (kd->dtype_a != f->dtype_a || kd->dtype_b != f->dtype_b

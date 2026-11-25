@@ -27,16 +27,17 @@
  * covers.
  *
  * Workspaces: AUX_0 packed-B panels (KERNEL lifetime, as the matmul path),
- * AUX_1 one GEMM band: A patches followed by the f32 GEMM output. The band
- * covers OH*OW rows of one batch, so a run's staging is bounded by
- * OH*OW*(K+OC) elements regardless of the batch count.
+ * AUX_1 one GEMM band: A patches, padded up to a 16-byte boundary, followed
+ * by the f32 GEMM output. The band covers OH*OW rows of one batch, so a
+ * run's staging is bounded by OH*OW*(K+OC) elements regardless of the batch
+ * count.
  *
  * Work ranges: the m axis is mb*OH*OW. run() accepts any range and walks
- * the batches it spans one after another, each with its own band staging.
- * The band workspace is single, so concurrent slices must not span (or
- * share) a batch: the semantic layer issues one run per batch and lets the
- * scheduler slice inside it. n and k must be the full ranges (no split-K,
- * no column slicing: the writeback is a whole-batch transpose).
+ * the batches it spans one after another, reusing the single band staging
+ * serially. Because that staging is shared, concurrent slices must not
+ * span (or share) a batch: the semantic layer issues one run per batch and
+ * lets the scheduler slice inside it. n and k must be the full ranges (no
+ * split-K, no column slicing: the writeback is a whole-batch transpose).
  *
  * The im2col, writeback and transposition loops are plain C compiled on
  * every host; only the GEMM micro-kernel itself is RVV-specialized, and it
@@ -46,6 +47,7 @@
 
 #include "rvv_internal.hpp"
 
+#include "../../common/conv2d_geometry.h"
 #include "../../common/dtype_traits.hpp"
 #include "../../runtime/cost_model.h"
 
@@ -62,8 +64,8 @@ typedef struct {
     int64_t k, m_band; /* GEMM reduction; GEMM rows per batch */
     rvv_gemm_fn gemm; /* dtype-specific micro-kernel entry */
     size_t elt; /* element size of A/B storage */
-    /* Band workspace layout: [m_band][k] im2col patches, then the f32
-     * GEMM output [m_band][oc]. */
+    /* Band workspace layout: [m_band][k] im2col patches rounded up to a
+     * 16-byte multiple, then the f32 GEMM output [m_band][oc]. */
     size_t a_bytes;
     size_t c_bytes;
     void (*pack_patch)(void *dst, const void *src); /* 1 storage element */
@@ -71,11 +73,18 @@ typedef struct {
 
 /* ------------------------------------------------------------- helpers */
 
-static int64_t conv2d_out_dim(int64_t in, int64_t k, int64_t s, int64_t dil,
-        int64_t pad_lo, int64_t pad_hi) {
-    const int64_t span = in + pad_lo + pad_hi - (k - 1) * dil - 1;
-    if (span < 0) return 0;
-    return span / s + 1;
+/* Rejects a geometry the configure() formulas cannot divide: the output
+ * size divides by the stride and multiplies by the dilation, and the band
+ * sizing multiplies the spatial extents. Checking here as well as in the
+ * dispatch request validator keeps a factory-bypass caller (validate then
+ * configure, without the dispatch entry) from dividing by zero. */
+static rvcl_status_t conv2d_validate_geometry(const rvcl_conv2d_desc_t *d) {
+    if (d->mb <= 0 || d->ic <= 0 || d->ih <= 0 || d->iw <= 0 || d->oc <= 0
+            || d->kh <= 0 || d->kw <= 0 || d->sh <= 0 || d->sw <= 0
+            || d->dil_h <= 0 || d->dil_w <= 0 || d->pad_t < 0 || d->pad_b < 0
+            || d->pad_l < 0 || d->pad_r < 0)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    return RVCL_SUCCESS;
 }
 
 /* ------------------------------------------------- per-dtype element ops */
@@ -101,6 +110,11 @@ static void patch_bf16(void *dst, const void *src) {
 template <rvcl_dtype_t DT>
 static rvcl_status_t conv2d_validate_tuple(const rvcl_op_desc_t *desc) {
     const rvcl_conv2d_desc_t *d = &desc->conv2d;
+    /* The geometry is part of the instance's contract too: configure()
+     * divides by the stride and multiplies by the dilation, so a zero
+     * stride/dilation or a negative pad must not reach it. */
+    const rvcl_status_t geo = conv2d_validate_geometry(d);
+    if (geo != RVCL_SUCCESS) return geo;
     if (d->dtype_a != DT || d->dtype_b != DT || d->dtype_c != RVCL_DTYPE_FP32)
         return RVCL_UNSUPPORTED_DTYPE_COMBO;
     /* AUTO is the request-side "derive it" marker for the accumulator. */
@@ -129,12 +143,23 @@ static rvcl_status_t conv2d_configure(rvcl_kernel_t *k,
     rvv_conv2d_t *rk = (rvv_conv2d_t *)k;
     const rvcl_conv2d_desc_t *d = &desc->conv2d;
     rk->d = *d;
-    rk->oh = conv2d_out_dim(d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
-    rk->ow = conv2d_out_dim(d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
+    const rvcl_status_t geo = conv2d_validate_geometry(d);
+    if (geo != RVCL_SUCCESS) return geo;
+    rk->oh = rvcl_conv2d_out_dim(
+            d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
+    rk->ow = rvcl_conv2d_out_dim(
+            d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
     if (rk->oh <= 0 || rk->ow <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
     rk->m_band = rk->oh * rk->ow;
     rk->k = d->ic * d->kh * d->kw;
-    rk->a_bytes = (size_t)(rk->m_band * rk->k) * rk->elt;
+    /* The f32 GEMM output starts a_bytes into the band, so the patch area
+     * is rounded up to a 16-byte boundary: with a 2-byte storage element
+     * an odd m_band*k would otherwise leave the output region at a 2-byte
+     * alignment and every float store into it would be misaligned. Only
+     * the output region's start depends on a_bytes; the patch row stride
+     * stays k*elt (see conv2d_im2col). */
+    const size_t patch_bytes = (size_t)(rk->m_band * rk->k) * rk->elt;
+    rk->a_bytes = (patch_bytes + 15u) & ~(size_t)15;
     rk->c_bytes = (size_t)(rk->m_band * d->oc) * sizeof(float);
 
     if (ws_req) {
@@ -382,6 +407,11 @@ static rvcl_status_t conv2d_register_one(const char *name, rvcl_dtype_t dt,
     }
     d.num_required_features = nfeat;
     d.alignment_a = d.alignment_b = d.alignment_c = 4;
+    /* ANY on purpose: this backend carries no vector code of its own, its
+     * compute is the shared GEMM micro-kernel that rvv_pick_gemm_* picks
+     * for the dtype. Per-tier rows would register entries with identical
+     * behaviour, so the tier split carries no information until a
+     * conv-specific vector path exists. */
     d.vlen_tier = RVCL_VLEN_TIER_ANY;
     d.cost_fn = rvcl_cost_conv2d_rvv;
 

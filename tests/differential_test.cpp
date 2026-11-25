@@ -260,23 +260,24 @@ static void parse_case(corpus_t *c, char *text, const char *file, int line) {
     tok[tlen] = saved;
 
     /* separator, then the optional params column, then the optional label.
-     * params is a run of [a-z0-9:] (the operator's own lexical form); a
-     * label always starts with n", so the two never collide. */
+     * The lexical form is shared with the bench parser (op_slot_lex_params)
+     * so the two consumers cannot drift; this side copies the run out
+     * because the line buffer is reused per line. */
     char *rest = text + tlen;
     rest += strspn(rest, " \t_");
     char *params = NULL;
-    const int at_label = rest[0] == 'n' && rest[1] == '"';
-    if (*rest != '\0' && *rest != '#' && !at_label) {
-        const size_t plen
-                = strspn(rest, "abcdefghijklmnopqrstuvwxyz0123456789:");
-        if (plen == 0)
-            corpus_fatal(file, line, "unparsable params column in '%s'", text);
+    const char *prun = NULL;
+    size_t plen = 0;
+    const int lexed = op_slot_lex_params(rest, &prun, &plen);
+    if (lexed < 0)
+        corpus_fatal(file, line, "unparsable params column in '%s'", text);
+    if (lexed > 0) {
         params = (char *)malloc(plen + 1);
         if (!params) {
             fprintf(stderr, "error: out of memory\n");
             exit(2);
         }
-        memcpy(params, rest, plen);
+        memcpy(params, prun, plen);
         params[plen] = '\0';
         rest += plen;
         rest += strspn(rest, " \t_");

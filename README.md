@@ -81,7 +81,7 @@ Two cross-cutting contracts stay under host control and invisible to kernels:
 
 ```text
 ┌───────────────────────────────────────────────────┐
-│ Operator API   rvcl_matmul / _scaled / rvcl_conv2d│
+│ Operator API  rvcl_matmul / _scaled / rvcl_conv2d │
 ├───────────────────────────────────────────────────┤
 │ Dispatch       six-stage filter + cost ordering   │
 ├───────────────────────────────────────────────────┤

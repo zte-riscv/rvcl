@@ -456,12 +456,15 @@ if(RVCL_BUILD_TESTS)
     if(NOT RVCL_TEST_SET MATCHES "^(smoke|ci|all)$")
         message(FATAL_ERROR "RVCL_TEST_SET must be smoke, ci or all")
     endif()
-    # <gemm> marks the operators whose compute IS one of the per-dtype gemm
-    # micro-kernels (matmul). Only those have forced-path targets worth
-    # registering: the RVCL_RVV_KERNEL pin is read by rvv_pick_gemm_* alone,
-    # so for any other operator the forced variants would just repeat the
-    # auto target. Per-kernel coverage for the non-gemm operators comes from
-    # legal_kernels_for + run_named inside the differential instead.
+    # <gemm> marks the operators whose compute is carried by a per-dtype
+    # micro-kernel that rvv_pick_gemm_* selects: matmul, and conv2d whose
+    # im2col GEMM rides the same per-dtype entries. Only those have
+    # forced-path targets worth registering, because the RVCL_RVV_KERNEL pin
+    # is read by rvv_pick_gemm_* alone: for such an operator the forced
+    # variant really does drive a different inner kernel, while for any
+    # other operator it would just repeat the auto target. Per-kernel
+    # coverage for the non-gemm operators comes from legal_kernels_for +
+    # run_named inside the differential instead.
     function(rvcl_add_corpus op set file dtypes gemm)
         if(RVCL_TEST_SET STREQUAL "all"
                 OR (RVCL_TEST_SET STREQUAL "ci" AND NOT "${set}" STREQUAL "weekly")
@@ -513,8 +516,8 @@ if(RVCL_BUILD_TESTS)
     rvcl_add_corpus(matmul ci    test_matmul_ci    "f32;f16;bf16;f8_e4m3;f8_e5m2;mxfp8e4m3;mxfp8e5m2;s8;u8;nvfp4;mxfp4" TRUE)
     rvcl_add_corpus(gemv   smoke test_gemv_smoke   "f32" FALSE)
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32" FALSE)
-    rvcl_add_corpus(conv2d smoke test_conv2d_smoke "f32;f16;bf16" FALSE)
-    rvcl_add_corpus(conv2d ci    test_conv2d_ci    "f32;f16;bf16" FALSE)
+    rvcl_add_corpus(conv2d smoke test_conv2d_smoke "f32;f16;bf16" TRUE)
+    rvcl_add_corpus(conv2d ci    test_conv2d_ci    "f32;f16;bf16" TRUE)
 endif()
 
 # ---------------------------------------------------------------- examples

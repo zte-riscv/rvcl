@@ -19,14 +19,19 @@
 /* One-shot path: dispatch -> import tensors (zero-copy) -> allocate the
  * reported workspace -> pack B once -> one run per batch through the
  * current scheduler. The conv kernel stages one batch's row band at a
- * time, so a batch is the unit the scheduler slices inside; issuing one
- * run per batch keeps concurrent slices off each other's staging buffer.
- * "dispatch once, run many" users call dispatch.h directly. */
+ * time, so a batch is the unit the scheduler slices inside. The band
+ * workspace is single and shared by every slice; what keeps concurrent
+ * slices safe is that the band rows a slice writes are exactly the m rows
+ * it owns, so the per-slice row intervals stay disjoint and the scheduler
+ * never hands the same row to two slices. "dispatch once, run many" users
+ * call dispatch.h directly. */
 
 #include "rvcl/conv2d.h"
 
 #include "rvcl/capability.h"
 #include "rvcl/scheduler.h"
+
+#include "../common/conv2d_geometry.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,12 +48,6 @@ static void run_task(
     rvcl_kernel_run(ctx->kernel, ctx->pack, slice);
 }
 
-static int64_t out_dim(int64_t in, int64_t k, int64_t s, int64_t dil,
-        int64_t pad_lo, int64_t pad_hi) {
-    const int64_t span = in + pad_lo + pad_hi - (k - 1) * dil - 1;
-    return span < 0 ? 0 : span / s + 1;
-}
-
 rvcl_status_t rvcl_conv2d(const rvcl_conv2d_desc_t *desc, const void *src,
         const void *w, const void *bias, void *dst) {
     if (!desc || !src || !w || !dst) return RVCL_ERROR_INVALID_ARGUMENT;
@@ -63,10 +62,10 @@ rvcl_status_t rvcl_conv2d(const rvcl_conv2d_desc_t *desc, const void *src,
     rvcl_status_t st = rvcl_dispatch_conv2d(desc, &r);
     if (st != RVCL_SUCCESS) return st;
 
-    const int64_t oh = out_dim(desc->ih, desc->kh, desc->sh, desc->dil_h,
-            desc->pad_t, desc->pad_b);
-    const int64_t ow = out_dim(desc->iw, desc->kw, desc->sw, desc->dil_w,
-            desc->pad_l, desc->pad_r);
+    const int64_t oh = rvcl_conv2d_out_dim(desc->ih, desc->kh, desc->sh,
+            desc->dil_h, desc->pad_t, desc->pad_b);
+    const int64_t ow = rvcl_conv2d_out_dim(desc->iw, desc->kw, desc->sw,
+            desc->dil_w, desc->pad_l, desc->pad_r);
     if (oh <= 0 || ow <= 0) {
         rvcl_dispatch_release(r);
         return RVCL_ERROR_INVALID_ARGUMENT;

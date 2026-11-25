@@ -39,6 +39,7 @@
 #ifndef RVCL_TEST_OP_SLOTS_H
 #define RVCL_TEST_OP_SLOTS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "rvcl/rvcl.h"
@@ -94,7 +95,7 @@ typedef rvcl_status_t (*op_slot_run_named_fn)(const char *name,
         int64_t r_m1);
 
 typedef struct {
-    /* Corpus directory / CLI operator name ("matmul", "gemv"). */
+    /* Corpus directory / CLI operator name ("matmul", "gemv", "conv2d"). */
     const char *name;
     rvcl_operation_t op;
     /* Supported test dtypes, RVCL_DTYPE_AUTO-terminated. */
@@ -114,6 +115,16 @@ typedef struct {
     /* 1 when the operator has a micro-kernel timing path (bench P/S). */
     int can_timing;
 } op_slot_t;
+
+/* Lexes the optional params column that follows a case's shape token.
+ * rest is the line text already advanced past the shape token and its
+ * separator, so both corpus consumers share one lexical form: a params run
+ * is [a-z0-9:]+ and a label always starts with n", so the two never
+ * collide. Returns 1 when a column is present (params and len set), 0 when
+ * the line carries none, -1 when the column is malformed (empty run). The
+ * caller owns copying the run out of the line buffer, because the buffer is
+ * reused per line and each consumer has its own buffer policy. */
+int op_slot_lex_params(const char *rest, const char **params, size_t *len);
 
 /* Row lookup by operator enum; NULL when unknown. */
 const op_slot_t *op_slot_for(rvcl_operation_t op);

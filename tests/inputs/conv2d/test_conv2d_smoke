@@ -8,6 +8,11 @@
 # parse error.
 #
 #   OH = (ih + pt + pb - (kh-1)*dh - 1)/sh + 1   (OW likewise)
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul corpora).
 25x4x3 mb1ic3ih5iw5oc4kh1kw1 n"k1s1p0"
 16x4x27 mb1ic3ih7iw7oc4kh3kw3sh2sw2pt1pb1pl1pr1 n"k3s2p1"
 25x3x18 mb1ic2ih9iw9oc3kh3kw3dh2dw2 n"dil2"

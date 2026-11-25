@@ -264,16 +264,18 @@ static void bparse_case(bcorpus_t *c, char *text, const char *file, int line) {
 
     char *rest = text + tlen;
     rest += strspn(rest, " \t_");
-    /* The optional params column precedes the label: a run of [a-z0-9:],
-     * which can never be confused with a label's leading n". */
+    /* The optional params column precedes the label. The lexical form is
+     * shared with the differential parser (op_slot_lex_params); this side
+     * keeps its own fixed-buffer policy and reports an over-long run as a
+     * corpus error. */
     char params[96] = "";
-    const int at_label = rest[0] == 'n' && rest[1] == '"';
-    if (*rest != '\0' && *rest != '#' && !at_label) {
-        const size_t plen
-                = strspn(rest, "abcdefghijklmnopqrstuvwxyz0123456789:");
-        if (plen == 0 || plen >= sizeof(params))
-            bcorpus_fatal(file, line, "unparsable params column in '%s'", text);
-        memcpy(params, rest, plen);
+    const char *prun = NULL;
+    size_t plen = 0;
+    const int lexed = op_slot_lex_params(rest, &prun, &plen);
+    if (lexed < 0 || plen >= sizeof(params))
+        bcorpus_fatal(file, line, "unparsable params column in '%s'", text);
+    if (lexed > 0) {
+        memcpy(params, prun, plen);
         params[plen] = '\0';
         rest += plen;
         rest += strspn(rest, " \t_");

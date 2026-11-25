@@ -29,8 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/backends/rvv/rvv_bf16.hpp"
-#include "../src/backends/rvv/rvv_fp16.hpp"
+#include "../src/common/conv2d_geometry.h"
 #include "../src/runtime/dispatch_internal.h"
 #include "dtype_ops.hpp"
 
@@ -62,19 +61,17 @@ static int64_t gemv_out_elems(const rvcl_op_desc_t *od) {
 }
 
 /* Conv2d output geometry from the descriptor's pad/stride/dilation
- * formula, shared by the row's elems/golden/layout helpers. */
-static int64_t conv_out_dim(int64_t in, int64_t k, int64_t s, int64_t dil,
-        int64_t pad_lo, int64_t pad_hi) {
-    const int64_t span = in + pad_lo + pad_hi - (k - 1) * dil - 1;
-    return span < 0 ? 0 : span / s + 1;
-}
-
+ * formula, shared by the row's elems/golden/layout helpers. The formula
+ * itself is the library's single copy (src/common/conv2d_geometry.h) so the
+ * corpus-vs-params cross-check cannot drift from what the kernel computes. */
 static int64_t conv_oh(const rvcl_conv2d_desc_t *d) {
-    return conv_out_dim(d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
+    return rvcl_conv2d_out_dim(
+            d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);
 }
 
 static int64_t conv_ow(const rvcl_conv2d_desc_t *d) {
-    return conv_out_dim(d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
+    return rvcl_conv2d_out_dim(
+            d->iw, d->kw, d->sw, d->dil_w, d->pad_l, d->pad_r);
 }
 
 static int64_t conv_a_elems(const rvcl_op_desc_t *od) {
@@ -345,6 +342,15 @@ static rvcl_status_t conv2d_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
         if (fields[i].required && *fields[i].dst == 0)
             return RVCL_ERROR_INVALID_ARGUMENT;
 
+    /* Reject a geometry the output-size formula cannot divide before it is
+     * evaluated: a zero stride or dilation would divide by zero, and a
+     * negative pad has no meaning. These are corpus errors like any other
+     * malformed params column, so they surface as a parse error rather
+     * than a crash. */
+    if (d.sh <= 0 || d.sw <= 0 || d.dil_h <= 0 || d.dil_w <= 0 || d.pad_t < 0
+            || d.pad_b < 0 || d.pad_l < 0 || d.pad_r < 0)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+
     /* Cross-check the params geometry against the shape column: the corpus
      * triple is the case's GEMM view (m = mb*OH*OW, n = oc, k = ic*kh*kw),
      * so a mismatch between the two columns is a corpus typo. */
@@ -355,6 +361,20 @@ static rvcl_status_t conv2d_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
 
     od->conv2d = d;
     return RVCL_SUCCESS;
+}
+
+/* ------------------------------------------------------- params lexing */
+
+int op_slot_lex_params(const char *rest, const char **params, size_t *len) {
+    /* A label's leading n" and a params run never collide, so the "is this
+     * a label?" test stays a two-character check. */
+    const int at_label = rest[0] == 'n' && rest[1] == '"';
+    if (*rest == '\0' || *rest == '#' || at_label) return 0;
+    const size_t plen = strspn(rest, "abcdefghijklmnopqrstuvwxyz0123456789:");
+    if (plen == 0) return -1;
+    *params = rest;
+    *len = plen;
+    return 1;
 }
 
 /* ---------------------------------------------------------- pack setups */

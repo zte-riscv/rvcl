@@ -8,6 +8,11 @@
 # Families covered: k1s1p0, k3s2p1, dilation, asymmetric pad, the 1x1
 # degenerate form, mb>1, ragged ic/oc tails, non-square kernels/strides,
 # larger k5/k7 windows, and single-channel edge cases.
+#
+# f32 differential comparison relies on the scalar golden contracting
+# `acc += a * b` into an FMA exactly like the vector kernels do; a compiler
+# that vectorizes the golden into a non-fused form can land 1 ulp off and
+# report a pre-existing f32 failure (same as the matmul corpora).
 25x4x3 mb1ic3ih5iw5oc4kh1kw1 n"k1s1p0_a"
 49x6x8 mb1ic8ih7iw7oc6kh1kw1 n"k1s1p0_b"
 162x7x4 mb2ic4ih9iw9oc7kh1kw1 n"k1s1p0_c"
