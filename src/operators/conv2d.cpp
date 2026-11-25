@@ -34,7 +34,6 @@
 #include "../common/conv2d_geometry.h"
 
 #include <stdlib.h>
-#include <string.h>
 
 typedef struct {
     rvcl_kernel_t *kernel;

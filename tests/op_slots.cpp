@@ -342,14 +342,13 @@ static rvcl_status_t conv2d_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
         if (fields[i].required && *fields[i].dst == 0)
             return RVCL_ERROR_INVALID_ARGUMENT;
 
-    /* Reject a geometry the output-size formula cannot divide before it is
-     * evaluated: a zero stride or dilation would divide by zero, and a
-     * negative pad has no meaning. These are corpus errors like any other
-     * malformed params column, so they surface as a parse error rather
-     * than a crash. */
-    if (d.sh <= 0 || d.sw <= 0 || d.dil_h <= 0 || d.dil_w <= 0 || d.pad_t < 0
-            || d.pad_b < 0 || d.pad_l < 0 || d.pad_r < 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
+    /* Reject a geometry the output-size formula cannot evaluate: a zero
+     * stride or dilation divides by zero, a zero extent has no output, and
+     * a negative pad has no meaning. The check is the library's single copy
+     * (rvcl_conv2d_geometry_valid), shared with the dispatch and kernel
+     * validators. These are corpus errors like any other malformed params
+     * column, so they surface as a parse error rather than a crash. */
+    if (!rvcl_conv2d_geometry_valid(&d)) return RVCL_ERROR_INVALID_ARGUMENT;
 
     /* Cross-check the params geometry against the shape column: the corpus
      * triple is the case's GEMM view (m = mb*OH*OW, n = oc, k = ic*kh*kw),

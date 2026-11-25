@@ -86,7 +86,8 @@ dec           := decimal, 0 <= value <= 1000000000 ;
 Omitted optional keys default to stride 1, dilation 1 and zero padding, so
 the whole tail may be left off. Keys must appear in this order, at most
 once each; an unknown, out-of-order, repeated or missing required key is an
-error. `mb/ic/ih/iw/oc/kh/kw` must be non-zero.
+error. `mb/ic/ih/iw/oc/kh/kw` and the optional `sh/sw/dh/dw` must all be
+`>= 1`; a stride or dilation of `0` divides by zero and is a parse error.
 
 The shape and params columns must agree:
 
@@ -107,7 +108,11 @@ comparison. Example (`mb=1, ic=3, ih=iw=7, oc=4, k=3, s=2, pad=1` →
 `--dt` for conv2d: the corpus runs every dtype the operator serves, which
 for conv2d is `f32`, `f16` and `bf16` — inputs and weights in the case
 dtype, accumulation and output always fp32. An explicit `--dt` outside that
-set is a failure (the "assert it is served" rule below).
+set is a failure (the "assert it is served" rule below). The conv2d `f32_c`
+forced targets (`test_conv2d_modeC_smoke_f32_c`, `test_conv2d_modeC_ci_f32_c`)
+are skipped on the vector CI tier, the same compile-march artifact the
+matmul `f32_c` targets carry; the tolerant `f16`/`bf16` forced targets and
+the baseline tier run them.
 
 ## Semantics
 

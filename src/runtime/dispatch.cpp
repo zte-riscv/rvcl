@@ -486,11 +486,7 @@ static rvcl_status_t gemv_dims_validate(
 static rvcl_status_t conv2d_dims_validate(
         const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
     const rvcl_conv2d_desc_t *d = &od->conv2d;
-    if (d->mb <= 0 || d->ic <= 0 || d->ih <= 0 || d->iw <= 0 || d->oc <= 0
-            || d->kh <= 0 || d->kw <= 0 || d->sh <= 0 || d->sw <= 0
-            || d->dil_h <= 0 || d->dil_w <= 0 || d->pad_t < 0 || d->pad_b < 0
-            || d->pad_l < 0 || d->pad_r < 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
+    if (!rvcl_conv2d_geometry_valid(d)) return RVCL_ERROR_INVALID_ARGUMENT;
     if (d->groups != 1) return RVCL_ERROR_INVALID_ARGUMENT;
     const int64_t oh = rvcl_conv2d_out_dim(
             d->ih, d->kh, d->sh, d->dil_h, d->pad_t, d->pad_b);

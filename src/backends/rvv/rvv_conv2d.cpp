@@ -52,7 +52,6 @@
 #include "../../runtime/cost_model.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------- instance state */
@@ -79,12 +78,8 @@ typedef struct {
  * dispatch request validator keeps a factory-bypass caller (validate then
  * configure, without the dispatch entry) from dividing by zero. */
 static rvcl_status_t conv2d_validate_geometry(const rvcl_conv2d_desc_t *d) {
-    if (d->mb <= 0 || d->ic <= 0 || d->ih <= 0 || d->iw <= 0 || d->oc <= 0
-            || d->kh <= 0 || d->kw <= 0 || d->sh <= 0 || d->sw <= 0
-            || d->dil_h <= 0 || d->dil_w <= 0 || d->pad_t < 0 || d->pad_b < 0
-            || d->pad_l < 0 || d->pad_r < 0)
-        return RVCL_ERROR_INVALID_ARGUMENT;
-    return RVCL_SUCCESS;
+    return rvcl_conv2d_geometry_valid(d) ? RVCL_SUCCESS
+                                         : RVCL_ERROR_INVALID_ARGUMENT;
 }
 
 /* ------------------------------------------------- per-dtype element ops */

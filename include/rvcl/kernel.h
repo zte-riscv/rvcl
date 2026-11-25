@@ -57,9 +57,14 @@ typedef union rvcl_op_desc rvcl_op_desc_t;
  *
  * Desc layout discipline: the descriptor only ever grows by appending
  * fields at the end (offset-preserving additions, like assert_level), and
- * ANY layout change, including a merely appended field, must bump
+ * a reorder or field-size change of an existing field must bump
  * RVCL_KERNEL_ABI_VERSION so old plugins stop registering rather than
- * passing a short struct.
+ * reading a moved field. An appended field alone is offset-preserving and
+ * needs no bump: the descriptor is passed by pointer, so an old plugin
+ * keeps reading its own fields at their unchanged offsets and never
+ * touches the appended tail. Growing the rvcl_op_desc_t union (a new or
+ * larger member) follows the same rule — the existing members keep their
+ * offsets, so no bump is needed.
  */
 #define RVCL_KERNEL_ABI_VERSION 1
 
