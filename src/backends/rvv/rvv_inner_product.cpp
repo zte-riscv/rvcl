@@ -28,6 +28,9 @@
  * layout is the output layout and there is no writeback transpose.
  *
  * Workspaces: AUX_0 packed-B panels (KERNEL lifetime, as the matmul path).
+ * configure() requests AUX_0 at 64-byte alignment for performance, not
+ * correctness: the GEMM consumes the panels with non-aligned vector loads,
+ * so any panel base aligned to the element size is valid.
  * No per-run band: the GEMM writes straight into the destination, so run()
  * stages no output; slices own disjoint m rows of dst.
  *
@@ -127,13 +130,7 @@ static rvcl_status_t inner_product_pack_b(
     uint8_t *panels = (uint8_t *)dst->data;
     const size_t elt = rk->elt;
 
-    for (int64_t col = 0; col < n; col++) {
-        for (int64_t row = 0; row < kd; row++) {
-            const int64_t di = rvv_packed_b_index(kd, col, row);
-            memcpy(panels + (size_t)di * elt,
-                    w + (size_t)(col * kd + row) * elt, elt);
-        }
-    }
+    rvv_pack_b_transposed(kd, n, elt, w, panels);
     return RVCL_SUCCESS;
 }
 
