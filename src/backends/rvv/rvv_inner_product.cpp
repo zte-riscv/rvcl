@@ -29,14 +29,20 @@
  *
  * Workspaces: AUX_0 packed-B panels (KERNEL lifetime, as the matmul path).
  * No per-run band: the GEMM writes straight into the destination, so run()
- * stages nothing and concurrent slices stay disjoint on the m axis.
+ * stages no output; slices own disjoint m rows of dst.
+ *
+ * Concurrency: run() with pack->src_b_packed set only reads the panels and
+ * is safe across concurrent slices, so a "dispatch once, run many" caller
+ * sharing one pack across threads must pre-pack via rvcl_kernel_pack_b()
+ * first. Without the flag run() packs B into the shared AUX_0 panels on
+ * every call and is serial-only (the kernel.h run() contract).
  *
  * Work ranges: the m axis is mb, n is oc and k is the folded reduction.
  * n and k must be the full ranges (the packed panels and the reduction are
  * not split); the m range may be any slice of [0, mb).
  *
  * The pack loop is plain C compiled on every host; only the GEMM
- * micro-kernel itself is RVV-specialized, and it is selected through the
+ * micro-kernel itself is RVV-specialized, and it is resolved through the
  * same rvv_pick_gemm_* entry the matmul backend uses, so an inner product
  * and a matmul of one dtype can never run different kernels. run() never
  * mallocs and never threads. */
@@ -152,15 +158,17 @@ static rvcl_status_t inner_product_run(rvcl_kernel_t *k,
             || range->k_end != d->k)
         return RVCL_ERROR_INVALID_ARGUMENT;
 
+    /* One-shot calls pre-pack and set src_b_packed, so the panels are
+     * read-only here; otherwise this packing writes the shared AUX_0
+     * panels and is serial-only (see the file header). */
     if (!pack->src_b_packed) {
         const rvcl_status_t st
                 = inner_product_pack_b(k, b, (rvcl_tensor_t *)ws_b);
         if (st != RVCL_SUCCESS) return st;
     }
 
-    /* A is [mb][k] row-major, C is [mb][oc] row-major and the packed panels
-     * are read-only across slices; the GEMM seeds the bias first, the same
-     * addition order as the golden. */
+    /* A is [mb][k] row-major and C is [mb][oc] row-major; the GEMM seeds
+     * the bias first, the same addition order as the golden. */
     rk->gemm(a->data, ws_b->data, bias ? bias->data : NULL, c->data, d->mb,
             d->oc, d->k, range);
     return RVCL_SUCCESS;
