@@ -529,15 +529,18 @@ if(RVCL_BUILD_TESTS)
 
     # Pooling vector path: the row-wise kernel is intrinsics-only (there is
     # no separate micro-kernel to pin), so its own ctest target is the same
-    # corpus compiled with the vector -march. Without the override the RVV
-    # TU compiles at the baseline march and the target repeats the auto one,
-    # so it is registered only when the override is set.
+    # corpus compiled with the vector -march, pinned to the auto selection.
+    # Without the override the RVV TU compiles at the baseline march and the
+    # target repeats the auto one, so it is registered only when the
+    # override is set.
     if(RVCL_ENABLE_RVV AND RVCL_RVV_MARCH
             AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
         foreach(set smoke ci)
             if(RVCL_TEST_SET STREQUAL "all"
-                    OR (RVCL_TEST_SET STREQUAL "ci" AND NOT set STREQUAL "weekly")
-                    OR (RVCL_TEST_SET STREQUAL "smoke" AND set STREQUAL "smoke"))
+                    OR (RVCL_TEST_SET STREQUAL "ci"
+                        AND NOT "${set}" STREQUAL "weekly")
+                    OR (RVCL_TEST_SET STREQUAL "smoke"
+                        AND "${set}" STREQUAL "smoke"))
                 set(file test_pooling_${set})
                 foreach(dt f32 f16 bf16)
                     add_test(NAME test_pooling_modeC_${set}_${dt}_vec
@@ -545,7 +548,8 @@ if(RVCL_BUILD_TESTS)
                                 --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/pooling/${file}
                                 --dt=${dt})
                     set_tests_properties(test_pooling_modeC_${set}_${dt}_vec
-                        PROPERTIES LABELS "corpus;${set}")
+                        PROPERTIES LABELS "corpus;${set}"
+                        ENVIRONMENT "RVCL_RVV_KERNEL=auto")
                 endforeach()
             endif()
         endforeach()

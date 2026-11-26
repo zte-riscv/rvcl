@@ -150,7 +150,9 @@ OH = (ih + pt + pb - kh) / sh + 1     (OW likewise)
 `--dt` for pooling: `f32`, `f16` and `bf16`, inputs in the case dtype and
 accumulation and output always fp32 (the kernel has no JIT micro-kernel, so
 no forced-path targets are registered; per-kernel coverage comes from
-`run_named` inside the differential). Pooling has no dilation field.
+`run_named` inside the differential). Pooling has no dilation field. When
+`pad >= k` a window can hold no in-bounds sample: `max` then returns
+`-FLT_MAX`, `avg` returns 0 and `avgex` yields NaN.
 
 ## Semantics
 

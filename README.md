@@ -439,12 +439,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The essentials:
   is enforced by review, not by the compiler.
 - **Public API stability** is tiered: `types.h`, `init.h`, `capability.h`,
   `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h`, `inner_product.h`,
-  `pooling.h` are the
-  stable surface and accept additive-only changes before v1.0; `kernel.h`,
-  `registry.h` and `dispatch.h` are the project-stable kernel ABI, where
-  breaking changes need an RFC and maintainer consensus. Any descriptor layout
-  change — even an appended field — must bump `RVCL_KERNEL_ABI_VERSION`, so old
-  plugins stop registering instead of passing a short struct.
+  `pooling.h` are the stable surface and accept additive-only changes before
+  v1.0; `kernel.h`, `registry.h` and `dispatch.h` are the project-stable
+  kernel ABI, where breaking changes need an RFC and maintainer consensus.
+  Any descriptor layout change — even an appended field — must bump
+  `RVCL_KERNEL_ABI_VERSION`, so old plugins stop registering instead of
+  passing a short struct.
 - **Review bar**: at least one area maintainer who did not author the change;
   public API changes additionally need the project lead. Areas and current
   reviewers are listed in [MAINTAINERS.md](MAINTAINERS.md); external maintainers

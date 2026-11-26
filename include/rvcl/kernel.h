@@ -267,10 +267,13 @@ typedef enum {
  *   dst[mb,c,oh,ow] = pool{ src[mb,c, ih, iw] :
  *       ih = oh*sh - pad_t + kh, iw = ow*sw - pad_l + kw }
  * with the output size (in + pad_begin + pad_end - k) / s + 1 per axis.
- * avg_exclude divides by the in-bounds sample count (always >= 1 because
- * the window starts inside the padded input). There is no dilation: a
- * window sample is exactly one stride step apart. dst is fp32 and the
- * accumulation is fp32, so the up-conversion of a narrow input is exact.
+ * avg_exclude divides by the in-bounds sample count. When pad >= k an
+ * output element's window can hold no in-bounds sample: max then returns
+ * -FLT_MAX (lowest_value of the fp32 destination, the oneDNN max-pooling
+ * seed, not 0), avg_include is 0 and avg_exclude divides 0 by 0 and yields
+ * NaN. There is no dilation: a window sample is exactly one stride step
+ * apart. dst is fp32 and the accumulation is fp32, so the up-conversion of
+ * a narrow input is exact.
  * Quantization is not part of the v0.x POOLING path: validate() rejects a
  * quantized request.
  */

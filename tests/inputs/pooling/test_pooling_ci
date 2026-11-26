@@ -9,7 +9,9 @@
 #
 # Families covered: k2s2, k3s2p1, asymmetric pad, non-square kernel/stride,
 # the k=1xIW full-window row, kh=ih (window spans the whole height), mb>1,
-# ragged channel counts, a 1x1 input, and the exclude-corner family.
+# ragged channel counts, a 1x1 input, the empty-window family (pad >= k: max
+# returns -FLT_MAX; the h case is vertically empty, the w case has an empty
+# prefix of lanes across a strip), and the exclude-corner family.
 #
 # f32 is bit-exact against the scalar golden; f16/bf16 compare at the dtype
 # trait tolerance.
@@ -25,6 +27,8 @@
 12x4x1 maxmb3ic7ih6iw6kh2kw2sh2sw2pt1pb1pl1pr1 n"max_mb3_ic7"
 4x4x1 maxmb1ic1ih6iw6kh3kw3sh2sw2pt1pb2pl1pr2 n"max_pad_eq_k"
 1x1x1 maxmb1ic1ih1iw1kh1kw1 n"max_1x1_1x1"
+2x8x1 maxmb1ic2ih1iw8kh2kw1sh1sw1pt2pb0pl0pr0 n"max_empty_window_h"
+1x10x1 maxmb1ic2ih1iw8kh2kw1sh1sw1pt1pb0pl2pr0 n"max_empty_window_w"
 
 2x2x1 avgmb1ic2ih4iw4kh2kw2sh2sw2 n"avg_k2s2_a"
 3x4x1 avgmb1ic4ih6iw8kh2kw2sh2sw2 n"avg_k2s2_b"

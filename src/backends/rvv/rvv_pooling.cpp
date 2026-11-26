@@ -26,6 +26,9 @@
  *     counts as zero (avg_include);
  *   - max reduces over the in-bounds samples in (kh, kw) order and seeds
  *     from the first in-bounds sample, so the result is one raw input value;
+ *     a window with no in-bounds sample (reachable when pad >= k) keeps the
+ *     -FLT_MAX seed oneDNN uses (lowest_value of the fp32 destination), and
+ *     the empty-window average is 0 (avg_include) or NaN (avg_exclude, 0/0);
  *   - the average accumulates the samples in (kh, kw) order starting from
  *     0 and divides once at the end by KH*KW (avg_include) or by the
  *     in-bounds sample count (avg_exclude).
@@ -40,6 +43,7 @@
 #include "../../common/pooling_geometry.h"
 #include "../../runtime/cost_model.h"
 
+#include <limits>
 #include <stdio.h>
 #include <string.h>
 
@@ -114,6 +118,11 @@ struct rvv_pooling_s {
 
 /* ------------------------------------------------------ C-portable path */
 
+/* Max seed for a window with no in-bounds sample: lowest_value of the fp32
+ * destination, the seed oneDNN's ref_pooling uses for max pooling. A 0 seed
+ * would swallow every negative sample in a partially padded window. */
+static const float k_pool_max_seed = -3.4028234663852886e38f; /* -FLT_MAX */
+
 /* One output element at (oh, ow): the window's in-bounds samples in (kh,
  * kw) order. The loop bounds clamp the window into the input, so a window
  * may overhang it on either side. */
@@ -126,7 +135,7 @@ static float pool_scalar(const rvcl_pooling_desc_t *d, const pool_conv_t *cv,
     const int64_t kh_hi = d->ih - ih0 < d->kh ? d->ih - ih0 : d->kh;
     const int64_t kw_hi = d->iw - iw0 < d->kw ? d->iw - iw0 : d->kw;
 
-    float best = 0.0f, sum = 0.0f;
+    float best = k_pool_max_seed, sum = 0.0f;
     int64_t count = 0;
     for (int64_t kh = kh_lo; kh < kh_hi; kh++) {
         const uint8_t *row
@@ -141,8 +150,7 @@ static float pool_scalar(const rvcl_pooling_desc_t *d, const pool_conv_t *cv,
 
     switch (d->alg) {
         case RVCL_POOL_MAX:
-            /* An empty window cannot occur: the output size formula guarantees
-         * the window start lies inside the padded input. */
+            /* An empty window (pad >= k) keeps the seed. */
             return best;
         case RVCL_POOL_AVG_INCLUDE: return sum / (float)(d->kh * d->kw);
         case RVCL_POOL_AVG_EXCLUDE:
@@ -176,6 +184,29 @@ static void pool_rows_scalar(rvv_pooling_t *rk, const uint8_t *src, float *dst,
 
 /* ------------------------------------------------------ RVV vector path */
 
+/* The value of a window with no in-bounds sample, matching pool_scalar:
+ * max keeps the seed, avg_include sums zeros and divides by KH*KW, and
+ * avg_exclude divides 0 by 0 and yields NaN. */
+static float pool_empty_value(rvcl_pooling_alg_t alg) {
+    switch (alg) {
+        case RVCL_POOL_MAX: return k_pool_max_seed;
+        case RVCL_POOL_AVG_INCLUDE: return 0.0f;
+        default: return std::numeric_limits<float>::quiet_NaN();
+    }
+}
+
+/* True when the window at output column ow holds no in-bounds sample: its
+ * first in-bounds column lies past the window's last one, which only
+ * happens with a left pad >= the window width (kw <= pad_l). A vertically
+ * empty window (pad >= kh) has no in-bounds row on any column and is
+ * decided once per strip, not per lane. */
+static bool pool_window_empty(const rvcl_pooling_desc_t *d, int64_t ow) {
+    const int64_t iw0 = ow * d->sw - d->pad_l;
+    const int64_t kw_lo = iw0 < 0 ? -iw0 : 0;
+    const int64_t kw_hi = d->iw - iw0 < d->kw ? d->iw - iw0 : d->kw;
+    return kw_hi <= kw_lo;
+}
+
 /* One window tap across the strip: lane i reads the sample at p + i*stride
  * and widens it to fp32. An f32 source loads directly; a narrow source
  * loads unsigned 16-bit and zero-extends it into the 32-bit lanes, which is
@@ -189,6 +220,15 @@ static vfloat32m4_t pool_load_f32(
     const vuint32m4_t w
             = __riscv_vsll_vx_u32m4(__riscv_vzext_vf2_u32m4(h, vl), 16, vl);
     return __riscv_vreinterpret_f32m4(w);
+}
+
+/* Stores value into n consecutive fp32 outputs, one vfmv + vse per VL. */
+static void pool_fill_strip(float *dst, int64_t n, float value) {
+    for (int64_t i = 0; i < n;) {
+        const long vl = __riscv_vsetvl_e32m4(n - i);
+        __riscv_vse32_v_f32m4(dst + i, __riscv_vfmv_v_f_f32m4(value, vl), vl);
+        i += (int64_t)vl;
+    }
 }
 
 /* Computes the [ow0, ow0 + av) strip of one output row of one channel and
@@ -217,15 +257,30 @@ static void pool_strip_rvv(const rvcl_pooling_desc_t *d, const pool_conv_t *cv,
     const int64_t n_kh = kh_hi - kh_lo;
     const int64_t n_kw = kw_hi > kw_lo ? kw_hi - kw_lo : 0;
 
-    /* No in-bounds sample at the strip start: every output element of the
-     * strip is max-over-zeros or an average of zeros. */
-    if (n_kh <= 0 || n_kw <= 0) {
-        for (int64_t i = 0; i < av;) {
-            const long vl = __riscv_vsetvl_e32m4(av - i);
-            __riscv_vse32_v_f32m4(
-                    dst_row + ow0 + i, __riscv_vfmv_v_f_f32m4(0.0f, vl), vl);
-            i += (int64_t)vl;
-        }
+    /* A vertically empty strip (pad >= kh) has no in-bounds row, so every
+     * lane is an empty window. */
+    if (n_kh <= 0) {
+        pool_fill_strip(dst_row + ow0, av, pool_empty_value(d->alg));
+        return;
+    }
+    /* A horizontally empty lane (kw <= pad_l) has its window start before
+     * column 0 with the window closing before it. The start moves left with
+     * the lane index, so the empty lanes form a prefix of the strip; lanes
+     * after it open inside the input. */
+    int64_t empty = 0;
+    if (n_kw <= 0)
+        while (empty < av && pool_window_empty(d, ow0 + empty))
+            empty++;
+    if (empty == av) {
+        pool_fill_strip(dst_row + ow0, av, pool_empty_value(d->alg));
+        return;
+    }
+    /* With an empty prefix the lanes open at different in-input columns, so
+     * the strip is not one strided run: take the scalar loop for all of it.
+     * Rare geometry (pad_l >= kw), correctness over throughput. */
+    if (empty > 0) {
+        for (int64_t j = 0; j < av; j++)
+            dst_row[ow0 + j] = pool_scalar(d, cv, src_c, oh, ow0 + j);
         return;
     }
 

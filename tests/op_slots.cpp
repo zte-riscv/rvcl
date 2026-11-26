@@ -314,15 +314,18 @@ static float pool_sample_f32(const dtype_ops_t *op, const uint8_t *p) {
 }
 
 /* Pooling golden: an independent walk of the window in (kh, kw) order.
- * max keeps the largest in-bounds sample (or 0 when the window holds none);
- * avg_include sums every in-bounds sample and divides by KH*KW, so a pad
- * sample counts as zero; avg_exclude divides by the in-bounds count. The
- * accumulation is fp32 and the division happens once at the end, so the
- * result is bit-comparable with the kernel. */
+ * max keeps the largest in-bounds sample, or -FLT_MAX when the window holds
+ * none (oneDNN seeds max from lowest_value of the dst type, and the dst here
+ * is always fp32); avg_include sums every in-bounds sample and divides by
+ * KH*KW, so a pad sample counts as zero; avg_exclude divides by the
+ * in-bounds count, so an empty window yields 0/0 = NaN. The accumulation is
+ * fp32 and the division happens once at the end, so the result is
+ * bit-comparable with the kernel. */
 static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
         const void *sa, const void *b, const void *sb, const float *bias,
         float *c) {
     (void)sa;
+    (void)b;
     (void)sb;
     (void)bias;
     const rvcl_pooling_desc_t *d = &od->pooling;
@@ -341,7 +344,8 @@ static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
             float *dst_c = c + (size_t)(mb * d->ic + ic) * (size_t)out_ch;
             for (int64_t y = 0; y < oh; y++)
                 for (int64_t x = 0; x < ow; x++) {
-                    float best = 0.0f, sum = 0.0f;
+                    float best = -3.4028234663852886e38f; /* -FLT_MAX */
+                    float sum = 0.0f;
                     int64_t count = 0;
                     for (int64_t kh = 0; kh < d->kh; kh++) {
                         const int64_t ih = y * d->sh - d->pad_t + kh;
@@ -364,7 +368,7 @@ static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
                     else if (d->alg == RVCL_POOL_AVG_INCLUDE)
                         out = sum / (float)(d->kh * d->kw);
                     else
-                        out = count > 0 ? sum / (float)count : 0.0f;
+                        out = sum / (float)count; /* empty window: NaN */
                     dst_c[y * ow + x] = out;
                 }
         }
@@ -869,6 +873,7 @@ static void pooling_pack_setup(rvcl_tensor_pack_t *pack,
     (void)tsa;
     (void)tsb;
     (void)b;
+    (void)tb;
     (void)bias;
     (void)tbias;
     const rvcl_pooling_desc_t *d = &od->pooling;
