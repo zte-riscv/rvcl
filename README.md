@@ -83,6 +83,7 @@ Two cross-cutting contracts stay under host control and invisible to kernels:
 ┌───────────────────────────────────────────────────┐
 │ Operator API  rvcl_matmul / _scaled / rvcl_conv2d │
 │               rvcl_inner_product / rvcl_pooling   │
+│               rvcl_layer_norm                     │
 ├───────────────────────────────────────────────────┤
 │ Dispatch       six-stage filter + cost ordering   │
 ├───────────────────────────────────────────────────┤
@@ -285,6 +286,22 @@ dilation field. Its dtypes are f32, f16 and bf16, always accumulating into and
 writing out f32; its corpus cases carry the algorithm and the window geometry in
 a params column.
 
+**LAYER_NORM** normalizes the innermost axis of a plain `[rows][norm_size]`
+tensor: `mean` and the biased variance are accumulated in ascending element
+order and divided once each, then `y = (scale / sqrt(var + eps)) * (x - mean) +
+shift` is written back with one division and one fused multiply-add per element.
+`src/operators/layer_norm.cpp` is the semantic layer and
+`src/backends/rvv/rvv_layer_norm.cpp` the kernel. The work row is one normalized
+row; the vector path streams the row through `vfredosum`, whose reduction is
+ordered, so chaining the strips through one accumulator reproduces the scalar
+left-to-right sum bit for bit (`vfredusum`, the unordered form, is deliberately
+not used). `scale` and `shift` are optional length `norm_size` vectors carried on
+the STAT_SCALE / STAT_SHIFT slots and selected by `use_scale` / `use_shift`; a
+missing one is the constant 1 or 0. Statistics are not produced and there is no
+backward pass. Its dtypes are f32, f16 and bf16, always accumulating into and
+writing out f32; its corpus cases carry the row shape, eps and the two flags in
+a params column.
+
 ### Add a backend
 
 A new backend takes four fixed steps, and no framework code changes:
@@ -364,19 +381,19 @@ orchestration:
 ```text
 rvcl/
 ├── include/rvcl/        # public C ABI: types/init/capability/memory/scheduler/
-│                        # kernel/registry/dispatch/matmul/conv2d/inner_product/pooling + rvcl.h umbrella
+│                        # kernel/registry/dispatch/matmul/conv2d/inner_product/pooling/layer_norm + rvcl.h umbrella
 ├── src/
 │   ├── common/          # type, dtype-trait and memory contract implementations
 │   ├── runtime/         # capability / registry / dispatch / cost model / init
 │   │   └── scheduler/   # serial + OpenMP scheduler backends
-│   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product, pooling)
+│   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product, pooling, layer_norm)
 │   └── backends/
 │       ├── reference/   # golden implementations (matmul, gemv)
 │       └── rvv/         # C / intrinsics kernels, panel packing, path table
 │           └── jit/     # xbyak_riscv JIT kernels (f32/f16/fp8/mxfp8/s8u8)
 ├── examples/            # matmul, dispatch, scheduler, matmul_multicore, vendor_kernel
 ├── tests/               # unit + smoke + differential + concurrent + bench
-│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/, inner_product/, pooling/)
+│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/, inner_product/, pooling/, layer_norm/)
 ├── third_party/         # vendored xbyak_riscv (tag 1.31, BSD-3)
 └── CMakeLists.txt
 ```
@@ -439,12 +456,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The essentials:
   is enforced by review, not by the compiler.
 - **Public API stability** is tiered: `types.h`, `init.h`, `capability.h`,
   `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h`, `inner_product.h`,
-  `pooling.h` are the stable surface and accept additive-only changes before
-  v1.0; `kernel.h`, `registry.h` and `dispatch.h` are the project-stable
-  kernel ABI, where breaking changes need an RFC and maintainer consensus.
-  Any descriptor layout change — even an appended field — must bump
-  `RVCL_KERNEL_ABI_VERSION`, so old plugins stop registering instead of
-  passing a short struct.
+  `pooling.h`, `layer_norm.h` are the stable surface and accept
+  additive-only changes before v1.0; `kernel.h`, `registry.h` and `dispatch.h`
+  are the project-stable kernel ABI, where breaking changes need an RFC and
+  maintainer consensus. Any descriptor layout change — even an appended
+  field — must bump `RVCL_KERNEL_ABI_VERSION`, so old plugins stop registering
+  instead of passing a short struct.
 - **Review bar**: at least one area maintainer who did not author the change;
   public API changes additionally need the project lead. Areas and current
   reviewers are listed in [MAINTAINERS.md](MAINTAINERS.md); external maintainers

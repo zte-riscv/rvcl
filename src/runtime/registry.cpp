@@ -306,6 +306,11 @@ public:
     pooling_registry_t() : kernel_registry_base_t(RVCL_OP_POOLING) {}
 };
 
+class layer_norm_registry_t final : public kernel_registry_base_t {
+public:
+    layer_norm_registry_t() : kernel_registry_base_t(RVCL_OP_LAYER_NORM) {}
+};
+
 class reserved_registry_t final : public kernel_registry_base_t {
 public:
     reserved_registry_t() : kernel_registry_base_t(RVCL_OP_RESERVED) {}
@@ -349,6 +354,7 @@ private:
         by_op_[RVCL_OP_RESERVED] = &reserved_;
         by_op_[RVCL_OP_INNER_PRODUCT] = &inner_product_;
         by_op_[RVCL_OP_POOLING] = &pooling_;
+        by_op_[RVCL_OP_LAYER_NORM] = &layer_norm_;
     }
     registry_set_t(const registry_set_t &) = delete;
     registry_set_t &operator=(const registry_set_t &) = delete;
@@ -383,6 +389,7 @@ private:
     reserved_registry_t reserved_;
     inner_product_registry_t inner_product_;
     pooling_registry_t pooling_;
+    layer_norm_registry_t layer_norm_;
     kernel_registry_base_t *by_op_[RVCL_OP_COUNT];
     registry_slot_t pool_[RVCL_REGISTRY_MAX_KERNELS];
     registry_handle_t global_order_[RVCL_REGISTRY_MAX_KERNELS];

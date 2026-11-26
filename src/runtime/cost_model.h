@@ -90,6 +90,16 @@ RVCL_API uint64_t rvcl_cost_pooling_rvv(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
 /*
+ * Layer norm, RVV backend category (row-wise ordered reduction): same
+ * per-element cheap coefficient and VLEN-tier gain as rvcl_cost_matmul_rvv,
+ * scored on the descriptor's own row view (m = rows, n = norm_size, k = 1).
+ * The two reduction passes and the write-back pass are folded into the
+ * coefficient.
+ */
+RVCL_API uint64_t rvcl_cost_layer_norm_rvv(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
  * VLEN tier gain (fixed-point, 256 = 1.0x) applied to the matmul-rvv
  * category: wider vector registers amortize the micro-kernel overhead, so
  * the gain shrinks as the host tier grows. Exported for the test

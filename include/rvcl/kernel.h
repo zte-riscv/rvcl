@@ -292,12 +292,42 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_pooling_desc_t;
 
+/*
+ * Layer normalization over the innermost axis of a plain [rows][norm_size]
+ * row-major tensor:
+ *   mean = sum_c x[c] / norm_size
+ *   var  = sum_c (x[c] - mean)^2 / norm_size      (biased)
+ *   y[c] = (scale[c] / sqrt(var + eps)) * (x[c] - mean) + shift[c]
+ * computed in three passes over the row (mean, then variance, then
+ * write-back) in ascending c order. scale and shift are optional length
+ * norm_size vectors carried on the STAT_SCALE / STAT_SHIFT slots; a missing
+ * one is the constant 1 (scale) or 0 (shift), selected by use_scale /
+ * use_shift. src uses dtype_a, dst is fp32 and the accumulation is fp32, so
+ * the up-conversion of a narrow input is exact. Statistics are not produced
+ * (inference use only) and there is no backward pass.
+ * Quantization is not part of the v0.x LAYER_NORM path: validate() rejects
+ * a quantized request.
+ */
+typedef struct {
+    int64_t rows; /* number of normalized rows */
+    int64_t norm_size; /* elements per row (the normalized axis) */
+    float eps; /* added to the biased variance under the square root */
+    int use_scale; /* 1 = read the STAT_SCALE slot, 0 = scale is 1 */
+    int use_shift; /* 1 = read the STAT_SHIFT slot, 0 = shift is 0 */
+    rvcl_dtype_t dtype_a, dtype_b, dtype_acc, dtype_c;
+    /* Layer norm has no bias term: this stays RVCL_DTYPE_AUTO and
+     * validate() rejects a request that names one. */
+    rvcl_dtype_t dtype_bias;
+    rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
+} rvcl_layer_norm_desc_t;
+
 typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
     rvcl_gemv_desc_t gemv;
     rvcl_conv2d_desc_t conv2d;
     rvcl_inner_product_desc_t inner_product;
     rvcl_pooling_desc_t pooling;
+    rvcl_layer_norm_desc_t layer_norm;
 } rvcl_op_desc_t;
 
 /* ------------------------------------------------------------ kernel vtable */

@@ -25,6 +25,7 @@
 
 #include "op_slots.hpp"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,6 +129,19 @@ static int64_t pool_none_elems(const rvcl_op_desc_t *od) {
 static int64_t pool_out_elems(const rvcl_op_desc_t *od) {
     const rvcl_pooling_desc_t *d = &od->pooling;
     return d->mb * d->ic * pool_oh(d) * pool_ow(d);
+}
+
+static int64_t ln_a_elems(const rvcl_op_desc_t *od) {
+    return od->layer_norm.rows * od->layer_norm.norm_size;
+}
+/* No B operand. The optional scale and shift vectors both ride the bias
+ * buffer as its two norm_size halves, so the rig's existing fp32 parameter
+ * buffer carries them without a layer_norm-specific allocation. */
+static int64_t ln_param_elems(const rvcl_op_desc_t *od) {
+    return od->layer_norm.norm_size * 2;
+}
+static int64_t ln_out_elems(const rvcl_op_desc_t *od) {
+    return od->layer_norm.rows * od->layer_norm.norm_size;
 }
 
 /* ---------------------------------------------------------------- golden */
@@ -373,6 +387,62 @@ static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
                     dst_c[y * ow + x] = out;
                 }
         }
+}
+
+/* Layer norm golden: an independent three-pass walk of the row in ascending
+ * c order. mean and the biased variance accumulate left to right and divide
+ * once; the squared deviation is formed without fusion (fma(d, d, +0) is the
+ * single-rounded product); the write-back divides scale by sqrt(var + eps)
+ * per element (never a reciprocal times the value) and updates with one
+ * fused multiply-add. sqrt goes through libm sqrtf, so the golden is the
+ * deterministic scalar reference the kernel is compared against. The rig's
+ * fp32 parameter buffer carries the two optional vectors as two norm_size
+ * halves: scale first, then shift. */
+static void layer_norm_golden(const rvcl_op_desc_t *od, const void *a,
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c) {
+    (void)sa;
+    (void)sb;
+    (void)b;
+    const rvcl_layer_norm_desc_t *d = &od->layer_norm;
+    const dtype_ops_t *op = dtype_ops_for(d->dtype_a);
+    const int64_t n = d->norm_size;
+    const uint8_t *src = (const uint8_t *)a;
+    if (n <= 0 || d->rows <= 0) return;
+    /* The two vectors are read only when the case asks for them and the
+     * buffer that carries them exists, which is exactly the pair of slots
+     * pack_setup binds: a flag without a buffer imports nothing and the
+     * kernel substitutes the constant, so the golden must do the same. A
+     * NULL here is therefore the "constant" case, not a missing operand. */
+    const float *scale = (d->use_scale && bias) ? bias : NULL;
+    const float *shift = (d->use_shift && bias) ? bias + n : NULL;
+
+    for (int64_t r = 0; r < d->rows; r++) {
+        const uint8_t *row = src + (size_t)r * (size_t)n * op->elt;
+        float *out = c + (size_t)r * (size_t)n;
+
+        float sum = 0.0f;
+        for (int64_t i = 0; i < n; i++)
+            sum += pool_sample_f32(op, row + (size_t)i * op->elt);
+        const float mean = sum / (float)n;
+
+        float acc = 0.0f;
+        for (int64_t i = 0; i < n; i++) {
+            const float dev
+                    = pool_sample_f32(op, row + (size_t)i * op->elt) - mean;
+            acc += fmaf(dev, dev, 0.0f);
+        }
+        const float var = acc / (float)n;
+        const float sqrt_var = sqrtf(var + d->eps);
+
+        for (int64_t i = 0; i < n; i++) {
+            const float sm = scale ? scale[i] / sqrt_var : 1.0f / sqrt_var;
+            const float sh = shift ? shift[i] : 0.0f;
+            const float dev
+                    = pool_sample_f32(op, row + (size_t)i * op->elt) - mean;
+            out[i] = fmaf(sm, dev, sh);
+        }
+    }
 }
 
 /* ------------------------------------------------------------ build desc */
@@ -625,6 +695,85 @@ static rvcl_status_t pooling_build_desc(rvcl_op_desc_t *od, int64_t m,
     if (d.mb * oh != m || ow != n || k != 1) return RVCL_ERROR_INVALID_ARGUMENT;
 
     od->pooling = d;
+    return RVCL_SUCCESS;
+}
+
+/* Layer norm params lexer: a fixed-order run of <key><decimal> fields, keys
+ * "rows","ns" (required) then the optional "e" (eps x 1e9, an integer so the
+ * value fits the column's [a-z0-9:] alphabet), "sc" and "sh" (1/0 flags for
+ * use_scale / use_shift; defaults 0). A key out of order, repeated, unknown
+ * or missing is an error. eps is decoded as e * 1e-9f, so e0 is 0 and e10000
+ * is 1e-5. */
+static rvcl_status_t layer_norm_build_desc(rvcl_op_desc_t *od, int64_t m,
+        int64_t n, int64_t k, const char *params, rvcl_dtype_t da,
+        rvcl_dtype_t db, rvcl_dtype_t dacc, rvcl_dtype_t dc,
+        rvcl_dtype_t dbias) {
+    rvcl_layer_norm_desc_t d = {};
+    d.dtype_a = da;
+    /* No B operand and no bias: the request-side "unset" marker, which is
+     * also what the kernel's tuple check accepts. */
+    d.dtype_b = RVCL_DTYPE_AUTO;
+    d.dtype_acc = dacc;
+    d.dtype_c = dc;
+    d.dtype_bias = RVCL_DTYPE_AUTO;
+    (void)db;
+    (void)dbias;
+
+    /* Every field lands in an int64_t first, so one uniform key table
+     * covers the sizes and the flags without a per-field pointer type. */
+    int64_t rows = 0, norm_size = 0, eps_e9 = 0, use_scale = 0, use_shift = 0;
+    const struct {
+        const char *key;
+        int64_t *dst;
+        int required;
+    } fields[] = {
+            {"rows", &rows, 1},
+            {"ns", &norm_size, 1},
+            {"e", &eps_e9, 0},
+            {"sc", &use_scale, 0},
+            {"sh", &use_shift, 0},
+    };
+    const int nfields = (int)(sizeof(fields) / sizeof(fields[0]));
+    const char *p = params ? params : "";
+    int next = 0;
+    while (*p) {
+        int matched = -1;
+        for (int i = next; i < nfields; i++)
+            if (!strncmp(p, fields[i].key, strlen(fields[i].key))) {
+                matched = i;
+                break;
+            }
+        if (matched < 0) return RVCL_ERROR_INVALID_ARGUMENT;
+        int ok = 1;
+        const int64_t v = pool_param_value(&p, fields[matched].key, &ok);
+        if (!ok) return RVCL_ERROR_INVALID_ARGUMENT;
+        *fields[matched].dst = v;
+        next = matched + 1;
+    }
+    for (int i = 0; i < nfields; i++)
+        if (fields[i].required && *fields[i].dst == 0)
+            return RVCL_ERROR_INVALID_ARGUMENT;
+    /* The flags are booleans and eps must stay under the square root's
+     * domain, so an out-of-range column is a corpus error. */
+    if ((use_scale != 0 && use_scale != 1) || (use_shift != 0 && use_shift != 1)
+            || eps_e9 > 1000000000)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+
+    d.rows = rows;
+    d.norm_size = norm_size;
+    /* The scale is applied in double so the usual values land on their
+     * nearest fp32: e0 is 0 and e10000 is 1e-5, not 10000 times the
+     * rounded 1e-9f. */
+    d.eps = (float)((double)eps_e9 * 1e-9);
+    d.use_scale = (int)use_scale;
+    d.use_shift = (int)use_shift;
+
+    /* The corpus triple is the row view (m = rows, n = norm_size, k = 1);
+     * a mismatch between the two columns is a corpus typo. */
+    if (d.rows != m || d.norm_size != n || k != 1)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+
+    od->layer_norm = d;
     return RVCL_SUCCESS;
 }
 
@@ -898,6 +1047,49 @@ static void pooling_pack_setup(rvcl_tensor_pack_t *pack,
     rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
 }
 
+/* src [rows][ns] in the case dtype, fp32 dst [rows][ns]; the optional scale
+ * and shift vectors both live in the rig's fp32 bias buffer as two ns-sized
+ * halves (scale first, then shift), so the golden and the pack read the same
+ * buffer through the same layout. A flag the case leaves off imports no
+ * tensor, which is the constant the kernel substitutes. */
+static void layer_norm_pack_setup(rvcl_tensor_pack_t *pack,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
+        rvcl_tensor_t *tc, rvcl_tensor_t *tbias) {
+    (void)sa;
+    (void)sb;
+    (void)b;
+    (void)tb;
+    (void)tsb;
+    const rvcl_layer_norm_desc_t *d = &od->layer_norm;
+
+    rvcl_tensor_desc_t td = {.ndims = 2,
+            .dims = {d->rows, d->norm_size},
+            .strides = {d->norm_size, 1},
+            .dtype = d->dtype_a};
+    rvcl_tensor_init(ta, &td, (void *)a);
+
+    td.dtype = d->dtype_c;
+    rvcl_tensor_init(tc, &td, c);
+
+    rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_A, ta);
+    rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
+
+    rvcl_tensor_desc_t pd = {.ndims = 1,
+            .dims = {d->norm_size},
+            .strides = {1},
+            .dtype = RVCL_DTYPE_FP32};
+    if (d->use_scale && bias) {
+        rvcl_tensor_init(tsa, &pd, (void *)bias);
+        rvcl_tensor_pack_add(pack, RVCL_TENSOR_STAT_SCALE, tsa);
+    }
+    if (d->use_shift && bias) {
+        rvcl_tensor_init(tbias, &pd, (void *)(bias + d->norm_size));
+        rvcl_tensor_pack_add(pack, RVCL_TENSOR_STAT_SHIFT, tbias);
+    }
+}
+
 /* -------------------------------------------------------- full ranges */
 
 static rvcl_work_range_t matmul_full_range(const rvcl_op_desc_t *od) {
@@ -928,6 +1120,12 @@ static rvcl_work_range_t inner_product_full_range(const rvcl_op_desc_t *od) {
     return rvcl_work_range_full(d->mb, d->oc, d->k);
 }
 
+/* One work row per normalized row: the whole normalized axis, k = 1. */
+static rvcl_work_range_t layer_norm_full_range(const rvcl_op_desc_t *od) {
+    const rvcl_layer_norm_desc_t *d = &od->layer_norm;
+    return rvcl_work_range_full(d->rows, d->norm_size, 1);
+}
+
 /* --------------------------------------------------------- out widths */
 
 static int64_t matmul_out_width(const rvcl_op_desc_t *od) {
@@ -945,6 +1143,9 @@ static int64_t pooling_out_width(const rvcl_op_desc_t *od) {
 }
 static int64_t inner_product_out_width(const rvcl_op_desc_t *od) {
     return od->inner_product.oc;
+}
+static int64_t layer_norm_out_width(const rvcl_op_desc_t *od) {
+    return od->layer_norm.norm_size;
 }
 
 /* ------------------------------------------------------ shared run rig */
@@ -1059,6 +1260,30 @@ static rvcl_status_t inner_product_run_dispatch(const rvcl_op_desc_t *od,
             op_slot_for(RVCL_OP_INNER_PRODUCT), od, a, sa, b, sb, bias, c);
 }
 
+/* Layer norm routes through the public dispatch entry, like pooling: the
+ * entry is what a user calls and it resolves the same row. */
+static rvcl_status_t layer_norm_run_dispatch(const rvcl_op_desc_t *od,
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c) {
+    (void)sa;
+    (void)sb;
+    (void)b;
+    rvcl_dispatch_result_t *r = NULL;
+    rvcl_status_t st = rvcl_dispatch_layer_norm(&od->layer_norm, &r);
+    if (st != RVCL_SUCCESS || !r) return st;
+
+    const op_slot_t *slot = op_slot_for(RVCL_OP_LAYER_NORM);
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
+    rvcl_tensor_pack_t pack;
+    rvcl_tensor_pack_init(&pack);
+    slot->pack_setup(&pack, od, a, sa, b, sb, bias, c, &ta, &tsa, &tb, &tsb,
+            &tc, &tbias);
+    const rvcl_work_range_t full = slot->full_range(od);
+    st = rvcl_kernel_run(rvcl_dispatch_kernel(r), &pack, &full);
+    rvcl_dispatch_release(r);
+    return st;
+}
+
 /* ----------------------------------------------------------- run named */
 
 /* Runs a named kernel by direct factory use (bypasses dispatch selection
@@ -1164,6 +1389,14 @@ static rvcl_status_t inner_product_run_named(const char *name,
             b, sb, bias, c, r_m0, r_m1);
 }
 
+static rvcl_status_t layer_norm_run_named(const char *name,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1) {
+    return run_named_impl(op_slot_for(RVCL_OP_LAYER_NORM), name, od, a, sa, b,
+            sb, bias, c, r_m0, r_m1);
+}
+
 /* ---------------------------------------------------------------- table */
 
 static const rvcl_dtype_t k_matmul_dtypes[] = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16,
@@ -1180,6 +1413,9 @@ static const rvcl_dtype_t k_inner_product_dtypes[]
         = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_pooling_dtypes[]
+        = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
+
+static const rvcl_dtype_t k_layer_norm_dtypes[]
         = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
 
 static const op_slot_t k_op_slots[] = {
@@ -1270,6 +1506,26 @@ static const op_slot_t k_op_slots[] = {
                 .out_width = pooling_out_width,
                 .run_dispatch = pooling_run_dispatch,
                 .run_named = pooling_run_named,
+                /* the row walk is the only execution path: no separate
+                 * micro-kernel to time. */
+                .can_timing = 0,
+        },
+        {
+                .name = "layer_norm",
+                .op = RVCL_OP_LAYER_NORM,
+                .dtypes = k_layer_norm_dtypes,
+                .a_elems = ln_a_elems,
+                .b_elems = pool_none_elems,
+                /* the two optional vectors share the fp32 parameter buffer */
+                .bias_elems = ln_param_elems,
+                .out_elems = ln_out_elems,
+                .golden = layer_norm_golden,
+                .build_desc = layer_norm_build_desc,
+                .pack_setup = layer_norm_pack_setup,
+                .full_range = layer_norm_full_range,
+                .out_width = layer_norm_out_width,
+                .run_dispatch = layer_norm_run_dispatch,
+                .run_named = layer_norm_run_named,
                 /* the row walk is the only execution path: no separate
                  * micro-kernel to time. */
                 .can_timing = 0,

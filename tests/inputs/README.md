@@ -25,6 +25,9 @@ tests/inputs/
 ├── pooling/                 # params column carries algorithm + window geometry
 │   ├── test_pooling_smoke   # PR gate set (8 cases: algorithm x parameter families)
 │   └── test_pooling_ci      # CI set (28 cases)
+├── layer_norm/              # params column carries rows/norm_size/eps/scale/shift flags
+│   ├── test_layer_norm_smoke # PR gate set (8 cases: row shape x optional params)
+│   └── test_layer_norm_ci    # CI set (29 cases)
 └── <op>/ …                  # new operator = new directory (v0.5+, follows the library)
 ```
 
@@ -156,6 +159,36 @@ no forced-path targets are registered; per-kernel coverage comes from
 empty-window `max` and `avg` families but not an empty `avgex` window: the
 shared differential comparators treat `NaN != NaN` as a mismatch, so that
 case would need a pooling-specific NaN-aware compare and is out of corpus.
+
+**layer_norm** — the required row shape, then the optional keys, each
+`<key><decimal>`:
+
+```ebnf
+layer_norm_params := 'rows' dec 'ns' dec [ 'e' dec ] [ 'sc' dec ] [ 'sh' dec ] ;
+```
+
+`rows` is the number of normalized rows and `ns` the normalized axis width;
+both are required. `e` is eps scaled by 1e9, an integer so the value stays
+inside the params alphabet (`e0` = 0, `e10000` = 1e-5); it defaults to 0.
+`sc` and `sh` are the `use_scale` / `use_shift` flags (1 = read the length
+`ns` vector, 0 = the constant 1 / 0) and default to 0. Keys must appear in
+this order, at most once each; an unknown, out-of-order, repeated or missing
+required key is an error, as is a flag outside 0..1. The shape and params
+columns must agree:
+
+```text
+M = rows      N = norm_size      K = 1
+```
+
+`--dt` for layer_norm: `f32`, `f16` and `bf16`, inputs in the case dtype and
+accumulation and output always fp32 (exact up-conversion). Like pooling
+there is no JIT micro-kernel, so no forced-path targets are registered and
+per-kernel coverage comes from `run_named` inside the differential. The
+kernel packs nothing, so the tail family is about the vector length alone:
+the corpus covers norm_size tail widths (1, 3, 5, 7, 9, 13, 17, 31, 33, 65,
+129, 257 and 1023, next to the exact multiples 8, 16, 32, 64, 128 and 512),
+the rows scan, both eps values the corpus uses (0 and 1e-5) and all four
+`use_scale` x `use_shift` combinations.
 
 ## Semantics
 

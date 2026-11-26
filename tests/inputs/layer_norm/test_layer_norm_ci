@@ -1,0 +1,51 @@
+# layer_norm ci — three dtypes x the row shape, the tail and the optional
+# parameter families
+#
+# Shape column = the case's view: MxNxK with M = rows, N = norm_size,
+# K = 1; the params column carries the normalization in the fixed key order
+# rows,ns[,e][,sc][,sh] (see tests/inputs/README.md). e is eps scaled by 1e9
+# (e0 = 0, e10000 = 1e-5), sc/sh are the use_scale / use_shift flags.
+#
+# Families covered: the norm_size tail (sizes that are not a multiple of the
+# 8-element pack unit and of the vector length: 1, 3, 5, 7, 9, 13, 17, 33,
+# 65, 129), the rows scan (1, 2, 3, 5, 8, 17), eps at both ends of the
+# corpus range, and all four use_scale x use_shift combinations on the same
+# shape so the constant substitution of a missing vector is compared against
+# the golden's own substitution.
+#
+# f32 is bit-exact against the scalar golden; f16/bf16 compare at the dtype
+# trait tolerance.
+1x1x1 rows1ns1e10000sc0sh0 n"ns1_no_scale_shift"
+2x3x1 rows2ns3e0sc1sh1 n"ns3_tail"
+3x5x1 rows3ns5e10000sc1sh0 n"ns5_tail_eps"
+5x7x1 rows5ns7e0sc0sh1 n"ns7_tail_shift_only"
+2x9x1 rows2ns9e10000sc0sh0 n"ns9_tail_eps"
+4x13x1 rows4ns13e0sc1sh1 n"ns13_tail"
+8x17x1 rows8ns17e10000sc1sh1 n"ns17_tail_eps"
+3x33x1 rows3ns33e0sc1sh1 n"ns33_tail"
+2x65x1 rows2ns65e10000sc0sh1 n"ns65_tail_eps_shift"
+1x129x1 rows1ns129e0sc1sh0 n"ns129_tail_scale"
+
+17x8x1 rows17ns8e0sc1sh1 n"rows17_plain"
+1x16x1 rows1ns16e0sc0sh0 n"rows1_plain"
+2x64x1 rows2ns64e10000sc1sh1 n"rows2_plain_eps"
+5x32x1 rows5ns32e0sc1sh0 n"rows5_plain_scale"
+8x8x1 rows8ns8e0sc0sh1 n"rows8_plain_shift"
+
+4x9x1 rows4ns9e0sc0sh0 n"combo_none"
+4x9x1 rows4ns9e0sc1sh0 n"combo_scale"
+4x9x1 rows4ns9e0sc0sh1 n"combo_shift"
+4x9x1 rows4ns9e0sc1sh1 n"combo_both"
+
+4x9x1 rows4ns9e10000sc0sh0 n"combo_none_eps"
+4x9x1 rows4ns9e10000sc1sh0 n"combo_scale_eps"
+4x9x1 rows4ns9e10000sc0sh1 n"combo_shift_eps"
+4x9x1 rows4ns9e10000sc1sh1 n"combo_both_eps"
+
+2x128x1 rows2ns128e0sc1sh1 n"ns128_wide"
+3x257x1 rows3ns257e10000sc1sh1 n"ns257_wide_eps"
+2x512x1 rows2ns512e0sc0sh0 n"ns512_wide_plain"
+6x1023x1 rows6ns1023e10000sc1sh1 n"ns1023_wide_eps"
+
+16x17x1 rows16ns17e0sc1sh1 n"rows16_ns17_tail"
+32x31x1 rows32ns31e10000sc1sh1 n"rows32_ns31_tail_eps"
