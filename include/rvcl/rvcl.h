@@ -27,6 +27,7 @@
 #include "rvcl/kernel.h"
 #include "rvcl/matmul.h"
 #include "rvcl/memory.h"
+#include "rvcl/pooling.h"
 #include "rvcl/registry.h"
 #include "rvcl/scheduler.h"
 #include "rvcl/types.h"

@@ -30,7 +30,10 @@
 #include <string.h>
 
 #include "../src/common/conv2d_geometry.h"
+#include "../src/common/pooling_geometry.h"
 #include "../src/runtime/dispatch_internal.h"
+#include "../src/backends/rvv/rvv_bf16.hpp"
+#include "../src/backends/rvv/rvv_fp16.hpp"
 #include "dtype_ops.hpp"
 
 /* ------------------------------------------------------- element counts */
@@ -100,6 +103,31 @@ static int64_t conv_bias_elems(const rvcl_op_desc_t *od) {
 static int64_t conv_out_elems(const rvcl_op_desc_t *od) {
     const rvcl_conv2d_desc_t *d = &od->conv2d;
     return d->mb * d->oc * conv_oh(d) * conv_ow(d);
+}
+
+/* Pooling output geometry: the library's single formula copy, so the
+ * corpus-vs-params cross-check cannot drift from what the kernel computes. */
+static int64_t pool_oh(const rvcl_pooling_desc_t *d) {
+    return rvcl_pooling_out_dim(d->ih, d->kh, d->sh, d->pad_t, d->pad_b);
+}
+
+static int64_t pool_ow(const rvcl_pooling_desc_t *d) {
+    return rvcl_pooling_out_dim(d->iw, d->kw, d->sw, d->pad_l, d->pad_r);
+}
+
+static int64_t pool_a_elems(const rvcl_op_desc_t *od) {
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    return d->mb * d->ic * d->ih * d->iw;
+}
+/* No B operand and no bias: zero-length tensors, which the differential
+ * rig allocates as empty buffers and the row leaves out of the pack. */
+static int64_t pool_none_elems(const rvcl_op_desc_t *od) {
+    (void)od;
+    return 0;
+}
+static int64_t pool_out_elems(const rvcl_op_desc_t *od) {
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    return d->mb * d->ic * pool_oh(d) * pool_ow(d);
 }
 
 /* ---------------------------------------------------------------- golden */
@@ -267,6 +295,81 @@ static void inner_product_golden(const rvcl_op_desc_t *od, const void *a,
     free(wt);
 }
 
+/* One stored sample as fp32: the narrow formats up-convert exactly, so the
+ * golden sees the same values the kernel's conversion produces. */
+static float pool_sample_f32(const dtype_ops_t *op, const uint8_t *p) {
+    if (op->dtype == RVCL_DTYPE_FP16) {
+        uint16_t h;
+        memcpy(&h, p, sizeof(h));
+        return rvv_f16_to_f32(h);
+    }
+    if (op->dtype == RVCL_DTYPE_BF16) {
+        uint16_t h;
+        memcpy(&h, p, sizeof(h));
+        return rvv_bf16_to_f32(h);
+    }
+    float v;
+    memcpy(&v, p, sizeof(v));
+    return v;
+}
+
+/* Pooling golden: an independent walk of the window in (kh, kw) order.
+ * max keeps the largest in-bounds sample (or 0 when the window holds none);
+ * avg_include sums every in-bounds sample and divides by KH*KW, so a pad
+ * sample counts as zero; avg_exclude divides by the in-bounds count. The
+ * accumulation is fp32 and the division happens once at the end, so the
+ * result is bit-comparable with the kernel. */
+static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
+        const void *sa, const void *b, const void *sb, const float *bias,
+        float *c) {
+    (void)sa;
+    (void)sb;
+    (void)bias;
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    /* The input elements are read by the storage dtype's size; the output
+     * buffer is always the fp32 view the rig allocates. */
+    const dtype_ops_t *op = dtype_ops_for(d->dtype_a);
+    const int64_t oh = pool_oh(d), ow = pool_ow(d);
+    const int64_t in_ch = d->ih * d->iw, out_ch = oh * ow;
+    const uint8_t *src = (const uint8_t *)a;
+    if (oh <= 0 || ow <= 0) return;
+
+    for (int64_t mb = 0; mb < d->mb; mb++)
+        for (int64_t ic = 0; ic < d->ic; ic++) {
+            const uint8_t *src_c
+                    = src + (size_t)(mb * d->ic + ic) * (size_t)in_ch * op->elt;
+            float *dst_c = c + (size_t)(mb * d->ic + ic) * (size_t)out_ch;
+            for (int64_t y = 0; y < oh; y++)
+                for (int64_t x = 0; x < ow; x++) {
+                    float best = 0.0f, sum = 0.0f;
+                    int64_t count = 0;
+                    for (int64_t kh = 0; kh < d->kh; kh++) {
+                        const int64_t ih = y * d->sh - d->pad_t + kh;
+                        if (ih < 0 || ih >= d->ih) continue;
+                        for (int64_t kw = 0; kw < d->kw; kw++) {
+                            const int64_t iw = x * d->sw - d->pad_l + kw;
+                            if (iw < 0 || iw >= d->iw) continue;
+                            const float v = pool_sample_f32(op,
+                                    src_c
+                                            + (size_t)(ih * d->iw + iw)
+                                                    * op->elt);
+                            if (count == 0 || v > best) best = v;
+                            sum += v;
+                            count++;
+                        }
+                    }
+                    float out;
+                    if (d->alg == RVCL_POOL_MAX)
+                        out = best;
+                    else if (d->alg == RVCL_POOL_AVG_INCLUDE)
+                        out = sum / (float)(d->kh * d->kw);
+                    else
+                        out = count > 0 ? sum / (float)count : 0.0f;
+                    dst_c[y * ow + x] = out;
+                }
+        }
+}
+
 /* ------------------------------------------------------------ build desc */
 
 static rvcl_status_t matmul_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
@@ -404,6 +507,119 @@ static rvcl_status_t conv2d_build_desc(rvcl_op_desc_t *od, int64_t m, int64_t n,
         return RVCL_ERROR_INVALID_ARGUMENT;
 
     od->conv2d = d;
+    return RVCL_SUCCESS;
+}
+
+/* Pooling params lexer: an optional leading algorithm name ("max",
+ * "avg" = avg_include, "avgex" = avg_exclude; default max) followed by a
+ * fixed-order run of <key><decimal> fields, keys "mb","ic","ih","iw",
+ * "kh","kw" (required) and the optional "sh","sw","pt","pb","pl","pr"
+ * (defaults 1/1/0/0/0/0). A key out of order, repeated, unknown or missing
+ * is an error. */
+typedef struct {
+    const char *key;
+    int64_t *dst;
+    int required;
+} pool_param_field_t;
+
+static int64_t pool_param_value(const char **pp, const char *key, int *ok) {
+    const char *p = *pp;
+    const size_t klen = strlen(key);
+    if (strncmp(p, key, klen) != 0) {
+        *ok = 0;
+        return 0;
+    }
+    p += klen;
+    if (*p < '0' || *p > '9') {
+        *ok = 0;
+        return 0;
+    }
+    int64_t v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        if (v > 1000000000) {
+            *ok = 0;
+            return 0;
+        }
+        p++;
+    }
+    *pp = p;
+    return v;
+}
+
+static rvcl_status_t pooling_build_desc(rvcl_op_desc_t *od, int64_t m,
+        int64_t n, int64_t k, const char *params, rvcl_dtype_t da,
+        rvcl_dtype_t db, rvcl_dtype_t dacc, rvcl_dtype_t dc,
+        rvcl_dtype_t dbias) {
+    rvcl_pooling_desc_t d = {};
+    d.alg = RVCL_POOL_MAX;
+    d.sh = d.sw = 1;
+    d.dtype_a = da;
+    /* No B operand and no bias: the request-side "unset" marker, which is
+     * also what the kernel's tuple check accepts. */
+    d.dtype_b = RVCL_DTYPE_AUTO;
+    d.dtype_acc = dacc;
+    d.dtype_c = dc;
+    d.dtype_bias = RVCL_DTYPE_AUTO;
+    (void)db;
+    (void)dbias;
+
+    const char *p = params ? params : "";
+    if (!strncmp(p, "avgex", 5)) {
+        d.alg = RVCL_POOL_AVG_EXCLUDE;
+        p += 5;
+    } else if (!strncmp(p, "avg", 3)) {
+        d.alg = RVCL_POOL_AVG_INCLUDE;
+        p += 3;
+    } else if (!strncmp(p, "max", 3)) {
+        p += 3;
+    }
+
+    const pool_param_field_t fields[] = {
+            {"mb", &d.mb, 1},
+            {"ic", &d.ic, 1},
+            {"ih", &d.ih, 1},
+            {"iw", &d.iw, 1},
+            {"kh", &d.kh, 1},
+            {"kw", &d.kw, 1},
+            {"sh", &d.sh, 0},
+            {"sw", &d.sw, 0},
+            {"pt", &d.pad_t, 0},
+            {"pb", &d.pad_b, 0},
+            {"pl", &d.pad_l, 0},
+            {"pr", &d.pad_r, 0},
+    };
+    const int nfields = (int)(sizeof(fields) / sizeof(fields[0]));
+    int next = 0;
+    while (*p) {
+        int matched = -1;
+        for (int i = next; i < nfields; i++)
+            if (!strncmp(p, fields[i].key, 2)) {
+                matched = i;
+                break;
+            }
+        if (matched < 0) return RVCL_ERROR_INVALID_ARGUMENT;
+        int ok = 1;
+        const int64_t v = pool_param_value(&p, fields[matched].key, &ok);
+        if (!ok) return RVCL_ERROR_INVALID_ARGUMENT;
+        *fields[matched].dst = v;
+        next = matched + 1;
+    }
+    for (int i = 0; i < nfields; i++)
+        if (fields[i].required && *fields[i].dst == 0)
+            return RVCL_ERROR_INVALID_ARGUMENT;
+
+    /* The same geometry check the dispatch and kernel validators run. */
+    if (!rvcl_pooling_geometry_valid(&d)) return RVCL_ERROR_INVALID_ARGUMENT;
+
+    /* Cross-check the params geometry against the shape column: the corpus
+     * triple is the case's view (m = mb*OH, n = OW, k = 1), so a mismatch
+     * between the two columns is a corpus typo. */
+    const int64_t oh = pool_oh(&d), ow = pool_ow(&d);
+    if (oh <= 0 || ow <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    if (d.mb * oh != m || ow != n || k != 1) return RVCL_ERROR_INVALID_ARGUMENT;
+
+    od->pooling = d;
     return RVCL_SUCCESS;
 }
 
@@ -642,6 +858,40 @@ static void inner_product_pack_setup(rvcl_tensor_pack_t *pack,
     }
 }
 
+/* NCHW src and NCHW fp32 dst; no B, no bias. */
+static void pooling_pack_setup(rvcl_tensor_pack_t *pack,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, rvcl_tensor_t *ta,
+        rvcl_tensor_t *tsa, rvcl_tensor_t *tb, rvcl_tensor_t *tsb,
+        rvcl_tensor_t *tc, rvcl_tensor_t *tbias) {
+    (void)sa;
+    (void)sb;
+    (void)tsa;
+    (void)tsb;
+    (void)b;
+    (void)bias;
+    (void)tbias;
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    const int64_t oh = pool_oh(d), ow = pool_ow(d);
+
+    rvcl_tensor_desc_t td = {.ndims = 4,
+            .dims = {d->mb, d->ic, d->ih, d->iw},
+            .strides = {d->ic * d->ih * d->iw, d->ih * d->iw, d->iw, 1},
+            .dtype = d->dtype_a};
+    rvcl_tensor_init(ta, &td, (void *)a);
+
+    td.dims[2] = oh;
+    td.dims[3] = ow;
+    td.strides[0] = d->ic * oh * ow;
+    td.strides[1] = oh * ow;
+    td.strides[2] = ow;
+    td.dtype = d->dtype_c;
+    rvcl_tensor_init(tc, &td, c);
+
+    rvcl_tensor_pack_add(pack, RVCL_TENSOR_SRC_A, ta);
+    rvcl_tensor_pack_add_out(pack, RVCL_TENSOR_DST, tc);
+}
+
 /* -------------------------------------------------------- full ranges */
 
 static rvcl_work_range_t matmul_full_range(const rvcl_op_desc_t *od) {
@@ -657,6 +907,12 @@ static rvcl_work_range_t conv2d_full_range(const rvcl_op_desc_t *od) {
     const rvcl_conv2d_desc_t *d = &od->conv2d;
     return rvcl_work_range_full(
             d->mb * conv_oh(d) * conv_ow(d), d->oc, d->ic * d->kh * d->kw);
+}
+
+/* One work row per output line of every batch: the whole width, k = 1. */
+static rvcl_work_range_t pooling_full_range(const rvcl_op_desc_t *od) {
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    return rvcl_work_range_full(d->mb * pool_oh(d), pool_ow(d), 1);
 }
 
 /* The inner product GEMM projection: every row over the full width and
@@ -677,6 +933,9 @@ static int64_t gemv_out_width(const rvcl_op_desc_t *od) {
 }
 static int64_t conv2d_out_width(const rvcl_op_desc_t *od) {
     return conv_ow(&od->conv2d);
+}
+static int64_t pooling_out_width(const rvcl_op_desc_t *od) {
+    return pool_ow(&od->pooling);
 }
 static int64_t inner_product_out_width(const rvcl_op_desc_t *od) {
     return od->inner_product.oc;
@@ -760,6 +1019,31 @@ static rvcl_status_t conv2d_run_dispatch(const rvcl_op_desc_t *od,
         const float *bias, float *c) {
     return run_dispatch_impl(
             op_slot_for(RVCL_OP_CONV2D), od, a, sa, b, sb, bias, c);
+}
+
+/* Pooling routes through the public dispatch entry (the internal table is
+ * keyed on the same row, but the entry is what a user calls). */
+static rvcl_status_t pooling_run_dispatch(const rvcl_op_desc_t *od,
+        const void *a, const void *sa, const void *b, const void *sb,
+        const float *bias, float *c) {
+    (void)sa;
+    (void)sb;
+    (void)b;
+    (void)bias;
+    rvcl_dispatch_result_t *r = NULL;
+    rvcl_status_t st = rvcl_dispatch_pooling(&od->pooling, &r);
+    if (st != RVCL_SUCCESS || !r) return st;
+
+    const op_slot_t *slot = op_slot_for(RVCL_OP_POOLING);
+    rvcl_tensor_t ta, tb, tc, tbias, tsa, tsb;
+    rvcl_tensor_pack_t pack;
+    rvcl_tensor_pack_init(&pack);
+    slot->pack_setup(&pack, od, a, sa, b, sb, bias, c, &ta, &tsa, &tb, &tsb,
+            &tc, &tbias);
+    const rvcl_work_range_t full = slot->full_range(od);
+    st = rvcl_kernel_run(rvcl_dispatch_kernel(r), &pack, &full);
+    rvcl_dispatch_release(r);
+    return st;
 }
 
 static rvcl_status_t inner_product_run_dispatch(const rvcl_op_desc_t *od,
@@ -858,6 +1142,14 @@ static rvcl_status_t conv2d_run_named(const char *name,
             bias, c, r_m0, r_m1);
 }
 
+static rvcl_status_t pooling_run_named(const char *name,
+        const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
+        const void *sb, const float *bias, float *c, int64_t r_m0,
+        int64_t r_m1) {
+    return run_named_impl(op_slot_for(RVCL_OP_POOLING), name, od, a, sa, b, sb,
+            bias, c, r_m0, r_m1);
+}
+
 static rvcl_status_t inner_product_run_named(const char *name,
         const rvcl_op_desc_t *od, const void *a, const void *sa, const void *b,
         const void *sb, const float *bias, float *c, int64_t r_m0,
@@ -879,6 +1171,9 @@ static const rvcl_dtype_t k_conv2d_dtypes[]
         = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
 
 static const rvcl_dtype_t k_inner_product_dtypes[]
+        = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
+
+static const rvcl_dtype_t k_pooling_dtypes[]
         = {RVCL_DTYPE_FP32, RVCL_DTYPE_FP16, RVCL_DTYPE_BF16, RVCL_DTYPE_AUTO};
 
 static const op_slot_t k_op_slots[] = {
@@ -952,6 +1247,25 @@ static const op_slot_t k_op_slots[] = {
                 .run_named = inner_product_run_named,
                 /* transposing pack + GEMM has no micro-kernel-only timing
                  * path (the pack is part of every run). */
+                .can_timing = 0,
+        },
+        {
+                .name = "pooling",
+                .op = RVCL_OP_POOLING,
+                .dtypes = k_pooling_dtypes,
+                .a_elems = pool_a_elems,
+                .b_elems = pool_none_elems,
+                .bias_elems = pool_none_elems,
+                .out_elems = pool_out_elems,
+                .golden = pooling_golden,
+                .build_desc = pooling_build_desc,
+                .pack_setup = pooling_pack_setup,
+                .full_range = pooling_full_range,
+                .out_width = pooling_out_width,
+                .run_dispatch = pooling_run_dispatch,
+                .run_named = pooling_run_named,
+                /* the row walk is the only execution path: no separate
+                 * micro-kernel to time. */
                 .can_timing = 0,
         },
 };

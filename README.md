@@ -82,7 +82,7 @@ Two cross-cutting contracts stay under host control and invisible to kernels:
 ```text
 ┌───────────────────────────────────────────────────┐
 │ Operator API  rvcl_matmul / _scaled / rvcl_conv2d │
-│               rvcl_inner_product                  │
+│               rvcl_inner_product / rvcl_pooling   │
 ├───────────────────────────────────────────────────┤
 │ Dispatch       six-stage filter + cost ordering   │
 ├───────────────────────────────────────────────────┤
@@ -274,6 +274,17 @@ GEMM view directly (`M = mb`, `N = oc`, `K` = folded reduction), so its corpus
 cases carry no params column. Its dtypes are f32, f16 and bf16, always
 accumulating into and writing out f32.
 
+**POOLING** is the NCHW max / average pool: `max`, `avg_include` (divides by
+`KH*KW`, so a pad sample counts as zero) and `avg_exclude` (divides by the
+in-bounds sample count). `src/operators/pooling.cpp` is the semantic layer and
+`src/backends/rvv/rvv_pooling.cpp` the kernel. The work row is one output line
+of one batch; the vector path strides along the output row (one window tap per
+load, no packing and no workspace) and the portable path walks the same samples
+in the same order, so both are bit-identical to the scalar golden. There is no
+dilation field. Its dtypes are f32, f16 and bf16, always accumulating into and
+writing out f32; its corpus cases carry the algorithm and the window geometry in
+a params column.
+
 ### Add a backend
 
 A new backend takes four fixed steps, and no framework code changes:
@@ -353,19 +364,19 @@ orchestration:
 ```text
 rvcl/
 ├── include/rvcl/        # public C ABI: types/init/capability/memory/scheduler/
-│                        # kernel/registry/dispatch/matmul/conv2d/inner_product + rvcl.h umbrella
+│                        # kernel/registry/dispatch/matmul/conv2d/inner_product/pooling + rvcl.h umbrella
 ├── src/
 │   ├── common/          # type, dtype-trait and memory contract implementations
 │   ├── runtime/         # capability / registry / dispatch / cost model / init
 │   │   └── scheduler/   # serial + OpenMP scheduler backends
-│   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product)
+│   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product, pooling)
 │   └── backends/
 │       ├── reference/   # golden implementations (matmul, gemv)
 │       └── rvv/         # C / intrinsics kernels, panel packing, path table
 │           └── jit/     # xbyak_riscv JIT kernels (f32/f16/fp8/mxfp8/s8u8)
 ├── examples/            # matmul, dispatch, scheduler, matmul_multicore, vendor_kernel
 ├── tests/               # unit + smoke + differential + concurrent + bench
-│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/, inner_product/)
+│   └── inputs/          # declarative shape corpora (matmul/, gemv/, conv2d/, inner_product/, pooling/)
 ├── third_party/         # vendored xbyak_riscv (tag 1.31, BSD-3)
 └── CMakeLists.txt
 ```
@@ -427,7 +438,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The essentials:
 - **Kernel PRs** are reviewed against the five invariants above — the contract
   is enforced by review, not by the compiler.
 - **Public API stability** is tiered: `types.h`, `init.h`, `capability.h`,
-  `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h`, `inner_product.h` are the
+  `memory.h`, `scheduler.h`, `matmul.h`, `conv2d.h`, `inner_product.h`,
+  `pooling.h` are the
   stable surface and accept additive-only changes before v1.0; `kernel.h`,
   `registry.h` and `dispatch.h` are the project-stable kernel ABI, where
   breaking changes need an RFC and maintainer consensus. Any descriptor layout

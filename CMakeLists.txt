@@ -110,6 +110,7 @@ set(RVCL_RUNTIME_SOURCES
     src/operators/matmul.cpp
     src/operators/conv2d.cpp
     src/operators/inner_product.cpp
+    src/operators/pooling.cpp
     src/backends/reference/reference_matmul.cpp
     src/backends/reference/reference_gemv.cpp
 )
@@ -133,6 +134,7 @@ if(RVCL_ENABLE_RVV)
         src/backends/rvv/rvv_gemv_f32.cpp
         src/backends/rvv/rvv_conv2d.cpp
         src/backends/rvv/rvv_inner_product.cpp
+        src/backends/rvv/rvv_pooling.cpp
     )
     # The JIT micro-kernels compile on RISC-V hosts only, always at the
     # baseline -march and never under the RVCL_RVV_MARCH override below:
@@ -175,7 +177,8 @@ set_target_properties(rvcl PROPERTIES
         "include/rvcl/rvcl.h;include/rvcl/types.h;include/rvcl/init.h;\
 include/rvcl/capability.h;include/rvcl/memory.h;include/rvcl/scheduler.h;\
 include/rvcl/kernel.h;include/rvcl/registry.h;include/rvcl/dispatch.h;\
-include/rvcl/matmul.h;include/rvcl/conv2d.h;include/rvcl/inner_product.h"
+include/rvcl/matmul.h;include/rvcl/conv2d.h;include/rvcl/inner_product.h;\
+include/rvcl/pooling.h"
 )
 
 target_include_directories(rvcl
@@ -269,6 +272,7 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
             src/backends/rvv/rvv_pack.cpp
             src/backends/rvv/rvv_gemm_f32.cpp
             src/backends/rvv/rvv_gemm_f16.cpp
+            src/backends/rvv/rvv_pooling.cpp
             PROPERTIES COMPILE_OPTIONS "-march=${RVCL_RVV_MARCH}")
         # rvv_gemm_bf16.cpp is deliberately NOT in the march list: it has no
         # __riscv_vector intrinsics (the C path uses soft conversions, the
@@ -520,6 +524,32 @@ if(RVCL_BUILD_TESTS)
     rvcl_add_corpus(gemv   ci    test_gemv_ci      "f32" FALSE)
     rvcl_add_corpus(conv2d smoke test_conv2d_smoke "f32;f16;bf16" TRUE)
     rvcl_add_corpus(conv2d ci    test_conv2d_ci    "f32;f16;bf16" TRUE)
+    rvcl_add_corpus(pooling smoke test_pooling_smoke "f32;f16;bf16" FALSE)
+    rvcl_add_corpus(pooling ci    test_pooling_ci    "f32;f16;bf16" FALSE)
+
+    # Pooling vector path: the row-wise kernel is intrinsics-only (there is
+    # no separate micro-kernel to pin), so its own ctest target is the same
+    # corpus compiled with the vector -march. Without the override the RVV
+    # TU compiles at the baseline march and the target repeats the auto one,
+    # so it is registered only when the override is set.
+    if(RVCL_ENABLE_RVV AND RVCL_RVV_MARCH
+            AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+        foreach(set smoke ci)
+            if(RVCL_TEST_SET STREQUAL "all"
+                    OR (RVCL_TEST_SET STREQUAL "ci" AND NOT set STREQUAL "weekly")
+                    OR (RVCL_TEST_SET STREQUAL "smoke" AND set STREQUAL "smoke"))
+                set(file test_pooling_${set})
+                foreach(dt f32 f16 bf16)
+                    add_test(NAME test_pooling_modeC_${set}_${dt}_vec
+                        COMMAND rvcl_differential
+                                --batch=${CMAKE_CURRENT_SOURCE_DIR}/tests/inputs/pooling/${file}
+                                --dt=${dt})
+                    set_tests_properties(test_pooling_modeC_${set}_${dt}_vec
+                        PROPERTIES LABELS "corpus;${set}")
+                endforeach()
+            endif()
+        endforeach()
+    endif()
     rvcl_add_corpus(inner_product smoke test_inner_product_smoke "f32;f16;bf16" TRUE)
     rvcl_add_corpus(inner_product ci    test_inner_product_ci    "f32;f16;bf16" TRUE)
 endif()
