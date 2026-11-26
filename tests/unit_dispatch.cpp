@@ -1909,6 +1909,58 @@ static void case_inject_cost_contention(void) {
     rvcl_dispatch_cache_clear();
 }
 
+/* TC-AC4-01: the hardware matrix entry and the f16 tuple selection. On a
+ * host that reports the extension the f16 request must select a matrix
+ * entry (equal cost is resolved by registration order); on any other host
+ * it must never select one. An f32 request must never select one either.
+ * The check runs against whatever snapshot is active, so the same case
+ * serves the real host here and the non-matrix hosts in CI. */
+static void case_ime_selection(void) {
+    printf("TC-AC4-01 matrix-extension selection\n");
+    const int have_entry
+            = rvcl_registry_find_factory("rvcl_matmul_f16_ime_1024") != NULL
+            || rvcl_registry_find_factory("rvcl_matmul_f16_ime_c") != NULL;
+    if (!have_entry) {
+        printf("  skip: IME backend not built\n");
+        return;
+    }
+    rvcl_dispatch_cache_clear();
+    const int ime_host
+            = rvcl_capability_has(rvcl_get_capability(), RVCL_FEATURE_IME);
+
+    const rvcl_matmul_desc_t f16 = make_request(64, 64, 64, RVCL_DTYPE_FP16,
+            RVCL_DTYPE_FP16, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    rvcl_dispatch_result_t *r = NULL;
+    CHECK(rvcl_dispatch_matmul(&f16, &r) == RVCL_SUCCESS,
+            "f16 dispatch succeeds");
+    const char *name = r ? rvcl_dispatch_kernel_name(r) : NULL;
+    const int is_ime = name && strstr(name, "_ime_") != NULL;
+    char msg[160];
+    if (ime_host) {
+        snprintf(msg, sizeof(msg),
+                "matrix host selects the matrix entry (got %s)",
+                name ? name : "-");
+        CHECK(is_ime, msg);
+    } else {
+        snprintf(msg, sizeof(msg),
+                "non-matrix host avoids the matrix entry (got %s)",
+                name ? name : "-");
+        CHECK(name && !is_ime, msg);
+    }
+    rvcl_dispatch_release(r);
+    r = NULL;
+
+    const rvcl_matmul_desc_t f32 = make_request(64, 64, 64, RVCL_DTYPE_FP32,
+            RVCL_DTYPE_FP32, RVCL_DTYPE_AUTO, RVCL_DTYPE_FP32);
+    CHECK(rvcl_dispatch_matmul(&f32, &r) == RVCL_SUCCESS,
+            "f32 dispatch succeeds");
+    name = r ? rvcl_dispatch_kernel_name(r) : NULL;
+    CHECK(name && strstr(name, "_ime_") == NULL,
+            "f32 never selects a matrix entry");
+    rvcl_dispatch_release(r);
+    rvcl_dispatch_cache_clear();
+}
+
 static int run_inject_mode(void) {
     printf("== dispatch unit tests: injection subset ==\n");
     CHECK(rvcl_init() == RVCL_SUCCESS, "library init succeeds");
@@ -1919,6 +1971,7 @@ static int run_inject_mode(void) {
     case_inject_tier_preference();
     case_inject_tier_exclusion();
     case_inject_cost_contention();
+    case_ime_selection();
 
     if (g_failures) printf("FAILURES: %d\n", g_failures);
     return g_failures ? 1 : 0;
@@ -1951,6 +2004,7 @@ int main(int argc, char **argv) {
     tc20_cost_scoring();
     tc21_block_scale();
     tc22_stat_slots();
+    case_ime_selection();
 
     if (g_failures) printf("FAILURES: %d\n", g_failures);
     return g_failures ? 1 : 0;

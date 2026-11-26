@@ -164,13 +164,23 @@ static void detect_compiletime(rvcl_capability_t *cap) {
  * (vlenb is a power of two, at most VLEN 65536 bits) keeps value=1.
  */
 #if defined(__riscv)
+/* VLEN in bits from the vlenb CSR; 0 when the value is not a sane
+ * power-of-two width. Callers ensure V is confirmed first: the CSR read
+ * traps on a core without the vector extension. */
+static int read_vlenb_bits(uint32_t *bits) {
+    unsigned long vlenb;
+    __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
+    if (vlenb < 1 || vlenb > 8192 || (vlenb & (vlenb - 1)) != 0) return 0;
+    *bits = (uint32_t)vlenb * 8;
+    return 1;
+}
+
 static void fill_rvv_vlen(rvcl_capability_t *cap) {
+    uint32_t bits;
+    if (!read_vlenb_bits(&bits)) return;
     for (int i = 0; i < cap->num_features; i++) {
         if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
-        unsigned long vlenb;
-        __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
-        if (vlenb >= 1 && vlenb <= 8192 && (vlenb & (vlenb - 1)) == 0)
-            cap->features[i].value = (uint32_t)vlenb * 8;
+        cap->features[i].value = bits;
         break;
     }
 }
@@ -179,6 +189,8 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 /* Runtime layer: hwprobe (Linux 6.4+). Absent or failing probes keep the
  * compile-time view; detection failure degrades instead of erroring. */
 #if defined(__riscv) && defined(__linux__)
+#include <fcntl.h>
+#include <sched.h>
 #include <unistd.h>
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
@@ -205,6 +217,76 @@ static void cap_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
     cap->num_features++;
 }
 
+/* ------------------------------------------------ floating-point IME probe
+ *
+ * The matrix extension is a run-time-only fact: no compile-time macro can
+ * prove every core the process may run on carries it, and executing its
+ * instruction on a core without it faults. The probe therefore requires
+ * every CPU in the process affinity mask to declare the target profile in
+ * its device-tree compatible property, and the vector unit to be at least
+ * the width the kernel's tile geometry targets. Any read failure degrades
+ * to "absent" — capability never errors and never crashes. */
+
+/* Device-tree compatible token of the CPU profile carrying the
+ * floating-point matrix extension. The property is a NUL-separated token
+ * list; a missing or unreadable node counts as no match. */
+#define RVCL_IME_PROFILE_TOKEN "spacemit,a100"
+#define RVCL_IME_MIN_VLEN_BITS 1024
+
+static int cpu_matches_ime_profile(int cpu) {
+    char path[96];
+    char buf[512];
+    snprintf(path, sizeof(path),
+            "/sys/devices/system/cpu/cpu%d/of_node/compatible", cpu);
+    const int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    const ssize_t got = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (got <= 0) return 0;
+    buf[got] = '\0';
+
+    const size_t toklen = strlen(RVCL_IME_PROFILE_TOKEN);
+    size_t off = 0;
+    while (off < (size_t)got) {
+        const size_t len = strnlen(buf + off, (size_t)got - off);
+        if (len == toklen
+                && memcmp(buf + off, RVCL_IME_PROFILE_TOKEN, len) == 0)
+            return 1;
+        off += len + 1;
+    }
+    return 0;
+}
+
+/* Every CPU in the mask must match (a mixed mask may migrate onto a core
+ * without the extension) and the vector unit must reach the target width. */
+static int host_has_fp_ime(void) {
+    cpu_set_t set;
+    if (sched_getaffinity(0, sizeof(set), &set) != 0) return 0;
+    if (CPU_COUNT(&set) == 0) return 0;
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (!CPU_ISSET(cpu, &set)) continue;
+        if (!cpu_matches_ime_profile(cpu)) return 0;
+    }
+    uint32_t bits;
+    return read_vlenb_bits(&bits) && bits >= RVCL_IME_MIN_VLEN_BITS;
+}
+
+/* Called only once V is confirmed (hwprobe or the compile-time vector
+ * macro), so the vlenb read is safe. On success the RVV width is upgraded
+ * and FP16 is implied: the floating-point matrix path proves both. */
+static void detect_ime(rvcl_capability_t *cap) {
+    if (!host_has_fp_ime()) return;
+    cap_add_feature(cap, RVCL_FEATURE_IME);
+    cap_add_feature(cap, RVCL_FEATURE_FP16);
+    for (int i = 0; i < cap->num_features; i++) {
+        if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
+        uint32_t bits;
+        if (read_vlenb_bits(&bits) && bits > cap->features[i].value)
+            cap->features[i].value = bits;
+        break;
+    }
+}
+
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
             {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
@@ -217,6 +299,7 @@ static void detect_runtime(rvcl_capability_t *cap) {
          * vector instruction otherwise — so the VLEN read stays safe. */
 #if defined(__riscv_vector)
         fill_rvv_vlen(cap);
+        detect_ime(cap);
 #endif
         return;
     }
@@ -255,7 +338,10 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * macro covered the no-hwprobe return above. When hwprobe explicitly
      * reports no V on a compile-time-V build the environment is broken
      * — keep the degraded value=1 rather than trusting a CSR read. */
-    if (has_rvv) fill_rvv_vlen(cap);
+    if (has_rvv) {
+        fill_rvv_vlen(cap);
+        detect_ime(cap);
+    }
 }
 #else
 static void detect_runtime(rvcl_capability_t *cap) {
@@ -360,6 +446,20 @@ void rvcl_capability_test_override(const rvcl_capability_t *cap) {
     rvcl_dispatch_cache_clear();
 }
 
+/* Host detection, run at most once per process. The magic static
+ * serializes concurrent first calls; the probe registration window closes
+ * before the build (capability.h contract), so the snapshot content is
+ * fixed from here on and a later registration cannot change it. */
+static const rvcl_capability_t *host_capability(void) {
+    static rvcl_capability_t g_cap = [] {
+        pthread_mutex_lock(&g_cap_mutex);
+        g_probes_locked = 1;
+        pthread_mutex_unlock(&g_cap_mutex);
+        return build_capability();
+    }();
+    return &g_cap;
+}
+
 const rvcl_capability_t *rvcl_get_capability(void) {
     pthread_mutex_lock(&g_cap_mutex);
     if (g_cap_overridden) {
@@ -367,14 +467,15 @@ const rvcl_capability_t *rvcl_get_capability(void) {
         pthread_mutex_unlock(&g_cap_mutex);
         return overridden;
     }
-    /* First real snapshot access closes the probe registration window
-     * (capability.h contract): the snapshot content is fixed from here on,
-     * so a later registration cannot change what dispatch observes. */
-    g_probes_locked = 1;
     pthread_mutex_unlock(&g_cap_mutex);
+    return host_capability();
+}
 
-    static rvcl_capability_t g_cap = build_capability();
-    return &g_cap;
+/* Host snapshot accessor for run-time hard gates: it never returns the
+ * test override, so a synthetic feature set can drive selection but can
+ * never make hardware-only code execute. */
+const rvcl_capability_t *rvcl_capability_host(void) {
+    return host_capability();
 }
 
 rvcl_status_t rvcl_capability_register_vendor_probe(

@@ -14,16 +14,15 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/ime_pack_test.cpp — IME tile packing tests (direct-driven)
- *
- * Covers the pack helpers of the IME backend against test-side oracles:
+ ******************************************************************************/
+
+/* Covers the pack helpers of the IME backend against test-side oracles:
  * the tile-layout formula (buffer size, element index, tile order), tail
  * zero-fill, boundary-shape packing against an independently implemented
  * oracle packer, rejection of malformed descriptors, idempotence, and the
  * C micro-kernel's numerics on the packed layout (known answer + boundary
  * shapes + canaries). Runs on any host.
- ******************************************************************************/
+ */
 
 #include "../src/backends/ime/ime_internal.hpp"
 #include "golden.hpp"

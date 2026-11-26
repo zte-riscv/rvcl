@@ -7,7 +7,7 @@ project(rvcl
 # ------------------------------------------------------------------ options
 # Backends are independently buildable.
 option(RVCL_ENABLE_RVV   "Enable RVV backend"        ON)  # v0.1
-option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.2
+option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_VME   "Enable VME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_AME   "Enable AME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_OMP   "Built-in OpenMP scheduler backend" OFF)
@@ -373,6 +373,13 @@ if(RVCL_BUILD_TESTS)
             rvcl_differential PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
             rvcl_test_op_slots)
     add_test(NAME differential COMMAND rvcl_differential)
+    # The IME differential hook includes the backend's internal header (the
+    # direct C-vs-instruction cross-check), so the target sees the same
+    # backend build macro the library uses.
+    if(RVCL_ENABLE_IME)
+        target_compile_definitions(rvcl_differential
+            PRIVATE RVCL_ENABLE_IME_BUILD)
+    endif()
 
     # Concurrent driver: T pthreads take exclusive M slices through one
     # kernel instance + one tensor pack (the host-parallel contract).
@@ -679,6 +686,11 @@ if(RVCL_BUILD_BENCH)
     target_link_libraries(
             rvcl_bench PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
             rvcl_test_op_slots)
+    # kernel-only measurement for the IME f16 entries needs the backend's
+    # packing and selector entry points (internal header).
+    if(RVCL_ENABLE_IME)
+        target_compile_definitions(rvcl_bench PRIVATE RVCL_ENABLE_IME_BUILD)
+    endif()
 endif()
 
 # ------------------------------------------------------------------ install

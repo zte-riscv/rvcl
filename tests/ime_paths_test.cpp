@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/ime_paths_test.cpp — IME f16 path-selector matrix
- *
- * One ctest entry per RVCL_IME_KERNEL value (the knob is read once per
+ ******************************************************************************/
+
+/* One ctest entry per RVCL_IME_KERNEL value (the knob is read once per
  * process, so each value needs its own process). Expectations are
  * host-adaptive and derive from the same host gate the selector uses,
  * with the availability itself cross-checked: when the gate says yes the
@@ -29,7 +28,7 @@
  * different path.
  *
  * stderr capture uses a tmpfile() redirect around the resolver call.
- ******************************************************************************/
+ */
 
 #include "../src/backends/ime/ime_internal.hpp"
 #include "rvcl/rvcl.h"

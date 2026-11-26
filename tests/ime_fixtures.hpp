@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/ime_fixtures.hpp — shared fixtures for the IME backend tests
- *
- * Everything here is test-side oracle material, independent of the code
+ ******************************************************************************/
+
+/* Everything here is test-side oracle material, independent of the code
  * under test (the fp16 encoder below is local; the encoded values are
  * asserted by the data-domain guard of the numeric suite).
  *
@@ -32,7 +31,7 @@
  *    instead of against the implementation under test;
  *  - boundary shape sets covering the tile grid edges (1, 7, 8, 9, 15,
  *    16, 17, 31 and mixed-axis combinations).
- ******************************************************************************/
+ */
 
 #ifndef RVCL_TEST_IME_FIXTURES_H
 #define RVCL_TEST_IME_FIXTURES_H

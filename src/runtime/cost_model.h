@@ -49,6 +49,18 @@ RVCL_API uint64_t rvcl_cost_matmul_rvv(
         const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
 
 /*
+ * MatMul, IME backend category: the hardware matrix path scores at or
+ * below the RVV category on a host that reports the extension, so the
+ * more specialized kernel wins outright or ties and is resolved by
+ * registration order (IME registers first). Off such a host it scores
+ * one step above the RVV category, which keeps the portable IME entry
+ * behind the RVV entry so the existing selection is unchanged. The shape
+ * heuristic uses the kernel's preferred tile.
+ */
+RVCL_API uint64_t rvcl_cost_matmul_ime(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap);
+
+/*
  * MatMul, reference backend category: heuristic cost = per-element
  * coefficient (expensive, the correctness-first triple loop) x shape
  * heuristic, no tier gain. Registered last as the unbounded fallback, so

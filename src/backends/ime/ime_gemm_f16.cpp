@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * ime_gemm_f16.cpp — FP16 matrix-multiply micro-kernels (IME + C fallback)
- *
- * Tuple (f16,f16,f32,f32): A/B stored fp16, accumulation and output fp32.
+ ******************************************************************************/
+
+/* Tuple (f16,f16,f32,f32): A/B stored fp16, accumulation and output fp32.
  * Both paths implement the same tile semantics on the tile-packed B
  * buffer produced by ime_pack_b_tiles:
  *
@@ -35,7 +34,7 @@
  * to the exact [m_begin,m_end) x [n_begin,n_end) window and the problem
  * bounds — no element outside the requested range is ever written. K is
  * never sliced.
- ******************************************************************************/
+ */
 
 #include "../rvv/rvv_fp16.hpp"
 #include "ime_internal.hpp"

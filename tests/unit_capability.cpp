@@ -272,7 +272,6 @@ static void case_query_semantics(void) {
 
     /* Ids no detection layer ever reports must stay absent on any host. */
     static const rvcl_feature_id_t never[] = {
-            RVCL_FEATURE_IME,
             RVCL_FEATURE_VME,
             RVCL_FEATURE_AME,
             RVCL_FEATURE_FP32,
@@ -285,6 +284,24 @@ static void case_query_semantics(void) {
                 || rvcl_capability_get(cap, never[i]) != NULL)
             absent_ok = 0;
     CHECK(absent_ok, "undetected feature ids report absent");
+
+    /* The matrix extension is a run-time-only feature: it is reported only
+     * where the whole process affinity mask can execute it, and a report
+     * implies the vector tier and fp16 channel the kernel requires. */
+#if !defined(__riscv)
+    CHECK(!rvcl_capability_has(cap, RVCL_FEATURE_IME),
+            "non-riscv host never reports the matrix extension");
+#else
+    {
+        const int has_ime = rvcl_capability_has(cap, RVCL_FEATURE_IME);
+        const rvcl_feature_t *rvvx = rvcl_capability_get(cap, RVCL_FEATURE_RVV);
+        const int implies = !has_ime
+                || ((rvvx && rvvx->value >= RVCL_VLEN_TIER_1024)
+                        && rvcl_capability_has(cap, RVCL_FEATURE_FP16));
+        CHECK(implies,
+                "a reported matrix extension implies vlen>=1024 and fp16");
+    }
+#endif
 
     CHECK(!rvcl_capability_has(NULL, RVCL_FEATURE_RV64), "has(NULL) is false");
     CHECK(rvcl_capability_get(NULL, RVCL_FEATURE_RV64) == NULL,

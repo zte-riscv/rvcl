@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * tests/ime_numeric_test.cpp — IME f16 micro-kernel numeric tests
- *
- * Direct-driven (no dispatch/registry): packs B with the pack helper and
+ ******************************************************************************/
+
+/* Direct-driven (no dispatch/registry): packs B with the pack helper and
  * drives the micro-kernels over the tile-packed layout. Cases:
  *   - fixed ragged contract (33x19x47) with and without bias vs the soft
  *     golden (1e-3 class);
@@ -35,7 +34,7 @@
  * The instruction-path cases self-skip (exit 0) when the host gate
  * reports the path unavailable; --require-ime turns an unavailable gate
  * into a failure, and --c-only runs the C-path subset.
- ******************************************************************************/
+ */
 
 #include "../src/backends/ime/ime_internal.hpp"
 #include "golden.hpp"

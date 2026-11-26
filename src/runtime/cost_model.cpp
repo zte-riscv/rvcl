@@ -50,8 +50,13 @@
  */
 enum {
     RVCL_COST_ELEM_MATMUL_RVV = 1, /* vector micro-kernel, cheap */
+    RVCL_COST_ELEM_MATMUL_IME = 1, /* matrix micro-kernel, same order */
     RVCL_COST_ELEM_MATMUL_REF = 64, /* scalar triple loop, ~64x slower */
 };
+
+/* Preferred tile of the matrix micro-kernel: the shape heuristic must
+ * see the same 8x8x8 grid the kernel tiles over. */
+enum { RVCL_COST_IME_TILE = 8 };
 
 /* Fixed-point scale: 256 represents a 1.0x multiplier. */
 enum { RVCL_COST_FP = 256 };
@@ -115,6 +120,29 @@ RVCL_API uint64_t rvcl_cost_matmul_rvv(
     const uint64_t shape = shape_factor(d, 0, 0, 0);
     const uint64_t gain = vlen_tier_gain(cap);
     return score(RVCL_COST_ELEM_MATMUL_RVV, shape, gain);
+}
+
+RVCL_API uint64_t rvcl_cost_matmul_ime(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
+    const uint64_t rvv = rvcl_cost_matmul_rvv(desc, cap);
+    if (!rvcl_capability_has(cap, RVCL_FEATURE_IME)) {
+        /* No extension on this host: the hardware-bound entry never
+         * survives the feature filter, and the portable entry must sort
+         * after the RVV one so non-IME hosts keep their f16 selection. */
+        return rvv == UINT64_MAX ? rvv : rvv + 1;
+    }
+    const rvcl_matmul_desc_t *d = &desc->matmul;
+    const uint64_t shape = shape_factor(d, RVCL_COST_IME_TILE,
+            RVCL_COST_IME_TILE, RVCL_COST_IME_TILE);
+    const uint64_t gain = vlen_tier_gain(cap);
+    /* Sub-unit fixed point: 1024 units = one score step, so a partial tail
+     * tile stays visible before the hard clamp below. */
+    const uint64_t units = (RVCL_COST_ELEM_MATMUL_IME * shape * gain * 1024)
+            / ((uint64_t)RVCL_COST_FP * RVCL_COST_FP);
+    const uint64_t rounded = (units + 1023) / 1024;
+    /* Never above the RVV category: the more specialized entry wins or
+     * ties, and registration order resolves the tie. */
+    return rounded <= rvv ? rounded : rvv;
 }
 
 RVCL_API uint64_t rvcl_cost_matmul_reference(

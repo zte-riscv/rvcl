@@ -285,6 +285,18 @@ dilation field. Its dtypes are f32, f16 and bf16, always accumulating into and
 writing out f32; its corpus cases carry the algorithm and the window geometry in
 a params column.
 
+**IME** (opt-in, `RVCL_ENABLE_IME=ON`) is the f16 matrix-multiply backend for
+RISC-V integrated-matrix-extension cores: `src/backends/ime/` holds the 8x8x8
+tile packing, the C and instruction micro-kernels and the adapter.
+`rvcl_matmul_f16_ime_1024` is registered with `{IME, FP16}` and a 1024-bit tier,
+so dispatch routes f16 to it only when every CPU in the process affinity mask
+can execute the extension — pin the process (for example with `taskset`) before
+the first capability query; a mixed mask reports the feature absent and f16
+stays on RVV. `RVCL_IME_KERNEL=auto|c|ime` forces a micro-kernel path, and
+`--path=c|ime` does the same for the benchmark's kernel-only metric. The C path
+runs on any host and is the portable CI carrier; the instruction path is
+compiled only where `__riscv_vector` is visible.
+
 ### Add a backend
 
 A new backend takes four fixed steps, and no framework code changes:
@@ -372,6 +384,7 @@ rvcl/
 │   ├── operators/       # semantic-layer operators (matmul, conv2d, inner_product, pooling)
 │   └── backends/
 │       ├── reference/   # golden implementations (matmul, gemv)
+│       ├── ime/         # f16 matrix-extension GEMM, tile packing, path table
 │       └── rvv/         # C / intrinsics kernels, panel packing, path table
 │           └── jit/     # xbyak_riscv JIT kernels (f32/f16/fp8/mxfp8/s8u8)
 ├── examples/            # matmul, dispatch, scheduler, matmul_multicore, vendor_kernel
@@ -388,7 +401,9 @@ Three workflows gate the repository:
 - **`ci-lint`** — clang-format-18, the Apache-2.0 license header check,
   Conventional Commits (including the PR title, since `main` squash-merges it),
   and clang-tidy-18 with zero-warning tolerance.
-- **`ci-x86`** — the default tier, plus an OpenMP tier and two sanitizer tiers
+- **`ci-x86`** — the default tier, plus an OpenMP tier, an IME portable tier
+  (`RVCL_ENABLE_IME=ON`: the matrix backend's packing, selection and C kernel
+  compile and run on a host without the extension) and two sanitizer tiers
   (ASan+UBSan, and TSan). TSan drives `tests/concurrent_test.cpp` through
   concurrent `kernel_run` (exclusive slices with pre-packing), concurrent
   first-call dispatch, concurrent semantic calls and concurrent first-call

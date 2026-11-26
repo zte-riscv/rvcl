@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * ime_pack.cpp — B tile packing (plain row-major -> 8x8 tiles)
- *
- * Pure data movement. B[k][n] is repacked so that each instruction of the
+ ******************************************************************************/
+
+/* Pure data movement. B[k][n] is repacked so that each instruction of the
  * matrix extension consumes one 128-byte tile: within a tile, the 8 K
  * values of one output column are contiguous. Tail tiles are zero-filled
  * explicitly, so out-of-range multiply-accumulate lanes never disturb the
@@ -27,7 +26,7 @@
  *
  * Tile order is n-tile outer, k-tile inner, matching the micro-kernel's
  * K loop, which then walks the buffer linearly.
- ******************************************************************************/
+ */
 
 #include "ime_internal.hpp"
 

@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * ime_internal.hpp — shared declarations inside the IME backend
- *
- * The IME backend targets the matrix-multiply-accumulate instruction of the
+ ******************************************************************************/
+
+/* The IME backend targets the matrix-multiply-accumulate instruction of the
  * integrated matrix extension: one instruction consumes an 8x8 fp16 A tile
  * and an 8x8 fp16 B tile and accumulates into an 8x8 fp32 C tile held in a
  * vector register pair. Three layers, mirroring the RVV backend:
@@ -33,7 +32,7 @@
  * Every translation unit compiles on any host; the instruction path is
  * guarded by __riscv_vector, so framework-side code (packing, selection,
  * tests) stays verifiable on any CI host.
- ******************************************************************************/
+ */
 
 #ifndef RVCL_IME_INTERNAL_H
 #define RVCL_IME_INTERNAL_H
@@ -119,11 +118,20 @@ rvcl_status_t ime_pack_b_tiles(const rvcl_tensor_t *src, rvcl_tensor_t *dst,
 ime_gemm_fn ime_pick_gemm_f16(void);
 ime_gemm_fn ime_pick_gemm_f16_by_name(const char *name);
 
-/* Hard run-time gate: the instruction path is compiled in AND every CPU
- * the process may run on carries the target matrix profile with a wide
- * enough vector unit. Cached once per process; any detection failure
- * reports unavailable (conservative). Ignores test-injected capability
- * snapshots — it answers what this host can really execute. */
+/* Hard run-time gate: the instruction path is compiled in AND the host
+ * capability snapshot reports the floating-point matrix extension.
+ * Detection caches once per process and never surfaces a feature the
+ * host cannot execute; test-injected snapshots are ignored. */
 int ime_instruction_path_available(void);
+
+/* ------------------------------------------------------- registration
+ * rvcl_ime_register() registers the hardware-bound entry on RISC-V
+ * builds (the entry is registered in every IME build; availability is
+ * decided by the run-time feature filter). rvcl_ime_register_portable()
+ * registers the portable C entry on non-RISC-V builds. Each is a no-op
+ * where its entry does not belong. init.cpp calls both before the RVV
+ * registration so equal-cost ties resolve to the more specialized entry. */
+rvcl_status_t rvcl_ime_register(void);
+rvcl_status_t rvcl_ime_register_portable(void);
 
 #endif /* RVCL_IME_INTERNAL_H */

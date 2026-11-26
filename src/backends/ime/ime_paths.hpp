@@ -14,10 +14,9 @@
  * limitations under the License.
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * ime_paths.hpp — f16 micro-kernel path table
- *
- * One table row per micro-kernel path (ime / c). A row carries the path
+ ******************************************************************************/
+
+/* One table row per micro-kernel path (ime / c). A row carries the path
  * name, a getter for the live function pointer, an availability probe
  * (compile-time macros upgraded by the run-time host gate), the
  * auto-selection priority and the loud-failure message for a forced-but-
@@ -26,7 +25,7 @@
  *   f16 auto = instruction-path-when-the-host-allows-it, else C
  *
  * Internal to the backend; included only by ime_backend.cpp.
- ******************************************************************************/
+ */
 
 #ifndef RVCL_IME_PATHS_H
 #define RVCL_IME_PATHS_H

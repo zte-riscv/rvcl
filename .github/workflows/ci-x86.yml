@@ -102,10 +102,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # The wheel skips the apt index refresh; the runner python is outside
+      # the PEP 668 externally-managed environment.
       - name: Install ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
+        run: python -m pip install ninja
 
       - name: Configure
         run: cmake -B build -G Ninja -DRVCL_ENABLE_IME=ON -DRVCL_ENABLE_WERROR=ON -DRVCL_TEST_SET=ci

@@ -48,6 +48,9 @@
 #include "../src/common/dtype_traits.hpp"
 #include "../src/backends/rvv/rvv_fp8.hpp"
 #include "../src/backends/rvv/rvv_e8m0.hpp"
+#if defined(RVCL_ENABLE_IME_BUILD)
+#include "../src/backends/ime/ime_internal.hpp"
+#endif
 #include "dtype_ops.hpp"
 #include "golden.hpp"
 #include "op_slots.hpp"
@@ -798,6 +801,69 @@ int main(int argc, char **argv) {
                     (int64_t)M * N, RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
             CHECK(cmp16.mismatches == 0,
                     "rvv f16 (packed) matches soft-converted golden");
+
+#if defined(RVCL_ENABLE_IME_BUILD) && defined(__riscv) \
+        && defined(__riscv_vector)
+            /* ---- IME f16: the registered entry, then the direct
+             * C-vs-instruction cross-check. The named run proves the
+             * adapter, workspace and pack_b wiring; the micro-kernel pair
+             * isolates the numeric contract (the two paths agree within
+             * 1e-5), which is much tighter than the 1e-3 golden class. */
+            if (rvcl_capability_has(rvcl_get_capability(), RVCL_FEATURE_IME)
+                    && rvcl_registry_find_factory(
+                            "rvcl_matmul_f16_ime_1024")) {
+                float *c_ime = (float *)malloc((size_t)M * N * 4);
+                float *c_c = (float *)malloc((size_t)M * N * 4);
+                const size_t pbytes = ime_packed_b_bytes(K, N, 2);
+                uint16_t *bp = (uint16_t *)malloc(pbytes);
+                if (!c_ime || !c_c || !bp) {
+                    printf("FAIL ime f16: allocation failed\n");
+                } else {
+                    CHECK(run_matmul_kernel("rvcl_matmul_f16_ime_1024", &d16,
+                                  ah, NULL, bh, NULL, bias, c_ime, -1, -1)
+                                    == RVCL_SUCCESS,
+                            "ime f16 registered entry runs");
+                    const golden_cmp_t cmp_ime
+                            = op16->compare(c_ime, golden, (int64_t)M * N,
+                                    RVCL_ASSERT_TOLERANT, RVCL_DTYPE_FP16);
+                    CHECK(cmp_ime.mismatches == 0,
+                            "ime f16 matches soft-converted golden");
+
+                    rvcl_tensor_desc_t bd = {
+                            .ndims = 2,
+                            .dims = {K, N},
+                            .strides = {N, 1},
+                            .dtype = RVCL_DTYPE_FP16,
+                    };
+                    rvcl_tensor_desc_t wd = {
+                            .ndims = 1,
+                            .dims = {(int64_t)pbytes},
+                            .strides = {1},
+                            .dtype = RVCL_DTYPE_UINT8,
+                    };
+                    rvcl_tensor_t tb, tws;
+                    const rvcl_work_range_t full
+                            = rvcl_work_range_full(M, N, K);
+                    const int packed_ok
+                            = rvcl_tensor_init(&tb, &bd, bh) == RVCL_SUCCESS
+                            && rvcl_tensor_init(&tws, &wd, bp) == RVCL_SUCCESS
+                            && ime_pack_b_tiles(&tb, &tws, M, N, K, 2)
+                                    == RVCL_SUCCESS;
+                    CHECK(packed_ok, "ime f16 tile pack succeeds");
+                    if (packed_ok) {
+                        ime_gemm_f16_c(ah, bp, bias, c_c, M, N, K, &full);
+                        ime_gemm_f16_ime(ah, bp, bias, c_ime, M, N, K, &full);
+                        const golden_cmp_t cross = golden_cmp_tol(c_ime, c_c,
+                                (int64_t)M * N, 1e-5f);
+                        CHECK(cross.mismatches == 0,
+                                "ime C vs instruction path agrees within 1e-5");
+                    }
+                }
+                free(c_ime);
+                free(c_c);
+                free(bp);
+            }
+#endif
         }
 
         /* ---- bf16 differential: rvv bf16 vs golden soft-convert ---- */

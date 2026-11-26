@@ -55,6 +55,14 @@ RVCL_API int rvcl_capability_vlen_tier(const rvcl_capability_t *cap);
  */
 RVCL_API void rvcl_capability_test_override(const rvcl_capability_t *cap);
 
+/*
+ * Host detection result, ignoring any test override: what this process
+ * can really execute. Backend run-time gates use it so an injected
+ * snapshot can never make hardware-only code run. Detection happens at
+ * most once per process.
+ */
+RVCL_API const rvcl_capability_t *rvcl_capability_host(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

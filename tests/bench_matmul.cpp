@@ -35,8 +35,12 @@
  *   S  survival (QEMU/TCG): single pass, no warmup, direct fills, reps 1
  *
  * Usage: rvcl_bench [--json] [--reps N] [--mode=C|P|S]
- *                   [--path={auto,c,jit,intrinsics}] [--batch=FILE]
+ *                   [--path={auto,c,jit,intrinsics,ime}] [--batch=FILE]
  *                   [MxNxK ...]
+ *   --path is resolved inside the backend dispatch selected (RVCL's RVV
+ *   selector, or the IME selector for an f16 case dispatch routed to the
+ *   matrix backend): `c` and `auto` mean the portable and the backend's
+ *   own auto policy, `ime` exists only where the IME backend is selected.
  *   shape syntax: MxNxK, or the benchdnn-compatible MxK:KxN in corpora.
  *   --batch and CLI shapes are mutually exclusive; with neither, the
  *   default sweep below runs.
@@ -64,6 +68,9 @@
 #include <time.h>
 
 #include "../src/backends/rvv/rvv_internal.hpp"
+#if defined(RVCL_ENABLE_IME_BUILD)
+#include "../src/backends/ime/ime_internal.hpp"
+#endif
 #include "../src/runtime/dispatch_internal.h"
 #include "dtype_ops.hpp"
 #include "golden.hpp"
@@ -375,6 +382,12 @@ typedef struct {
     void *packed;
     rvv_gemm_fn gemm;
     rvv_gemm_mxfp8_fn gemm_mxfp8; /* set for mxfp8 dtypes (else NULL) */
+#if defined(RVCL_ENABLE_IME_BUILD)
+    /* Set when dispatch routed the f16 case to the IME backend; the
+     * packed buffer then follows the IME tile layout and the micro-kernel
+     * differs from the RVV one. */
+    ime_gemm_fn ime_gemm;
+#endif
 } konly_ctx_t;
 
 /* Kernel-only timing drives a GEMM micro-kernel directly, so it is reached
@@ -386,6 +399,13 @@ static void bench_kernel_only(void *p) {
     konly_ctx_t *kc = (konly_ctx_t *)p;
     const case_t *cs = kc->cs;
     const rvcl_work_range_t full = cs->slot->full_range(&cs->od);
+#if defined(RVCL_ENABLE_IME_BUILD)
+    if (kc->ime_gemm) {
+        kc->ime_gemm(case_a(cs), kc->packed, cs->bias, cs->c, cs->m, cs->n,
+                cs->k, &full);
+        return;
+    }
+#endif
     if (kc->gemm_mxfp8) {
         const int64_t blk
                 = (int64_t)rvcl_dtype_block_size(cs->od.matmul.dtype_a);
@@ -401,11 +421,21 @@ typedef struct {
     const case_t *cs;
     const rvcl_tensor_t *b;
     rvcl_tensor_t *dst;
+#if defined(RVCL_ENABLE_IME_BUILD)
+    int is_ime; /* measure the IME tile packer instead of the RVV panel one */
+#endif
 } pack_ctx_t;
 
 static void bench_pack_only(void *p) {
     pack_ctx_t *pc = (pack_ctx_t *)p;
     const case_t *cs = pc->cs;
+#if defined(RVCL_ENABLE_IME_BUILD)
+    if (pc->is_ime) {
+        ime_pack_b_tiles(pc->b, pc->dst, cs->m, cs->n, cs->k,
+                sizeof(uint16_t));
+        return;
+    }
+#endif
     size_t elt = rvcl_dtype_size(cs->od.matmul.dtype_a);
     rvv_pack_b_panel(pc->b, pc->dst, cs->m, cs->n, cs->k, elt);
 }
@@ -671,7 +701,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr,
                         "error: bad argument '%s'\n"
                         "usage: %s [--json] [--reps N] [--mode=C|P|S] "
-                        "[--path={auto,c,jit,intrinsics}] [--batch=FILE] "
+                        "[--path={auto,c,jit,intrinsics,ime}] [--batch=FILE] "
                         "[MxNxK ...]\n",
                         argv[i], argv[0]);
                 return 2;
@@ -869,13 +899,88 @@ int main(int argc, char **argv) {
 
             /* ---- P / S: the four metric classes ---- */
             size_t elt = dop->elt;
+
+            /* Dispatch first: the metric layout and the micro-kernel must
+             * come from the backend the selection binds, so the packed
+             * buffer follows the dispatched kernel, not a fixed backend. */
+            int has_dispatch = rig_setup(&rig, &cs);
+            const char *kname
+                    = has_dispatch ? rvcl_dispatch_kernel_name(rig.r) : NULL;
+#if defined(RVCL_ENABLE_IME_BUILD)
+            const int is_ime = dop->dtype == RVCL_DTYPE_FP16 && kname
+                    && strstr(kname, "_ime_") != NULL;
+#endif
+
+            konly_ctx_t kc = {.cs = &cs,
+                    .packed = NULL,
+                    .gemm = NULL,
+                    .gemm_mxfp8 = NULL,
+#if defined(RVCL_ENABLE_IME_BUILD)
+                    .ime_gemm = NULL,
+#endif
+            };
+            size_t pbytes = 0;
+#if defined(RVCL_ENABLE_IME_BUILD)
+            if (is_ime) {
+                /* IME f16 case: the IME selector, resolved by name when
+                 * --path forces one, else its auto policy. */
+                kc.ime_gemm = path ? ime_pick_gemm_f16_by_name(path)
+                                   : ime_pick_gemm_f16();
+                if (!kc.ime_gemm) {
+                    fprintf(stderr, "error: --path=%s is unavailable for %s\n",
+                            path, dtstr);
+                    rig_release(&rig);
+                    free_case(&cs);
+                    return 2;
+                }
+                pbytes = ime_packed_b_bytes(cs.k, cs.n, sizeof(uint16_t));
+            } else
+#endif
+            {
+                /* kernel-only goes through the same selectors the backend
+                 * binds (rvv_pick_*); --path=NAME forces a specific
+                 * micro-kernel through the shared by-name resolver.
+                 * Block-scale dtypes (MXFP8/NVFP4/MXFP4) use the
+                 * block-scale selector (distinct function type carrying
+                 * the scale tensors). */
+                const int is_block_scale
+                        = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
+                        || dop->dtype == RVCL_DTYPE_MXFP8_E5M2
+                        || dop->dtype == RVCL_DTYPE_NVFP4
+                        || dop->dtype == RVCL_DTYPE_MXFP4;
+                if (is_block_scale) {
+                    kc.gemm_mxfp8 = pick_gemm_mxfp8(dop->dtype, path);
+                    if (!kc.gemm_mxfp8) {
+                        fprintf(stderr,
+                                "error: --path=%s is unavailable for %s\n",
+                                path, dtstr);
+                        rig_release(&rig);
+                        free_case(&cs);
+                        return 2;
+                    }
+                } else {
+                    kc.gemm = pick_gemm(dop->dtype, path);
+                    if (!kc.gemm) {
+                        fprintf(stderr,
+                                "error: --path=%s is unavailable for %s\n",
+                                path, dtstr);
+                        rig_release(&rig);
+                        free_case(&cs);
+                        return 2;
+                    }
+                }
+                pbytes = rvv_packed_b_bytes(cs.k, cs.n, elt);
+            }
+
             void *packed = NULL;
-            size_t pbytes = rvv_packed_b_bytes(cs.k, cs.n, elt);
-            if (posix_memalign(&packed, 64, pbytes) != 0) {
+            if (pbytes == 0 || posix_memalign(&packed, 64, pbytes) != 0) {
                 fprintf(stderr, "error: packed-B buffer allocation failed\n");
-                free_case(&cs); /* do not leak this case's buffers */
+                rig_release(&rig); /* do not leak this case's buffers */
+                free_case(&cs);
                 return 1;
             }
+            kc.packed = packed;
+
             rvcl_tensor_t b_src, b_dst;
             {
                 rvcl_tensor_desc_t td = {.ndims = 2,
@@ -888,51 +993,30 @@ int main(int argc, char **argv) {
                         .strides = {1},
                         .dtype = RVCL_DTYPE_UINT8};
                 rvcl_tensor_init(&b_dst, &pd, packed);
-                rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
+#if defined(RVCL_ENABLE_IME_BUILD)
+                if (is_ime)
+                    ime_pack_b_tiles(&b_src, &b_dst, cs.m, cs.n, cs.k,
+                            sizeof(uint16_t));
+                else
+#endif
+                    rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
             }
 
-            konly_ctx_t kc = {.cs = &cs,
-                    .packed = packed,
-                    .gemm = NULL,
-                    .gemm_mxfp8 = NULL};
-            /* kernel-only goes through the same selectors the backend binds
-             * (rvv_pick_*); --path=NAME forces a specific micro-kernel
-             * through the shared by-name resolver. Block-scale dtypes
-             * (MXFP8/NVFP4/MXFP4) use the block-scale selector (distinct
-             * function type carrying the scale tensors). */
-            const int is_block_scale = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
-                    || dop->dtype == RVCL_DTYPE_MXFP8_E5M2
-                    || dop->dtype == RVCL_DTYPE_NVFP4
-                    || dop->dtype == RVCL_DTYPE_MXFP4;
-            if (is_block_scale) {
-                kc.gemm_mxfp8 = pick_gemm_mxfp8(dop->dtype, path);
-                if (!kc.gemm_mxfp8) {
-                    fprintf(stderr, "error: --path=%s is unavailable for %s\n",
-                            path, dtstr);
-                    free(packed);
-                    free_case(&cs);
-                    return 2;
-                }
-            } else {
-                kc.gemm = pick_gemm(dop->dtype, path);
-                if (!kc.gemm) {
-                    fprintf(stderr, "error: --path=%s is unavailable for %s\n",
-                            path, dtstr);
-                    free(packed);
-                    free_case(&cs);
-                    return 2;
-                }
-            }
             double t_kernel = mode == MODE_S
                     ? time_once(bench_kernel_only, &kc)
                     : time_best_of(bench_kernel_only, &kc, reps);
 
-            pack_ctx_t pc = {.cs = &cs, .b = &b_src, .dst = &b_dst};
+            pack_ctx_t pc = {.cs = &cs,
+                    .b = &b_src,
+                    .dst = &b_dst,
+#if defined(RVCL_ENABLE_IME_BUILD)
+                    .is_ime = is_ime,
+#endif
+            };
             double t_pack = mode == MODE_S
                     ? time_once(bench_pack_only, &pc)
                     : time_best_of(bench_pack_only, &pc, reps);
 
-            int has_dispatch = rig_setup(&rig, &cs);
             double t_pk = 0, t_e2e = 0;
             if (has_dispatch) {
                 run_ctx_t rc = {.k = rvcl_dispatch_kernel(rig.r),
@@ -945,8 +1029,6 @@ int main(int argc, char **argv) {
                 t_e2e = mode == MODE_S ? time_once(bench_e2e, &ec)
                                        : time_best_of(bench_e2e, &ec, reps);
             }
-            const char *kname
-                    = has_dispatch ? rvcl_dispatch_kernel_name(rig.r) : NULL;
 
             if (json) {
                 char b1[32], b2[32], b3[32], b4[32], b5[32];
