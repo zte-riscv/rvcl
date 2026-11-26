@@ -45,6 +45,7 @@
 
 #include "../common/conv2d_geometry.h"
 #include "../common/dtype_traits.hpp"
+#include "../common/pooling_geometry.h"
 #include "capability_internal.h"
 #include "dispatch_internal.h"
 #include "registry_internal.h"
@@ -136,6 +137,13 @@ static uint32_t inner_product_key_hash(const rvcl_op_desc_t *key);
 static int inner_product_key_equal(
         const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
 
+/* forward: the pooling entry's validator and key generator (request / keys
+ * sections below) */
+static rvcl_status_t pooling_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t pooling_key_hash(const rvcl_op_desc_t *key);
+static int pooling_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
 /* One row per built-in operator, in registration-order tie-break order. The
  * table is sized to the full capacity because rvcl_dispatch_register_op()
  * appends free entries (tests, internal callers) after the built-in rows:
@@ -151,10 +159,12 @@ static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
                 conv2d_key_equal},
         {RVCL_OP_INNER_PRODUCT, inner_product_dims_validate,
                 inner_product_key_hash, inner_product_key_equal},
+        {RVCL_OP_POOLING, pooling_dims_validate, pooling_key_hash,
+                pooling_key_equal},
 };
 
 /* Number of initializer rows, i.e. the built-in operators. */
-static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 4;
+static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 5;
 
 static_assert(RVCL_DISPATCH_BUILTIN_OPS <= RVCL_DISPATCH_MAX_OPS,
         "built-in operator rows must fit RVCL_DISPATCH_MAX_OPS");
@@ -332,6 +342,55 @@ static uint32_t inner_product_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)d->mb);
     h = hash_mix(h, (uint64_t)d->k);
     h = hash_mix(h, (uint64_t)d->oc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
+    h = hash_mix(h, (uint64_t)d->quant.enabled);
+    h = hash_mix(h, float_bits(d->quant.scale_a));
+    h = hash_mix(h, float_bits(d->quant.scale_b));
+    h = hash_mix(h, float_bits(d->quant.scale_c));
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_c);
+    return h;
+}
+
+static int pooling_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    const rvcl_pooling_desc_t *x = &a->pooling;
+    const rvcl_pooling_desc_t *y = &b->pooling;
+    return x->mb == y->mb && x->ic == y->ic && x->ih == y->ih && x->iw == y->iw
+            && x->kh == y->kh && x->kw == y->kw && x->sh == y->sh
+            && x->sw == y->sw && x->pad_t == y->pad_t && x->pad_b == y->pad_b
+            && x->pad_l == y->pad_l && x->pad_r == y->pad_r && x->alg == y->alg
+            && x->dtype_a == y->dtype_a && x->dtype_b == y->dtype_b
+            && x->dtype_acc == y->dtype_acc && x->dtype_c == y->dtype_c
+            && x->dtype_bias == y->dtype_bias
+            && x->quant.enabled == y->quant.enabled
+            && float_bits(x->quant.scale_a) == float_bits(y->quant.scale_a)
+            && float_bits(x->quant.scale_b) == float_bits(y->quant.scale_b)
+            && float_bits(x->quant.scale_c) == float_bits(y->quant.scale_c)
+            && x->quant.zp_a == y->quant.zp_a && x->quant.zp_b == y->quant.zp_b
+            && x->quant.zp_c == y->quant.zp_c;
+}
+
+static uint32_t pooling_key_hash(const rvcl_op_desc_t *key) {
+    const rvcl_pooling_desc_t *d = &key->pooling;
+    unsigned h = 2166136261u;
+    h = hash_mix(h, (uint64_t)d->mb);
+    h = hash_mix(h, (uint64_t)d->ic);
+    h = hash_mix(h, (uint64_t)d->ih);
+    h = hash_mix(h, (uint64_t)d->iw);
+    h = hash_mix(h, (uint64_t)d->kh);
+    h = hash_mix(h, (uint64_t)d->kw);
+    h = hash_mix(h, (uint64_t)d->sh);
+    h = hash_mix(h, (uint64_t)d->sw);
+    h = hash_mix(h, (uint64_t)d->pad_t);
+    h = hash_mix(h, (uint64_t)d->pad_b);
+    h = hash_mix(h, (uint64_t)d->pad_l);
+    h = hash_mix(h, (uint64_t)d->pad_r);
+    h = hash_mix(h, (uint64_t)(unsigned)d->alg);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
@@ -591,6 +650,34 @@ static rvcl_status_t inner_product_dims_validate(
     return RVCL_SUCCESS;
 }
 
+/* The pooling op-table entry. The row view is m = mb*OH (one work row per
+ * output line of a batch), n = OW and k = 1: every output element is one
+ * window reduction, and the channels of a row are walked inside the
+ * kernel. A quantized request travels on to stage 2 like the other entries,
+ * where the RVCL_QUANT_NONE datatype filter drops every pooling kernel. */
+static rvcl_status_t pooling_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_pooling_desc_t *d = &od->pooling;
+    if (!rvcl_pooling_geometry_valid(d)) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_dtype_tuple(
+            d->dtype_a, d->dtype_b, d->dtype_acc, d->dtype_c, d->dtype_bias);
+    if (st != RVCL_SUCCESS) return st;
+    const int64_t oh
+            = rvcl_pooling_out_dim(d->ih, d->kh, d->sh, d->pad_t, d->pad_b);
+    const int64_t ow
+            = rvcl_pooling_out_dim(d->iw, d->kw, d->sw, d->pad_l, d->pad_r);
+    if (oh <= 0 || ow <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    out->m = d->mb * oh;
+    out->n = ow;
+    out->k = 1;
+    out->dtype_a = d->dtype_a;
+    out->dtype_b = d->dtype_b;
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
+
 /* ------------------------------------------------------------- filters */
 /* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
  * stays operator-generic. */
@@ -802,6 +889,15 @@ rvcl_status_t rvcl_dispatch_inner_product(const rvcl_inner_product_desc_t *desc,
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_op_desc_t od = {.inner_product = *desc};
     return rvcl_dispatch_op(RVCL_OP_INNER_PRODUCT, &od, result);
+}
+
+/* Public pooling entry: same generic pipeline keyed on the POOLING
+ * op-table row. */
+rvcl_status_t rvcl_dispatch_pooling(
+        const rvcl_pooling_desc_t *desc, rvcl_dispatch_result_t **result) {
+    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_op_desc_t od = {.pooling = *desc};
+    return rvcl_dispatch_op(RVCL_OP_POOLING, &od, result);
 }
 
 const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r) {

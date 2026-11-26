@@ -1,0 +1,49 @@
+# pooling ci — three dtypes x the algorithm and parameter families
+#
+# Shape column = the case's view: MxNxK with M = mb*OH, N = OW, K = 1;
+# the params column carries the algorithm name (max | avg | avgex; default
+# max) and the geometry in the fixed key order mb,ic,ih,iw,kh,kw
+# [,sh,sw][,pt,pb,pl,pr] (see tests/inputs/README.md). The pad families
+# cover windows that overhang the input on either side, the boundary case
+# of avg_exclude where the in-bounds count drops below KH*KW.
+#
+# Families covered: k2s2, k3s2p1, asymmetric pad, non-square kernel/stride,
+# the k=1xIW full-window row, kh=ih (window spans the whole height), mb>1,
+# ragged channel counts, a 1x1 input, the empty-window family (pad >= k: max
+# returns -FLT_MAX; the h case is vertically empty, the w case has an empty
+# prefix of lanes across a strip), and the exclude-corner family.
+#
+# f32 is bit-exact against the scalar golden; f16/bf16 compare at the dtype
+# trait tolerance.
+2x2x1 maxmb1ic2ih2iw2kh1kw1 n"max_1x1_input"
+2x2x1 maxmb1ic3ih4iw4kh2kw2sh2sw2 n"max_k2s2_a"
+9x1x1 maxmb1ic5ih10iw3kh2kw2sh1sw2 n"max_k2sw2_b"
+4x4x1 maxmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"max_k3s2p1_a"
+6x3x1 maxmb2ic2ih9iw9kh3kw3sh3sw3pt1pb1pl1pr1 n"max_k3s3p1_b"
+7x7x1 maxmb1ic2ih6iw8kh3kw3pt1pb2pl0pr1 n"max_asym_pad_a"
+8x4x1 maxmb1ic3ih8iw5kh3kw3sh1sw1pt2pb0pl0pr1 n"max_asym_pad_b"
+2x1x1 maxmb1ic1ih2iw8kh1kw8 n"max_k1xIW"
+1x4x1 maxmb1ic2ih6iw6kh6kw3 n"max_kh_is_ih"
+12x4x1 maxmb3ic7ih6iw6kh2kw2sh2sw2pt1pb1pl1pr1 n"max_mb3_ic7"
+4x4x1 maxmb1ic1ih6iw6kh3kw3sh2sw2pt1pb2pl1pr2 n"max_pad_eq_k"
+1x1x1 maxmb1ic1ih1iw1kh1kw1 n"max_1x1_1x1"
+2x8x1 maxmb1ic2ih1iw8kh2kw1sh1sw1pt2pb0pl0pr0 n"max_empty_window_h"
+1x10x1 maxmb1ic2ih1iw8kh2kw1sh1sw1pt1pb0pl2pr0 n"max_empty_window_w"
+
+2x2x1 avgmb1ic2ih4iw4kh2kw2sh2sw2 n"avg_k2s2_a"
+3x4x1 avgmb1ic4ih6iw8kh2kw2sh2sw2 n"avg_k2s2_b"
+4x4x1 avgmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"avg_k3s2p1_a"
+8x4x1 avgmb2ic3ih8iw8kh3kw3sh2sw2pt1pb1pl1pr1 n"avg_k3s2p1_b"
+7x7x1 avgmb1ic2ih6iw8kh3kw3pt1pb2pl0pr1 n"avg_asym_pad"
+2x1x1 avgmb1ic1ih2iw8kh1kw8 n"avg_k1xIW"
+1x4x1 avgmb1ic2ih6iw6kh6kw3 n"avg_kh_is_ih"
+12x3x1 avgmb4ic5ih3iw3kh2kw2pt1pb0pl1pr0 n"avg_mb4_ic5"
+4x4x1 avgmb1ic1ih6iw6kh3kw3sh2sw2pt1pb2pl1pr2 n"avg_pad_eq_k"
+
+4x4x1 avgexmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"avgex_corner_a"
+6x3x1 avgexmb2ic3ih5iw6kh3kw3sh2sw2pt1pb1pl1pr1 n"avgex_corner_b"
+3x3x1 avgexmb1ic2ih6iw6kh3kw3sh2sw2pt1pb1pl1pr1 n"avgex_pad_eq_k"
+2x2x1 avgexmb1ic2ih4iw4kh2kw2sh2sw2 n"avgex_k2s2"
+2x1x1 avgexmb1ic1ih2iw8kh1kw8 n"avgex_k1xIW"
+1x7x1 avgexmb1ic1ih3iw9kh3kw3 n"avgex_full_height"
+4x4x1 avgexmb1ic1ih6iw6kh3kw3sh2sw2pt1pb2pl1pr2 n"avgex_pad_eq_k_asym"

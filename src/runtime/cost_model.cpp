@@ -152,6 +152,15 @@ RVCL_API uint64_t rvcl_cost_inner_product_rvv(
     return score(RVCL_COST_ELEM_MATMUL_RVV, RVCL_COST_FP, gain);
 }
 
+RVCL_API uint64_t rvcl_cost_pooling_rvv(
+        const rvcl_op_desc_t *desc, const rvcl_capability_t *cap) {
+    /* The pooling kernel streams one output row per vector step, so it
+     * shares the matmul-rvv coefficient and the neutral shape heuristic. */
+    (void)desc;
+    const uint64_t gain = vlen_tier_gain(cap);
+    return score(RVCL_COST_ELEM_MATMUL_RVV, RVCL_COST_FP, gain);
+}
+
 /* ------------------------------------------------------------- public hint
  *
  * The out-of-tree counterpart of the category wrappers: same shape heuristic

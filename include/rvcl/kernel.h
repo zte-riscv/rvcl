@@ -253,11 +253,51 @@ typedef struct {
     rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
 } rvcl_inner_product_desc_t;
 
+/* Pooling algorithm (NCHW 2D). The sample set of an output element is the
+ * kernel window inside the padded input; samples outside the input are
+ * skipped for max and avg_exclude and counted as zero for avg_include. */
+typedef enum {
+    RVCL_POOL_MAX = 0,
+    RVCL_POOL_AVG_INCLUDE, /* sum / (kh*kw), padding counts as zero */
+    RVCL_POOL_AVG_EXCLUDE, /* sum / (number of in-bounds samples) */
+} rvcl_pooling_alg_t;
+
+/*
+ * Plain NCHW 2D pooling over one input channel:
+ *   dst[mb,c,oh,ow] = pool{ src[mb,c, ih, iw] :
+ *       ih = oh*sh - pad_t + kh, iw = ow*sw - pad_l + kw }
+ * with the output size (in + pad_begin + pad_end - k) / s + 1 per axis.
+ * avg_exclude divides by the in-bounds sample count. When pad >= k an
+ * output element's window can hold no in-bounds sample: max then returns
+ * -FLT_MAX (lowest_value of the fp32 destination, the oneDNN max-pooling
+ * seed, not 0), avg_include is 0 and avg_exclude divides 0 by 0 and yields
+ * NaN. There is no dilation: a window sample is exactly one stride step
+ * apart. dst is fp32 and the accumulation is fp32, so the up-conversion of
+ * a narrow input is exact.
+ * Quantization is not part of the v0.x POOLING path: validate() rejects a
+ * quantized request.
+ */
+typedef struct {
+    int64_t mb; /* batch */
+    int64_t ic; /* channels (pooled independently) */
+    int64_t ih, iw; /* input height, width */
+    int64_t kh, kw; /* window height, width */
+    int64_t sh, sw; /* strides */
+    int64_t pad_t, pad_b, pad_l, pad_r; /* top, bottom, left, right */
+    rvcl_pooling_alg_t alg;
+    rvcl_dtype_t dtype_a, dtype_b, dtype_acc, dtype_c;
+    /* Pooling has no bias term: this stays RVCL_DTYPE_AUTO and validate()
+     * rejects a request that names one. */
+    rvcl_dtype_t dtype_bias;
+    rvcl_quant_ctx_t quant; /* zero-init for non-quantized */
+} rvcl_pooling_desc_t;
+
 typedef union rvcl_op_desc {
     rvcl_matmul_desc_t matmul;
     rvcl_gemv_desc_t gemv;
     rvcl_conv2d_desc_t conv2d;
     rvcl_inner_product_desc_t inner_product;
+    rvcl_pooling_desc_t pooling;
 } rvcl_op_desc_t;
 
 /* ------------------------------------------------------------ kernel vtable */

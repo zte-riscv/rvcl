@@ -1,0 +1,23 @@
+# pooling smoke — PR gate: the algorithm x parameter families
+#
+# Shape column = the case's view: MxNxK with
+#   M = mb*OH, N = OW, K = 1
+# and the params column carries the pooling geometry: an optional leading
+# algorithm name (max | avg = avg_include | avgex = avg_exclude; default
+# max) followed by the fixed key order
+#   mb,ic,ih,iw,kh,kw[,sh,sw][,pt,pb,pl,pr]
+# (see tests/inputs/README.md). The two columns must agree; a mismatch is a
+# parse error.
+#
+#   OH = (ih + pt + pb - kh)/sh + 1   (OW likewise)
+#
+# f32 is bit-exact against the scalar golden; f16/bf16 compare at the dtype
+# trait tolerance (exact up-conversion, fp32 accumulation).
+2x2x1 maxmb1ic2ih4iw4kh2kw2sh2sw2 n"max_k2s2"
+4x4x1 maxmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"max_k3s2p1"
+7x7x1 maxmb1ic2ih6iw8kh3kw3pt1pb2pl0pr1 n"max_asym_pad"
+2x1x1 maxmb1ic1ih2iw8kh1kw8 n"max_k1xIW"
+2x2x1 avgmb1ic2ih4iw4kh2kw2sh2sw2 n"avg_k2s2"
+4x4x1 avgmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"avg_k3s2p1"
+4x4x1 avgexmb1ic1ih7iw7kh3kw3sh2sw2pt1pb1pl1pr1 n"avgex_corner"
+6x3x1 avgexmb2ic3ih5iw6kh3kw3sh2sw2pt1pb1pl1pr1 n"avgex_mb2"

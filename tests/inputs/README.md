@@ -22,6 +22,9 @@ tests/inputs/
 ├── inner_product/           # no params column (the shape triple is the GEMM view)
 │   ├── test_inner_product_smoke # PR gate set (7 cases: MB/OC/K scan + tails)
 │   └── test_inner_product_ci    # CI set (19 cases)
+├── pooling/                 # params column carries algorithm + window geometry
+│   ├── test_pooling_smoke   # PR gate set (8 cases: algorithm x parameter families)
+│   └── test_pooling_ci      # CI set (28 cases)
 └── <op>/ …                  # new operator = new directory (v0.5+, follows the library)
 ```
 
@@ -123,6 +126,36 @@ accumulation and output always fp32, and the same vector-tier skip of the
 `test_inner_product_modeC_ci_f32_c`). Its shape triple already is the GEMM
 projection (`M = mb`, `N = oc`, `K` = folded reduction), so its cases carry
 no params column.
+
+**pooling** — an optional leading algorithm name, then the required keys and
+the optional ones, each `<key><decimal>`:
+
+```ebnf
+pooling_params := [ 'max' | 'avg' | 'avgex' ]
+                  'mb' dec 'ic' dec 'ih' dec 'iw' dec 'kh' dec 'kw' dec
+                  [ 'sh' dec 'sw' dec ] [ 'pt' dec 'pb' dec 'pl' dec 'pr' dec ] ;
+```
+
+`max` is the default; `avg` is the zero-padded average (divides by
+`KH*KW`) and `avgex` the exclude-pad average (divides by the in-bounds
+sample count). Omitted optional keys default to stride 1 and zero padding;
+the key order rules and the `0`-stride rejection are the same as conv2d.
+The shape and params columns must agree:
+
+```text
+M = mb * OH      N = OW      K = 1
+OH = (ih + pt + pb - kh) / sh + 1     (OW likewise)
+```
+
+`--dt` for pooling: `f32`, `f16` and `bf16`, inputs in the case dtype and
+accumulation and output always fp32 (the kernel has no JIT micro-kernel, so
+no forced-path targets are registered; per-kernel coverage comes from
+`run_named` inside the differential). Pooling has no dilation field. When
+`pad >= k` a window can hold no in-bounds sample: `max` then returns
+`-FLT_MAX`, `avg` returns 0 and `avgex` yields NaN. The corpus covers the
+empty-window `max` and `avg` families but not an empty `avgex` window: the
+shared differential comparators treat `NaN != NaN` as a mismatch, so that
+case would need a pooling-specific NaN-aware compare and is out of corpus.
 
 ## Semantics
 

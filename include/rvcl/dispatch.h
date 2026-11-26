@@ -68,6 +68,12 @@ RVCL_API rvcl_status_t rvcl_dispatch_conv2d(
 RVCL_API rvcl_status_t rvcl_dispatch_inner_product(
         const rvcl_inner_product_desc_t *desc, rvcl_dispatch_result_t **result);
 
+/* Same pipeline keyed on the POOLING op-table row. The shape stage sees the
+ * row view of the pooling: m = mb*OH, n = OW, k = 1 (one output element per
+ * reduction of the window). */
+RVCL_API rvcl_status_t rvcl_dispatch_pooling(
+        const rvcl_pooling_desc_t *desc, rvcl_dispatch_result_t **result);
+
 /* Kernel name of the selection (for verbose / tests). */
 RVCL_API const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r);
 
