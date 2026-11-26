@@ -110,6 +110,7 @@ typedef enum {
     RVCL_OP_RESERVED,
     RVCL_OP_INNER_PRODUCT,
     RVCL_OP_POOLING,
+    RVCL_OP_LAYER_NORM,
     RVCL_OP_COUNT,
 } rvcl_operation_t;
 

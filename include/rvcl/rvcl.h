@@ -25,6 +25,7 @@
 #include "rvcl/init.h"
 #include "rvcl/inner_product.h"
 #include "rvcl/kernel.h"
+#include "rvcl/layer_norm.h"
 #include "rvcl/matmul.h"
 #include "rvcl/memory.h"
 #include "rvcl/pooling.h"

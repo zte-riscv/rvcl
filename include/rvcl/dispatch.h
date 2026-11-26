@@ -74,6 +74,12 @@ RVCL_API rvcl_status_t rvcl_dispatch_inner_product(
 RVCL_API rvcl_status_t rvcl_dispatch_pooling(
         const rvcl_pooling_desc_t *desc, rvcl_dispatch_result_t **result);
 
+/* Same pipeline keyed on the LAYER_NORM op-table row. The shape stage sees
+ * the row view of the normalization: m = rows, n = norm_size, k = 1 (one
+ * reduction per work row, no splittable reduction axis). */
+RVCL_API rvcl_status_t rvcl_dispatch_layer_norm(
+        const rvcl_layer_norm_desc_t *desc, rvcl_dispatch_result_t **result);
+
 /* Kernel name of the selection (for verbose / tests). */
 RVCL_API const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r);
 

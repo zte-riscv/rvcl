@@ -144,6 +144,14 @@ static rvcl_status_t pooling_dims_validate(
 static uint32_t pooling_key_hash(const rvcl_op_desc_t *key);
 static int pooling_key_equal(const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
 
+/* forward: the layer_norm entry's validator and key generator (request /
+ * keys sections below) */
+static rvcl_status_t layer_norm_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out);
+static uint32_t layer_norm_key_hash(const rvcl_op_desc_t *key);
+static int layer_norm_key_equal(
+        const rvcl_op_desc_t *a, const rvcl_op_desc_t *b);
+
 /* One row per built-in operator, in registration-order tie-break order. The
  * table is sized to the full capacity because rvcl_dispatch_register_op()
  * appends free entries (tests, internal callers) after the built-in rows:
@@ -161,10 +169,12 @@ static rvcl_dispatch_op_entry_t g_op_table[RVCL_DISPATCH_MAX_OPS] = {
                 inner_product_key_hash, inner_product_key_equal},
         {RVCL_OP_POOLING, pooling_dims_validate, pooling_key_hash,
                 pooling_key_equal},
+        {RVCL_OP_LAYER_NORM, layer_norm_dims_validate, layer_norm_key_hash,
+                layer_norm_key_equal},
 };
 
 /* Number of initializer rows, i.e. the built-in operators. */
-static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 5;
+static constexpr int RVCL_DISPATCH_BUILTIN_OPS = 6;
 
 static_assert(RVCL_DISPATCH_BUILTIN_OPS <= RVCL_DISPATCH_MAX_OPS,
         "built-in operator rows must fit RVCL_DISPATCH_MAX_OPS");
@@ -391,6 +401,47 @@ static uint32_t pooling_key_hash(const rvcl_op_desc_t *key) {
     h = hash_mix(h, (uint64_t)d->pad_l);
     h = hash_mix(h, (uint64_t)d->pad_r);
     h = hash_mix(h, (uint64_t)(unsigned)d->alg);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_c);
+    h = hash_mix(h, (uint64_t)(unsigned)d->dtype_bias);
+    h = hash_mix(h, (uint64_t)d->quant.enabled);
+    h = hash_mix(h, float_bits(d->quant.scale_a));
+    h = hash_mix(h, float_bits(d->quant.scale_b));
+    h = hash_mix(h, float_bits(d->quant.scale_c));
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_a);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_b);
+    h = hash_mix(h, (uint64_t)(unsigned)d->quant.zp_c);
+    return h;
+}
+
+static int layer_norm_key_equal(
+        const rvcl_op_desc_t *a, const rvcl_op_desc_t *b) {
+    const rvcl_layer_norm_desc_t *x = &a->layer_norm;
+    const rvcl_layer_norm_desc_t *y = &b->layer_norm;
+    return x->rows == y->rows && x->norm_size == y->norm_size
+            && float_bits(x->eps) == float_bits(y->eps)
+            && x->use_scale == y->use_scale && x->use_shift == y->use_shift
+            && x->dtype_a == y->dtype_a && x->dtype_b == y->dtype_b
+            && x->dtype_acc == y->dtype_acc && x->dtype_c == y->dtype_c
+            && x->dtype_bias == y->dtype_bias
+            && x->quant.enabled == y->quant.enabled
+            && float_bits(x->quant.scale_a) == float_bits(y->quant.scale_a)
+            && float_bits(x->quant.scale_b) == float_bits(y->quant.scale_b)
+            && float_bits(x->quant.scale_c) == float_bits(y->quant.scale_c)
+            && x->quant.zp_a == y->quant.zp_a && x->quant.zp_b == y->quant.zp_b
+            && x->quant.zp_c == y->quant.zp_c;
+}
+
+static uint32_t layer_norm_key_hash(const rvcl_op_desc_t *key) {
+    const rvcl_layer_norm_desc_t *d = &key->layer_norm;
+    unsigned h = 2166136261u;
+    h = hash_mix(h, (uint64_t)d->rows);
+    h = hash_mix(h, (uint64_t)d->norm_size);
+    h = hash_mix(h, float_bits(d->eps));
+    h = hash_mix(h, (uint64_t)d->use_scale);
+    h = hash_mix(h, (uint64_t)d->use_shift);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_a);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_b);
     h = hash_mix(h, (uint64_t)(unsigned)d->dtype_acc);
@@ -678,6 +729,45 @@ static rvcl_status_t pooling_dims_validate(
     return RVCL_SUCCESS;
 }
 
+/* The layer_norm op-table entry. The row view is m = rows (one work row per
+ * normalized row), n = norm_size and k = 1: each work row carries its own
+ * reduction and no reduction axis is splittable. A quantized request travels
+ * on to stage 2 like the other entries, where the RVCL_QUANT_NONE datatype
+ * filter drops every layer_norm kernel. */
+static rvcl_status_t layer_norm_dims_validate(
+        const rvcl_op_desc_t *od, rvcl_dispatch_filter_t *out) {
+    const rvcl_layer_norm_desc_t *d = &od->layer_norm;
+    if (d->rows <= 0 || d->norm_size <= 0) return RVCL_ERROR_INVALID_ARGUMENT;
+    /* eps enters sqrt(var + eps) under the square root: a negative value
+     * makes the whole row NaN, and NaN != NaN would surface as an opaque
+     * numeric failure instead of a request error. */
+    if (!(d->eps >= 0.0f)) return RVCL_ERROR_INVALID_ARGUMENT;
+    /* Layer norm has a single operand, so dtype_b carries no request
+     * meaning: AUTO is the "unused" marker and the operand's own dtype is
+     * accepted as its other spelling, while naming a third dtype is a
+     * caller error rather than a silently ignored field. The kernel-side
+     * tuple check accepts the same two values, so the request is judged
+     * once here instead of surviving this stage and dying in stage 6. */
+    if (d->dtype_b != RVCL_DTYPE_AUTO && d->dtype_b != d->dtype_a)
+        return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_status_t st = validate_dtype_tuple(
+            d->dtype_a, d->dtype_a, d->dtype_acc, d->dtype_c, d->dtype_bias);
+    if (st != RVCL_SUCCESS) return st;
+    out->m = d->rows;
+    out->n = d->norm_size;
+    out->k = 1;
+    out->dtype_a = d->dtype_a;
+    /* The datatype filter compares the B slot against the kernel's
+     * declaration, and a layer_norm kernel declares its one operand dtype
+     * there: normalize the unused request slot to A so the comparison is
+     * well defined instead of never matching an AUTO request. */
+    out->dtype_b = d->dtype_a;
+    out->dtype_acc = resolve_acc(d->dtype_a, d->dtype_acc);
+    out->dtype_c = d->dtype_c;
+    out->quant_enabled = d->quant.enabled;
+    return RVCL_SUCCESS;
+}
+
 /* ------------------------------------------------------------- filters */
 /* Stages 2 and 5 consume the resolved filter inputs, so the pipeline body
  * stays operator-generic. */
@@ -898,6 +988,15 @@ rvcl_status_t rvcl_dispatch_pooling(
     if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
     const rvcl_op_desc_t od = {.pooling = *desc};
     return rvcl_dispatch_op(RVCL_OP_POOLING, &od, result);
+}
+
+/* Public layer_norm entry: same generic pipeline keyed on the LAYER_NORM
+ * op-table row. */
+rvcl_status_t rvcl_dispatch_layer_norm(
+        const rvcl_layer_norm_desc_t *desc, rvcl_dispatch_result_t **result) {
+    if (!desc || !result) return RVCL_ERROR_INVALID_ARGUMENT;
+    const rvcl_op_desc_t od = {.layer_norm = *desc};
+    return rvcl_dispatch_op(RVCL_OP_LAYER_NORM, &od, result);
 }
 
 const char *rvcl_dispatch_kernel_name(const rvcl_dispatch_result_t *r) {

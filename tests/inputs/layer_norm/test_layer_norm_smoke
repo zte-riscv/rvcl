@@ -1,0 +1,21 @@
+# layer_norm smoke — PR gate: the row shape and the optional-parameter families
+#
+# Shape column = the case's view: MxNxK with
+#   M = rows, N = norm_size, K = 1
+# and the params column carries the normalization in the fixed key order
+#   rows,ns[,e][,sc][,sh]
+# (see tests/inputs/README.md). The two columns must agree; a mismatch is a
+# parse error. e is eps scaled by 1e9 (e0 = 0, e10000 = 1e-5), sc selects
+# use_scale and sh selects use_shift (1 = read the STAT_SCALE / STAT_SHIFT
+# vector, 0 = the constant 1 / 0).
+#
+# f32 is bit-exact against the scalar golden; f16/bf16 compare at the dtype
+# trait tolerance (exact up-conversion, fp32 accumulation).
+2x8x1 rows2ns8e0sc1sh1 n"plain_8"
+1x7x1 rows1ns7e0sc1sh1 n"ns7_tail"
+4x13x1 rows4ns13e10000sc1sh1 n"ns13_tail_eps"
+3x33x1 rows3ns33e10000sc0sh0 n"ns33_no_scale_shift"
+5x1x1 rows5ns1e10000sc1sh1 n"ns1_single"
+2x9x1 rows2ns9e0sc1sh0 n"scale_only"
+2x9x1 rows2ns9e0sc0sh1 n"shift_only"
+1x65x1 rows1ns65e10000sc1sh1 n"ns65_tail"

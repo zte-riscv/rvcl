@@ -59,6 +59,10 @@ rvcl_status_t rvcl_rvv_register_inner_product_portable(void);
  * ordering habit. */
 rvcl_status_t rvcl_rvv_register_pooling(void);
 rvcl_status_t rvcl_rvv_register_pooling_portable(void);
+/* rvv layer_norm: row-wise ordered reduction, generic + portable entries,
+ * same ordering habit. */
+rvcl_status_t rvcl_rvv_register_layer_norm(void);
+rvcl_status_t rvcl_rvv_register_layer_norm_portable(void);
 /* ime/vme/ame backends: experimental, land in v0.2/v0.3 */
 
 /* Registration failures propagate: a partially registered backend set
@@ -92,6 +96,11 @@ static rvcl_status_t register_all(void) {
     st = rvcl_rvv_register_pooling();
     if (st != RVCL_SUCCESS) return st;
     st = rvcl_rvv_register_pooling_portable();
+    if (st != RVCL_SUCCESS) return st;
+    /* Layer norm generic + portable entries. */
+    st = rvcl_rvv_register_layer_norm();
+    if (st != RVCL_SUCCESS) return st;
+    st = rvcl_rvv_register_layer_norm_portable();
     if (st != RVCL_SUCCESS) return st;
 #endif
     /* GEMV golden fallback, before the matmul fallback (same family). */
