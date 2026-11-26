@@ -367,8 +367,9 @@ static void pooling_golden(const rvcl_op_desc_t *od, const void *a,
                         out = best;
                     else if (d->alg == RVCL_POOL_AVG_INCLUDE)
                         out = sum / (float)(d->kh * d->kw);
-                    else
-                        out = sum / (float)count; /* empty window: NaN */
+                    else /* empty window: NaN, kept out of corpus because the
+                          * shared comparators treat NaN != NaN as a mismatch */
+                        out = sum / (float)count;
                     dst_c[y * ow + x] = out;
                 }
         }

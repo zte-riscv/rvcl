@@ -196,10 +196,12 @@ static float pool_empty_value(rvcl_pooling_alg_t alg) {
 }
 
 /* True when the window at output column ow holds no in-bounds sample: its
- * first in-bounds column lies past the window's last one, which only
- * happens with a left pad >= the window width (kw <= pad_l). A vertically
- * empty window (pad >= kh) has no in-bounds row on any column and is
- * decided once per strip, not per lane. */
+ * first in-bounds column lies past its last one, so the window sits entirely
+ * outside [0, iw). The start moves right as ow grows, so this is a left-edge
+ * window (kw <= pad_l) at the low columns and a right-overhang window
+ * (iw0 >= iw, reachable with pad_r >= kw) once a coarse stride jumps past
+ * the input's right edge. A vertically empty window (pad >= kh) has no
+ * in-bounds row on any column and is decided once per strip, not per lane. */
 static bool pool_window_empty(const rvcl_pooling_desc_t *d, int64_t ow) {
     const int64_t iw0 = ow * d->sw - d->pad_l;
     const int64_t kw_lo = iw0 < 0 ? -iw0 : 0;
@@ -263,10 +265,14 @@ static void pool_strip_rvv(const rvcl_pooling_desc_t *d, const pool_conv_t *cv,
         pool_fill_strip(dst_row + ow0, av, pool_empty_value(d->alg));
         return;
     }
-    /* A horizontally empty lane (kw <= pad_l) has its window start before
-     * column 0 with the window closing before it. The start moves left with
-     * the lane index, so the empty lanes form a prefix of the strip; lanes
-     * after it open inside the input. */
+    /* A horizontally empty lane has its window outside [0, iw): a left-edge
+     * lane (kw <= pad_l) whose window closes before column 0, or a
+     * right-overhang lane (pad_r >= kw) reached when a coarse stride jumps
+     * the start past the input's right edge. The start moves right with the
+     * lane index, so the left-edge empty lanes form a prefix of the strip and
+     * lanes after it open inside the input; the right-overhang lanes are a
+     * suffix that the vector prefix bound excludes. pool_window_empty
+     * covers both edges through the single kw_hi <= kw_lo test. */
     int64_t empty = 0;
     if (n_kw <= 0)
         while (empty < av && pool_window_empty(d, ow0 + empty))

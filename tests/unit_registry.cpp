@@ -352,7 +352,7 @@ static void tc01_register_full_fields(void) {
  * into the build are absent. */
 static void tc03_init_idempotent(void) {
     printf("TC-AC1-03 init idempotence and build guards\n");
-    char before[64][RVCL_KERNEL_NAME_MAX];
+    char before[RVCL_REGISTRY_MAX_KERNELS][RVCL_KERNEL_NAME_MAX];
     const int n0 = rvcl_registry_count();
     for (int i = 0; i < n0 && i < RVCL_REGISTRY_MAX_KERNELS; i++) {
         const rvcl_kernel_desc_t *kd = rvcl_registry_get(i);

@@ -152,7 +152,10 @@ accumulation and output always fp32 (the kernel has no JIT micro-kernel, so
 no forced-path targets are registered; per-kernel coverage comes from
 `run_named` inside the differential). Pooling has no dilation field. When
 `pad >= k` a window can hold no in-bounds sample: `max` then returns
-`-FLT_MAX`, `avg` returns 0 and `avgex` yields NaN.
+`-FLT_MAX`, `avg` returns 0 and `avgex` yields NaN. The corpus covers the
+empty-window `max` and `avg` families but not an empty `avgex` window: the
+shared differential comparators treat `NaN != NaN` as a mismatch, so that
+case would need a pooling-specific NaN-aware compare and is out of corpus.
 
 ## Semantics
 
