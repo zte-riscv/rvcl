@@ -810,8 +810,7 @@ int main(int argc, char **argv) {
              * isolates the numeric contract (the two paths agree within
              * 1e-5), which is much tighter than the 1e-3 golden class. */
             if (rvcl_capability_has(rvcl_get_capability(), RVCL_FEATURE_IME)
-                    && rvcl_registry_find_factory(
-                            "rvcl_matmul_f16_ime_1024")) {
+                    && rvcl_registry_find_factory("rvcl_matmul_f16_ime_1024")) {
                 float *c_ime = (float *)malloc((size_t)M * N * 4);
                 float *c_c = (float *)malloc((size_t)M * N * 4);
                 const size_t pbytes = ime_packed_b_bytes(K, N, 2);
@@ -853,8 +852,8 @@ int main(int argc, char **argv) {
                     if (packed_ok) {
                         ime_gemm_f16_c(ah, bp, bias, c_c, M, N, K, &full);
                         ime_gemm_f16_ime(ah, bp, bias, c_ime, M, N, K, &full);
-                        const golden_cmp_t cross = golden_cmp_tol(c_ime, c_c,
-                                (int64_t)M * N, 1e-5f);
+                        const golden_cmp_t cross = golden_cmp_tol(
+                                c_ime, c_c, (int64_t)M * N, 1e-5f);
                         CHECK(cross.mismatches == 0,
                                 "ime C vs instruction path agrees within 1e-5");
                     }
