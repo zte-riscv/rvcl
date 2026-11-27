@@ -19,8 +19,9 @@
 /* Declarations shared between the library and its test executables only.
  * This header is deliberately outside include/rvcl/: it is not part of the
  * public API, is never installed, and carries no stability promise. It gives
- * tests the VLEN-tier vocabulary dispatch consumes and a hook to replace the
- * process capability snapshot with a synthetic one. */
+ * tests the VLEN-tier vocabulary dispatch consumes, a hook to replace the
+ * process capability snapshot with a synthetic one, and the append-only
+ * feature helper the in-tree backend probes share with the detector. */
 
 #ifndef RVCL_CAPABILITY_INTERNAL_H
 #define RVCL_CAPABILITY_INTERNAL_H
@@ -41,8 +42,17 @@ extern "C" {
 RVCL_API int rvcl_capability_vlen_tier(const rvcl_capability_t *cap);
 
 /*
+ * Append-only feature merge used inside a capability probe: adds id with
+ * value 1 when absent, leaves an existing entry untouched, and is a no-op
+ * on a full table. Shared by the runtime detector and in-tree backend
+ * probes so both follow one rule. Not public API, no stability promise.
+ */
+void rvcl_capability_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id);
+
+/*
  * In-tree backend probe registration, not a public API, no stability
- * promise. Same registration window, invocation and sanitization contract
+ * promise. Exported for the test executables, not installed as API.
+ * Same registration window, invocation and sanitization contract
  * as rvcl_capability_register_vendor_probe(), except that the probe may
  * also append standard feature ids: an in-tree backend owns the silicon
  * knowledge for a standard feature (e.g. a matrix extension proven from

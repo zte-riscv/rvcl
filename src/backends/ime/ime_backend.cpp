@@ -81,19 +81,6 @@
  * so the probe must pin the exact width, not a lower bound. */
 #define RVCL_IME_VLEN_BITS 1024
 
-static int ime_cap_has(const rvcl_capability_t *cap, rvcl_feature_id_t id) {
-    for (int i = 0; i < cap->num_features; i++)
-        if (cap->features[i].id == id) return 1;
-    return 0;
-}
-
-static void ime_cap_add(rvcl_capability_t *cap, rvcl_feature_id_t id) {
-    if (ime_cap_has(cap, id) || cap->num_features >= RVCL_MAX_FEATURES) return;
-    cap->features[cap->num_features].id = id;
-    cap->features[cap->num_features].value = 1;
-    cap->num_features++;
-}
-
 static int ime_cpu_matches_profile(int cpu) {
     char path[96];
     char buf[512];
@@ -144,8 +131,8 @@ static rvcl_status_t ime_capability_probe(rvcl_capability_t *cap) {
     /* The floating-point matrix path proves FP16 and the vector width:
      * record the extension, imply FP16, and upgrade the RVV width if the
      * generic detector left it at the present-but-unknown value. */
-    ime_cap_add(cap, RVCL_FEATURE_IME);
-    ime_cap_add(cap, RVCL_FEATURE_FP16);
+    rvcl_capability_add_feature(cap, RVCL_FEATURE_IME);
+    rvcl_capability_add_feature(cap, RVCL_FEATURE_FP16);
     for (int i = 0; i < cap->num_features; i++) {
         if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
         if (bits > cap->features[i].value) cap->features[i].value = bits;

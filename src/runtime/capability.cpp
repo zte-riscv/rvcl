@@ -163,6 +163,18 @@ static void detect_compiletime(rvcl_capability_t *cap) {
     cap->num_features = n;
 }
 
+/* Append-only merge rule of the runtime layer: a feature may be added
+ * when absent, but nothing already present is ever removed or
+ * downgraded — the compile-time view is a lower bound. Shared with
+ * backend probes so they follow the same rule. */
+void rvcl_capability_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
+    if (rvcl_capability_has(cap, id)) return;
+    if (cap->num_features >= RVCL_MAX_FEATURES) return;
+    cap->features[cap->num_features].id = id;
+    cap->features[cap->num_features].value = 1;
+    cap->num_features++;
+}
+
 /* ------------------------------------------------------------- VLEN probe
  *
  * Reads VLEN in bits from the vlenb CSR (VLEN/8, U-mode readable
@@ -212,17 +224,6 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 #endif
 #endif
 
-/* Append-only merge rule of the runtime layer: a feature may be added
- * when absent, but nothing already present is ever removed or
- * downgraded — the compile-time view is a lower bound. */
-static void cap_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
-    if (rvcl_capability_has(cap, id)) return;
-    if (cap->num_features >= RVCL_MAX_FEATURES) return;
-    cap->features[cap->num_features].id = id;
-    cap->features[cap->num_features].value = 1;
-    cap->num_features++;
-}
-
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
             {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
@@ -245,7 +246,7 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * where they exist: each bit below can only add a feature, never
      * contradict the compile-time view. */
     const int has_rvv = (ext & RISCV_HWPROBE_IMA_V) != 0;
-    if (has_rvv) cap_add_feature(cap, RVCL_FEATURE_RVV);
+    if (has_rvv) rvcl_capability_add_feature(cap, RVCL_FEATURE_RVV);
 
 /* FP16 is a single feature bit: either Zvfh (native fp16 arithmetic)
  * or Zvfhmin (conversion-only) counts. The bit macros exist only in
@@ -260,12 +261,12 @@ static void detect_runtime(rvcl_capability_t *cap) {
 #if defined(RISCV_HWPROBE_EXT_ZVFHMIN)
         has_fp16 |= (ext & RISCV_HWPROBE_EXT_ZVFHMIN) != 0;
 #endif
-        if (has_fp16) cap_add_feature(cap, RVCL_FEATURE_FP16);
+        if (has_fp16) rvcl_capability_add_feature(cap, RVCL_FEATURE_FP16);
     }
 #endif
 #if defined(RISCV_HWPROBE_EXT_ZVFBFMIN)
     if ((ext & RISCV_HWPROBE_EXT_ZVFBFMIN) != 0)
-        cap_add_feature(cap, RVCL_FEATURE_BF16);
+        rvcl_capability_add_feature(cap, RVCL_FEATURE_BF16);
 #endif
 
     /* VLEN upgrade: safe whenever V is confirmed. hwprobe reporting V is
