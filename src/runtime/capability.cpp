@@ -56,20 +56,26 @@ static pthread_mutex_t g_cap_mutex = PTHREAD_MUTEX_INITIALIZER;
  * same mutex so a registration racing the first build is serialized either
  * before the probes are captured or after the window closes. */
 static rvcl_vendor_probe_fn g_probes[RVCL_MAX_VENDOR_PROBES];
+/* Lowest feature id each probe may append. Public vendor probes are confined
+ * to the vendor range; the internal in-tree channel (see
+ * capability_internal.h) may also claim standard ids. */
+static unsigned g_probe_min_id[RVCL_MAX_VENDOR_PROBES];
 static int g_num_probes;
 static int g_probes_locked;
 
 /* ------------------------------------------------------- probe sanitizer
  *
  * Whatever a probe appends is filtered before it enters the snapshot:
- * only vendor-range ids are kept, an id already present is dropped
- * (append-only, never overwrite), and an over-full table rolls back to
- * the pre-probe count so a misbehaving probe cannot overflow or clobber
- * standard features. */
-static void sanitize_probe_increment(rvcl_capability_t *cap, int num_before) {
+ * only ids at or above the probe's floor are kept (the vendor range for a
+ * public plugin probe, the standard range for the internal in-tree
+ * channel), an id already present is dropped (append-only, never
+ * overwrite), and an over-full table rolls back to the pre-probe count so
+ * a misbehaving probe cannot overflow or clobber other features. */
+static void sanitize_probe_increment(
+        rvcl_capability_t *cap, int num_before, unsigned min_id) {
     int n = num_before;
     for (int i = num_before; i < cap->num_features; i++) {
-        if (cap->features[i].id < RVCL_FEATURE_VENDOR_FIRST) continue;
+        if ((unsigned)cap->features[i].id < min_id) continue;
         int dup = 0;
         for (int j = 0; j < n; j++)
             if (cap->features[j].id == cap->features[i].id) dup = 1;
@@ -86,10 +92,13 @@ static void run_vendor_probes(rvcl_capability_t *cap) {
      * window closes no registration can add to the array, so the copy is
      * stable for the duration of the build. */
     rvcl_vendor_probe_fn probes[RVCL_MAX_VENDOR_PROBES];
+    unsigned min_ids[RVCL_MAX_VENDOR_PROBES];
     int num = 0;
     pthread_mutex_lock(&g_cap_mutex);
-    for (int i = 0; i < g_num_probes; i++)
+    for (int i = 0; i < g_num_probes; i++) {
         probes[i] = g_probes[i];
+        min_ids[i] = g_probe_min_id[i];
+    }
     num = g_num_probes;
     pthread_mutex_unlock(&g_cap_mutex);
 
@@ -100,7 +109,7 @@ static void run_vendor_probes(rvcl_capability_t *cap) {
             cap->num_features = num_before;
             continue;
         }
-        sanitize_probe_increment(cap, num_before);
+        sanitize_probe_increment(cap, num_before, min_ids[i]);
     }
 }
 
@@ -189,9 +198,6 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 /* Runtime layer: hwprobe (Linux 6.4+). Absent or failing probes keep the
  * compile-time view; detection failure degrades instead of erroring. */
 #if defined(__riscv) && defined(__linux__)
-#include <fcntl.h>
-#include <sched.h>
-#include <unistd.h>
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
 
@@ -217,76 +223,6 @@ static void cap_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
     cap->num_features++;
 }
 
-/* ------------------------------------------------ floating-point IME probe
- *
- * The matrix extension is a run-time-only fact: no compile-time macro can
- * prove every core the process may run on carries it, and executing its
- * instruction on a core without it faults. The probe therefore requires
- * every CPU in the process affinity mask to declare the target profile in
- * its device-tree compatible property, and the vector unit to be at least
- * the width the kernel's tile geometry targets. Any read failure degrades
- * to "absent" — capability never errors and never crashes. */
-
-/* Device-tree compatible token of the CPU profile carrying the
- * floating-point matrix extension. The property is a NUL-separated token
- * list; a missing or unreadable node counts as no match. */
-#define RVCL_IME_PROFILE_TOKEN "spacemit,a100"
-#define RVCL_IME_MIN_VLEN_BITS 1024
-
-static int cpu_matches_ime_profile(int cpu) {
-    char path[96];
-    char buf[512];
-    snprintf(path, sizeof(path),
-            "/sys/devices/system/cpu/cpu%d/of_node/compatible", cpu);
-    const int fd = open(path, O_RDONLY);
-    if (fd < 0) return 0;
-    const ssize_t got = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (got <= 0) return 0;
-    buf[got] = '\0';
-
-    const size_t toklen = strlen(RVCL_IME_PROFILE_TOKEN);
-    size_t off = 0;
-    while (off < (size_t)got) {
-        const size_t len = strnlen(buf + off, (size_t)got - off);
-        if (len == toklen
-                && memcmp(buf + off, RVCL_IME_PROFILE_TOKEN, len) == 0)
-            return 1;
-        off += len + 1;
-    }
-    return 0;
-}
-
-/* Every CPU in the mask must match (a mixed mask may migrate onto a core
- * without the extension) and the vector unit must reach the target width. */
-static int host_has_fp_ime(void) {
-    cpu_set_t set;
-    if (sched_getaffinity(0, sizeof(set), &set) != 0) return 0;
-    if (CPU_COUNT(&set) == 0) return 0;
-    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-        if (!CPU_ISSET(cpu, &set)) continue;
-        if (!cpu_matches_ime_profile(cpu)) return 0;
-    }
-    uint32_t bits;
-    return read_vlenb_bits(&bits) && bits >= RVCL_IME_MIN_VLEN_BITS;
-}
-
-/* Called only once V is confirmed (hwprobe or the compile-time vector
- * macro), so the vlenb read is safe. On success the RVV width is upgraded
- * and FP16 is implied: the floating-point matrix path proves both. */
-static void detect_ime(rvcl_capability_t *cap) {
-    if (!host_has_fp_ime()) return;
-    cap_add_feature(cap, RVCL_FEATURE_IME);
-    cap_add_feature(cap, RVCL_FEATURE_FP16);
-    for (int i = 0; i < cap->num_features; i++) {
-        if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
-        uint32_t bits;
-        if (read_vlenb_bits(&bits) && bits > cap->features[i].value)
-            cap->features[i].value = bits;
-        break;
-    }
-}
-
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
             {RISCV_HWPROBE_KEY_IMA_EXT_0, 0},
@@ -299,7 +235,6 @@ static void detect_runtime(rvcl_capability_t *cap) {
          * vector instruction otherwise — so the VLEN read stays safe. */
 #if defined(__riscv_vector)
         fill_rvv_vlen(cap);
-        detect_ime(cap);
 #endif
         return;
     }
@@ -340,7 +275,6 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * — keep the degraded value=1 rather than trusting a CSR read. */
     if (has_rvv) {
         fill_rvv_vlen(cap);
-        detect_ime(cap);
     }
 }
 #else
@@ -478,8 +412,8 @@ const rvcl_capability_t *rvcl_capability_host(void) {
     return host_capability();
 }
 
-rvcl_status_t rvcl_capability_register_vendor_probe(
-        rvcl_vendor_probe_fn probe) {
+static rvcl_status_t register_probe(
+        rvcl_vendor_probe_fn probe, unsigned min_id) {
     if (!probe) return RVCL_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock(&g_cap_mutex);
     if (g_probes_locked) {
@@ -490,9 +424,22 @@ rvcl_status_t rvcl_capability_register_vendor_probe(
         pthread_mutex_unlock(&g_cap_mutex);
         return RVCL_ERROR_OUT_OF_MEMORY;
     }
-    g_probes[g_num_probes++] = probe;
+    g_probes[g_num_probes] = probe;
+    g_probe_min_id[g_num_probes] = min_id;
+    g_num_probes++;
     pthread_mutex_unlock(&g_cap_mutex);
     return RVCL_SUCCESS;
+}
+
+rvcl_status_t rvcl_capability_register_vendor_probe(
+        rvcl_vendor_probe_fn probe) {
+    return register_probe(probe, RVCL_FEATURE_VENDOR_FIRST);
+}
+
+rvcl_status_t rvcl_capability_register_probe(rvcl_vendor_probe_fn probe) {
+    /* Standard ids start at RVCL_FEATURE_RV64; everything below (NONE) is
+     * not a real feature and is dropped by the sanitizer's floor. */
+    return register_probe(probe, RVCL_FEATURE_RV64);
 }
 
 /* SIGILL-guarded csrr: the CSR may not exist on this core, and capability

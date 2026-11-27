@@ -30,8 +30,6 @@
 
 #include "ime_internal.hpp"
 
-#include <string.h>
-
 __attribute__((visibility("default"))) size_t ime_packed_b_bytes(
         int64_t k_dim, int64_t n, size_t elt) {
     if (k_dim <= 0 || n <= 0 || elt == 0) return 0;
@@ -76,27 +74,27 @@ __attribute__((visibility("default"))) rvcl_status_t ime_pack_b_tiles(
     const size_t bytes = ime_packed_b_bytes(k_dim, n, elt);
     if (bytes == 0) return RVCL_ERROR_OUT_OF_MEMORY; /* size overflow */
 
-    const char *sb = (const char *)src->data;
-    char *db = (char *)dst->data;
+    /* FP16 is validated just above (elt == sizeof(uint16_t)), so both the
+     * source and destination are element views of 16-bit values and the
+     * tile fill is a plain copy: a per-element memcpy/memset here would
+     * dominate the pack of a large B. */
+    const uint16_t *sb = (const uint16_t *)src->data;
+    uint16_t *db = (uint16_t *)dst->data;
     const int64_t n_t = n / IME_N_TILE + (n % IME_N_TILE != 0);
     const int64_t k_t = k_dim / IME_K_TILE + (k_dim % IME_K_TILE != 0);
 
     /* nt -> kt -> nn -> kk: the destination tile's 64 elements are written
-     * contiguously; tail positions are zeroed so every byte of the buffer
-     * is written on every call. */
+     * contiguously; tail positions are zeroed so every element of the
+     * buffer is written on every call. */
     for (int64_t nt = 0; nt < n_t; nt++) {
         for (int64_t kt = 0; kt < k_t; kt++) {
             for (int64_t nn = 0; nn < IME_N_TILE; nn++) {
                 for (int64_t kk = 0; kk < IME_K_TILE; kk++) {
                     const int64_t gn = nt * IME_N_TILE + nn;
                     const int64_t gk = kt * IME_K_TILE + kk;
-                    const size_t di = (size_t)((nt * k_t + kt) * IME_TILE_ELT
-                                              + nn * IME_K_TILE + kk)
-                            * elt;
-                    if (gn < n && gk < k_dim)
-                        memcpy(db + di, sb + (size_t)(gk * n + gn) * elt, elt);
-                    else
-                        memset(db + di, 0, elt);
+                    const int64_t di = (nt * k_t + kt) * IME_TILE_ELT
+                            + nn * IME_K_TILE + kk;
+                    db[di] = (gn < n && gk < k_dim) ? sb[gk * n + gn] : 0;
                 }
             }
         }

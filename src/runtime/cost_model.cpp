@@ -136,12 +136,18 @@ RVCL_API uint64_t rvcl_cost_matmul_ime(
             RVCL_COST_IME_TILE, RVCL_COST_IME_TILE);
     const uint64_t gain = vlen_tier_gain(cap);
     /* Sub-unit fixed point: 1024 units = one score step, so a partial tail
-     * tile stays visible before the hard clamp below. */
+     * tile would stay visible before the clamp below. At the current
+     * coefficients this rounds to the RVV score for every shape, i.e. the
+     * two categories tie; the shape term is kept so a future measured
+     * coefficient can make it bite without changing this interface.
+     *
+     * Never above the RVV category: on a host that reports the extension
+     * the matrix entry is the mandated f16 selection (it wins the tie by
+     * registration order), so its score must not sort it behind the
+     * vector entry. */
     const uint64_t units = (RVCL_COST_ELEM_MATMUL_IME * shape * gain * 1024)
             / ((uint64_t)RVCL_COST_FP * RVCL_COST_FP);
     const uint64_t rounded = (units + 1023) / 1024;
-    /* Never above the RVV category: the more specialized entry wins or
-     * ties, and registration order resolves the tie. */
     return rounded <= rvv ? rounded : rvv;
 }
 

@@ -51,6 +51,11 @@
  *   B tile: 8 output columns x 8 K elements, each column's K values
  *           contiguous (vs2);
  *   C tile: 8 x 8 fp32, row-major, occupying an aligned register pair.
+ *
+ * The instruction path assumes VLEN == 1024 bits: exactly one 8x8 fp16
+ * tile fits in one vector register, and one 8x8 fp32 tile fills a register
+ * pair. A wider unit would not fit, so the run-time capability gate admits
+ * only the exact width.
  */
 #define IME_M_TILE 8
 #define IME_N_TILE 8

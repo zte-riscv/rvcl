@@ -41,6 +41,20 @@ extern "C" {
 RVCL_API int rvcl_capability_vlen_tier(const rvcl_capability_t *cap);
 
 /*
+ * In-tree backend probe registration, not a public API, no stability
+ * promise. Same registration window, invocation and sanitization contract
+ * as rvcl_capability_register_vendor_probe(), except that the probe may
+ * also append standard feature ids: an in-tree backend owns the silicon
+ * knowledge for a standard feature (e.g. a matrix extension proven from
+ * sysfs), so the generic detector need not carry vendor specifics. The
+ * append-only rule still holds (an id already present is not overwritten),
+ * and the standard-vendor split keeps an out-of-tree plugin unable to
+ * claim a standard feature through the public channel.
+ */
+RVCL_API rvcl_status_t rvcl_capability_register_probe(
+        rvcl_vendor_probe_fn probe);
+
+/*
  * Test facility, not a public API, no stability promise.
  * Replaces the process capability snapshot with a copy of *cap;
  * cap == NULL restores the host detection result (host detection

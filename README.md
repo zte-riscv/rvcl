@@ -293,9 +293,12 @@ so dispatch routes f16 to it only when every CPU in the process affinity mask
 can execute the extension — pin the process (for example with `taskset`) before
 the first capability query; a mixed mask reports the feature absent and f16
 stays on RVV. `RVCL_IME_KERNEL=auto|c|ime` forces a micro-kernel path, and
-`--path=c|ime` does the same for the benchmark's kernel-only metric. The C path
-runs on any host and is the portable CI carrier; the instruction path is
-compiled only where `__riscv_vector` is visible.
+`--path=c|ime` does the same for the benchmark's kernel-only metric — but only
+for a case dispatch already routed to the IME backend, so `--path=ime` on an
+f16 case resolves only on an IME host (elsewhere it exits "unavailable" even
+though the portable `c` path exists). The C path runs on any host and is the
+portable CI carrier; the instruction path is compiled only where
+`__riscv_vector` is visible.
 
 ### Add a backend
 

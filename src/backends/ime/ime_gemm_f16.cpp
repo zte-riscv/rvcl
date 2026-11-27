@@ -82,6 +82,8 @@ __attribute__((visibility("default"))) void ime_gemm_f16_c(const void *a_in,
     const int64_t k_t = k_dim / IME_K_TILE + (k_dim % IME_K_TILE != 0);
     float acc[IME_TILE_ELT];
     uint16_t at[IME_TILE_ELT];
+    float af[IME_TILE_ELT]; /* staged A tile converted once per k tile */
+    float bf[IME_TILE_ELT]; /* B tile converted once per k tile */
 
     for (int64_t m0 = (r->m_begin / IME_M_TILE) * IME_M_TILE; m0 < r->m_end;
             m0 += IME_M_TILE) {
@@ -105,12 +107,18 @@ __attribute__((visibility("default"))) void ime_gemm_f16_c(const void *a_in,
                     }
                 const uint16_t *bt
                         = bp + (n0 / IME_N_TILE * k_t + kt) * IME_TILE_ELT;
+                /* convert both tiles once per k tile instead of once per
+                 * inner-product term */
+                for (int64_t q2 = 0; q2 < IME_TILE_ELT; q2++) {
+                    af[q2] = rvv_f16_to_f32(at[q2]);
+                    bf[q2] = rvv_f16_to_f32(bt[q2]);
+                }
                 for (int64_t i = 0; i < IME_M_TILE; i++)
                     for (int64_t j = 0; j < IME_N_TILE; j++) {
                         float sum = acc[i * IME_N_TILE + j];
                         for (int64_t q = 0; q < IME_K_TILE; q++)
-                            sum += rvv_f16_to_f32(at[i * IME_K_TILE + q])
-                                    * rvv_f16_to_f32(bt[j * IME_K_TILE + q]);
+                            sum += af[i * IME_K_TILE + q]
+                                    * bf[j * IME_K_TILE + q];
                         acc[i * IME_N_TILE + j] = sum;
                     }
             }
@@ -137,10 +145,16 @@ __attribute__((visibility("default"))) void ime_gemm_f16_c(const void *a_in,
  * the vl result while also taking the AVL from x0 is not a universally
  * accepted encoding, and the safe form costs nothing.
  *
- * Stack use is fixed-size: one 128-byte staging buffer here, plus the
- * caller's bias/out buffers (256 bytes per n tile, time-shared — the
- * bias tile is consumed into the accumulator before the store reuses the
- * same memory).
+ * Stack use is fixed-size and assumes VLEN == 1024 bits: at that width one
+ * register holds the whole 8x8 fp16 tile (64 halves, 128 bytes) and one
+ * register pair holds the 8x8 fp32 accumulator (64 floats, 256 bytes).
+ * Every vector access below moves exactly VLMAX elements, so a wider
+ * vector unit would overrun these buffers; the capability gate reports the
+ * extension only when every CPU's VLEN is exactly 1024, which is what
+ * keeps this assumption true at run time. The three buffers are: one
+ * 128-byte A staging buffer here, plus the caller's bias/out buffers
+ * (256 bytes per n tile, time-shared — the bias tile is consumed into the
+ * accumulator before the store reuses the same memory).
  */
 __attribute__((noinline)) static void ime_tile_group(const uint16_t *a_row0,
         int64_t lda, const uint16_t *b0, const uint16_t *b1, int64_t k_tiles,

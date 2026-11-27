@@ -50,6 +50,124 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ------------------------------------------------ capability contribution
+ *
+ * The floating-point matrix extension is a per-core run-time fact that the
+ * generic detector cannot own: executing its instruction on a core without
+ * it faults, and no compile-time macro proves every core of the affinity
+ * mask carries it. The IME backend therefore registers its own capability
+ * probe, invoked during the single capability build. The probe requires
+ * every CPU in the process affinity mask to declare the target CPU profile
+ * in its device-tree compatible property, and the vector unit to be exactly
+ * the width the 8x8x8 tile geometry assumes (one fp16 tile in one register
+ * and one fp32 accumulator tile in a register pair). Any read failure
+ * counts as absent: capability degrades, never errors or crashes.
+ *
+ * The probe (and its device-tree token) lives here, not in the generic
+ * runtime layer, so a build without the backend carries no vendor
+ * specifics and performs no sysfs I/O. */
+#if defined(__riscv) && defined(__linux__) && defined(__riscv_vector)
+
+#include <fcntl.h>
+#include <sched.h>
+#include <unistd.h>
+
+/* Device-tree compatible token of the CPU profile carrying the
+ * floating-point matrix extension. The property is a NUL-separated token
+ * list; a missing or unreadable node counts as no match. */
+#define RVCL_IME_PROFILE_TOKEN "spacemit,a100"
+/* The tile geometry needs one fp16 tile (64 halves) in one vector register,
+ * so the probe must pin the exact width, not a lower bound. */
+#define RVCL_IME_VLEN_BITS 1024
+
+static int ime_cap_has(const rvcl_capability_t *cap, rvcl_feature_id_t id) {
+    for (int i = 0; i < cap->num_features; i++)
+        if (cap->features[i].id == id) return 1;
+    return 0;
+}
+
+static void ime_cap_add(rvcl_capability_t *cap, rvcl_feature_id_t id) {
+    if (ime_cap_has(cap, id) || cap->num_features >= RVCL_MAX_FEATURES) return;
+    cap->features[cap->num_features].id = id;
+    cap->features[cap->num_features].value = 1;
+    cap->num_features++;
+}
+
+static int ime_cpu_matches_profile(int cpu) {
+    char path[96];
+    char buf[512];
+    snprintf(path, sizeof(path),
+            "/sys/devices/system/cpu/cpu%d/of_node/compatible", cpu);
+    const int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    const ssize_t got = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (got <= 0) return 0;
+    buf[got] = '\0';
+
+    const size_t toklen = strlen(RVCL_IME_PROFILE_TOKEN);
+    size_t off = 0;
+    while (off < (size_t)got) {
+        const size_t len = strnlen(buf + off, (size_t)got - off);
+        if (len == toklen
+                && memcmp(buf + off, RVCL_IME_PROFILE_TOKEN, len) == 0)
+            return 1;
+        off += len + 1;
+    }
+    return 0;
+}
+
+/* VLEN in bits from the vlenb CSR. Safe here: the probe is only compiled
+ * where V is confirmed at compile time. A nonsense reading (vlenb is a
+ * power of two, at most VLEN 65536 bits) counts as absent. */
+static int ime_read_vlenb_bits(uint32_t *bits) {
+    unsigned long vlenb;
+    __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
+    if (vlenb < 1 || vlenb > 8192 || (vlenb & (vlenb - 1)) != 0) return 0;
+    *bits = (uint32_t)vlenb * 8;
+    return 1;
+}
+
+static rvcl_status_t ime_capability_probe(rvcl_capability_t *cap) {
+    cpu_set_t set;
+    if (sched_getaffinity(0, sizeof(set), &set) != 0) return RVCL_SUCCESS;
+    if (CPU_COUNT(&set) == 0) return RVCL_SUCCESS;
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (!CPU_ISSET(cpu, &set)) continue;
+        if (!ime_cpu_matches_profile(cpu)) return RVCL_SUCCESS;
+    }
+    uint32_t bits;
+    if (!ime_read_vlenb_bits(&bits) || bits != RVCL_IME_VLEN_BITS)
+        return RVCL_SUCCESS;
+
+    /* The floating-point matrix path proves FP16 and the vector width:
+     * record the extension, imply FP16, and upgrade the RVV width if the
+     * generic detector left it at the present-but-unknown value. */
+    ime_cap_add(cap, RVCL_FEATURE_IME);
+    ime_cap_add(cap, RVCL_FEATURE_FP16);
+    for (int i = 0; i < cap->num_features; i++) {
+        if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
+        if (bits > cap->features[i].value) cap->features[i].value = bits;
+        break;
+    }
+    return RVCL_SUCCESS;
+}
+
+/* Register before the capability snapshot is built. A pre-main constructor
+ * runs before any application call, satisfying the registration window even
+ * when the application queries capability before rvcl_init(); the probe
+ * state it touches is statically initialized. */
+namespace {
+struct ime_probe_registrar_t {
+    ime_probe_registrar_t() {
+        (void)rvcl_capability_register_probe(&ime_capability_probe);
+    }
+};
+const ime_probe_registrar_t g_ime_probe_registrar;
+} /* namespace */
+
+#endif /* __riscv && __linux__ && __riscv_vector */
+
 /* ------------------------------------------------------------- host gate */
 
 __attribute__((visibility("default"))) int ime_instruction_path_available(
@@ -173,9 +291,13 @@ static rvcl_status_t ime_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     }
 
 #if defined(__riscv_vector)
-    /* Defensive re-gate: an injected snapshot may select an entry that
-     * bound the instruction path, but the instruction must never run on a
-     * host without the extension. */
+    /* Last-line defence, not the primary gate: create_ime() and dispatch's
+     * feature filter already keep the instruction path off a host without
+     * the extension. This branch is reachable only when an instance was
+     * built against a test-injected snapshot (which create_ime accepts as
+     * the served one) and later run against the real host, or when the
+     * kernel is built by hand through the registry factory bypass. Either
+     * way the instruction must never execute on a host that cannot. */
     if (rk->gemm == ime_gemm_f16_ime && !ime_instruction_path_available())
         return RVCL_UNSUPPORTED;
 #endif

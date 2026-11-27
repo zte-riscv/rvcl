@@ -515,6 +515,13 @@ if(RVCL_BUILD_TESTS)
         target_link_libraries(rvcl_ime_paths PRIVATE rvcl)
         add_test(NAME ime_paths COMMAND rvcl_ime_paths)
 
+        # Concurrent run() on the hardware entry with a pre-packed B: the
+        # shared packed workspace must stay read-only across M slices. The
+        # case self-skips where the run-time gate reports the path absent.
+        add_executable(rvcl_ime_concurrent tests/ime_concurrent_test.cpp)
+        target_link_libraries(rvcl_ime_concurrent PRIVATE rvcl rvcl_test_golden)
+        add_test(NAME ime_concurrent COMMAND rvcl_ime_concurrent)
+
         # One entry per RVCL_IME_KERNEL value: the knob is read once per
         # process, so each value gets its own fresh-process invocation.
         foreach(knob IN ITEMS auto c ime bogus)
