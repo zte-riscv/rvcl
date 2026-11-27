@@ -16,23 +16,22 @@
  * SPDX-License-Identifier: Apache-2.0
  ******************************************************************************/
 
-/* Concurrency driver for the IME f16 kernel (NFR2): one kernel instance
- * and one tensor pack — including the pre-packed B workspace — are shared
- * by T threads that each run() one exclusive M slice, gated so they burst
- * into run() together. B is pre-packed once with rvcl_kernel_pack_b() and
+/* Concurrency driver for the IME f16 kernel: one kernel instance and one
+ * tensor pack — including the pre-packed B workspace — are shared by T
+ * threads that each run() one exclusive M slice, gated so they burst into
+ * run() together. B is pre-packed once with rvcl_kernel_pack_b() and
  * endorsed via pack.src_b_packed before any thread starts, so every run()
  * consumes the shared buffer read-only.
  *
- * Functional contract: the slices own disjoint C rows and each row depends
- * only on the full K, so the concurrent result must be bit-exact identical
- * to a single full-range run of the same kernel (same path, same data).
- * ThreadSanitizer must report nothing: concurrent run() holds no
- * cross-slice writes into the shared buffer.
+ * Contract: the slices own disjoint C rows and each row depends only on
+ * the full K, so the concurrent result must be bit-exact identical to a
+ * single full-range run of the same kernel (same path, same data), and a
+ * run() must never write another slice's rows or the shared packed B.
  *
  * The case is host-gated like the other IME suites: on a host whose run
  * time gate reports the instruction path unavailable (or a build without
  * the hardware-bound entry) the test prints a skip and exits 0. Pin the
- * process to the IME-capable cluster (e.g. taskset -c 8-15) before the
+ * process (e.g. with taskset) to the extension-capable CPUs before the
  * first capability query. */
 
 #include "../src/backends/ime/ime_internal.hpp"
@@ -116,8 +115,7 @@ int main(void) {
         return 0;
     }
 
-    rvcl_kernel_create_fn create
-            = rvcl_registry_find_factory(IME_KERNEL_NAME);
+    rvcl_kernel_create_fn create = rvcl_registry_find_factory(IME_KERNEL_NAME);
     const rvcl_kernel_desc_t *kd = find_desc(IME_KERNEL_NAME);
     CHECK(kd != NULL, "hardware-bound descriptor found");
     if (!kd) return 1;
@@ -152,8 +150,7 @@ int main(void) {
     }
 
     const int64_t elems = (int64_t)IME_CONC_M * IME_CONC_N;
-    const uint32_t seed
-            = golden_case_seed(IME_CONC_M, IME_CONC_N, IME_CONC_K);
+    const uint32_t seed = golden_case_seed(IME_CONC_M, IME_CONC_N, IME_CONC_K);
 
     uint16_t *a = NULL, *b = NULL;
     float *bias = NULL, *c = NULL, *ref = NULL;
@@ -251,8 +248,8 @@ int main(void) {
                 args[t].pack = &pack;
                 args[t].slice = balanced_slice(&total, t, IME_CONC_THREADS);
                 args[t].status = RVCL_ERROR_INVALID_ARGUMENT;
-                const int rc = pthread_create(
-                        &th[t], NULL, slice_worker, &args[t]);
+                const int rc
+                        = pthread_create(&th[t], NULL, slice_worker, &args[t]);
                 if (rc == 0) continue;
                 fprintf(stderr, "  FAIL: pthread_create: %s\n", strerror(rc));
                 exit(1);

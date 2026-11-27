@@ -150,7 +150,8 @@ __attribute__((visibility("default"))) void ime_gemm_f16_c(const void *a_in,
  * register pair holds the 8x8 fp32 accumulator (64 floats, 256 bytes).
  * Every vector access below moves exactly VLMAX elements, so a wider
  * vector unit would overrun these buffers; the capability gate reports the
- * extension only when every CPU's VLEN is exactly 1024, which is what
+ * extension only when the calling hart's VLEN is exactly 1024 and every
+ * CPU in the affinity mask matches the same target profile, which is what
  * keeps this assumption true at run time. The three buffers are: one
  * 128-byte A staging buffer here, plus the caller's bias/out buffers
  * (256 bytes per n tile, time-shared — the bias tile is consumed into the

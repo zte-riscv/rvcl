@@ -129,6 +129,15 @@ ime_gemm_fn ime_pick_gemm_f16_by_name(const char *name);
  * host cannot execute; test-injected snapshots are ignored. */
 int ime_instruction_path_available(void);
 
+/* ------------------------------------------------- capability contribution
+ * Registers this backend's capability probe on the internal probe channel.
+ * Idempotent: called pre-main and again from library init, so the probe is
+ * in place before the first capability query whichever initialization
+ * path runs; a registration after the window closes returns
+ * RVCL_ERROR_ALREADY_INITIALIZED. A build without the probe (non-RISC-V)
+ * returns RVCL_SUCCESS. */
+rvcl_status_t ime_register_capability_probe(void);
+
 /* ------------------------------------------------------- registration
  * rvcl_ime_register() registers the hardware-bound entry on RISC-V
  * builds (the entry is registered in every IME build; availability is

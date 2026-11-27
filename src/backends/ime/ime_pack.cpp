@@ -74,12 +74,14 @@ __attribute__((visibility("default"))) rvcl_status_t ime_pack_b_tiles(
     const size_t bytes = ime_packed_b_bytes(k_dim, n, elt);
     if (bytes == 0) return RVCL_ERROR_OUT_OF_MEMORY; /* size overflow */
 
-    /* FP16 is validated just above (elt == sizeof(uint16_t)), so both the
-     * source and destination are element views of 16-bit values and the
-     * tile fill is a plain copy: a per-element memcpy/memset here would
-     * dominate the pack of a large B. */
-    const uint16_t *sb = (const uint16_t *)src->data;
-    uint16_t *db = (uint16_t *)dst->data;
+    /* FP16 is validated just above (elt == sizeof(uint16_t)), so every
+     * element is two bytes. Neither buffer is required to be 2-byte
+     * aligned (the destination is legitimately imported as a byte view),
+     * so the copy goes through a fixed-size memcpy: the same single
+     * load/store the direct form emits once alignment is known, with no
+     * misaligned-access undefined behavior when it is not. */
+    const uint8_t *sb = (const uint8_t *)src->data;
+    uint8_t *db = (uint8_t *)dst->data;
     const int64_t n_t = n / IME_N_TILE + (n % IME_N_TILE != 0);
     const int64_t k_t = k_dim / IME_K_TILE + (k_dim % IME_K_TILE != 0);
 
@@ -92,9 +94,15 @@ __attribute__((visibility("default"))) rvcl_status_t ime_pack_b_tiles(
                 for (int64_t kk = 0; kk < IME_K_TILE; kk++) {
                     const int64_t gn = nt * IME_N_TILE + nn;
                     const int64_t gk = kt * IME_K_TILE + kk;
-                    const int64_t di = (nt * k_t + kt) * IME_TILE_ELT
-                            + nn * IME_K_TILE + kk;
-                    db[di] = (gn < n && gk < k_dim) ? sb[gk * n + gn] : 0;
+                    const size_t di = (size_t)((nt * k_t + kt) * IME_TILE_ELT
+                                              + nn * IME_K_TILE + kk)
+                            * sizeof(uint16_t);
+                    uint16_t v = 0;
+                    if (gn < n && gk < k_dim)
+                        __builtin_memcpy(&v,
+                                sb + (size_t)(gk * n + gn) * sizeof(uint16_t),
+                                sizeof(v));
+                    __builtin_memcpy(db + di, &v, sizeof(v));
                 }
             }
         }

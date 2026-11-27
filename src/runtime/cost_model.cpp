@@ -132,8 +132,8 @@ RVCL_API uint64_t rvcl_cost_matmul_ime(
         return rvv == UINT64_MAX ? rvv : rvv + 1;
     }
     const rvcl_matmul_desc_t *d = &desc->matmul;
-    const uint64_t shape = shape_factor(d, RVCL_COST_IME_TILE,
-            RVCL_COST_IME_TILE, RVCL_COST_IME_TILE);
+    const uint64_t shape = shape_factor(
+            d, RVCL_COST_IME_TILE, RVCL_COST_IME_TILE, RVCL_COST_IME_TILE);
     const uint64_t gain = vlen_tier_gain(cap);
     /* Sub-unit fixed point: 1024 units = one score step, so a partial tail
      * tile would stay visible before the clamp below. At the current
@@ -142,7 +142,7 @@ RVCL_API uint64_t rvcl_cost_matmul_ime(
      * coefficient can make it bite without changing this interface.
      *
      * Never above the RVV category: on a host that reports the extension
-     * the matrix entry is the mandated f16 selection (it wins the tie by
+     * the matrix entry is the intended f16 selection (it wins the tie by
      * registration order), so its score must not sort it behind the
      * vector entry. */
     const uint64_t units = (RVCL_COST_ELEM_MATMUL_IME * shape * gain * 1024)

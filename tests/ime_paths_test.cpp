@@ -88,9 +88,9 @@ static long stderr_capture_end(FILE *f, int saved_fd) {
     return size;
 }
 
-/* AC5: driving the hardware-bound entry by name on a host where the
- * run-time gate is closed must refuse with RVCL_UNSUPPORTED and create no
- * kernel, so the instruction can never execute there. The capability check
+/* Driving the hardware-bound entry by name on a host where the run-time
+ * gate is closed must refuse with RVCL_UNSUPPORTED and create no kernel,
+ * so the instruction can never execute there. The capability check
  * precedes the knob lookup in create_ime(), so this holds for every
  * RVCL_IME_KERNEL value. The entry exists only on RISC-V IME builds; on
  * other hosts the portable entry is a different registration and there is

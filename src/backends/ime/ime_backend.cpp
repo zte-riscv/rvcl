@@ -26,12 +26,13 @@
  *
  * The host gate (ime_instruction_path_available) answers what the host can
  * really execute: the instruction path is compiled in and the capability
- * snapshot reports the floating-point matrix extension. Detection lives in
- * the runtime capability layer and is conservative (any failure reports
- * unavailable), because executing the instruction on a core without it
- * raises an illegal instruction fault. The gate reads the host snapshot,
- * not the served one, so a test-injected feature can never make the
- * instruction path run where the host cannot execute it.
+ * snapshot reports the floating-point matrix extension. This backend
+ * contributes that feature through its own capability probe (below); the
+ * result is conservative (any failure reports unavailable), because
+ * executing the instruction on a core without it raises an illegal
+ * instruction fault. The gate reads the host snapshot, not the served
+ * one, so a test-injected feature can never make the instruction path run
+ * where the host cannot execute it.
  *
  * The adapter mirrors the RVV backend: one registry entry per build flavor
  * (hardware-bound on RISC-V, portable C otherwise), one shared vtable, and a
@@ -153,18 +154,25 @@ static rvcl_status_t ime_capability_probe(rvcl_capability_t *cap) {
     return RVCL_SUCCESS;
 }
 
-/* Register before the capability snapshot is built. A pre-main constructor
- * runs before any application call, satisfying the registration window even
- * when the application queries capability before rvcl_init(); the probe
- * state it touches is statically initialized. */
-namespace {
-struct ime_probe_registrar_t {
-    ime_probe_registrar_t() {
-        (void)rvcl_capability_register_probe(&ime_capability_probe);
-    }
-};
-const ime_probe_registrar_t g_ime_probe_registrar;
-} /* namespace */
+rvcl_status_t ime_register_capability_probe(void) {
+    return rvcl_capability_register_probe(&ime_capability_probe);
+}
+
+/* Register before the capability snapshot is built. The pre-main
+ * constructor covers an application that queries capability before
+ * rvcl_init(); library init calls the same function again so a build
+ * where constructor ordering (or a static-link dead-strip) skipped it
+ * still registers before dispatch. Both calls are idempotent: a closed
+ * window returns ALREADY_INITIALIZED, which init treats as done. */
+__attribute__((constructor)) static void ime_probe_register(void) {
+    (void)ime_register_capability_probe();
+}
+
+#else /* __riscv && __linux__ && __riscv_vector */
+
+rvcl_status_t ime_register_capability_probe(void) {
+    return RVCL_SUCCESS; /* no probe on this build */
+}
 
 #endif /* __riscv && __linux__ && __riscv_vector */
 
@@ -301,8 +309,8 @@ static rvcl_status_t ime_run(rvcl_kernel_t *k, const rvcl_tensor_pack_t *pack,
     if (rk->gemm == ime_gemm_f16_ime && !ime_instruction_path_available())
         return RVCL_UNSUPPORTED;
 #endif
-    rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data, rk->m,
-            rk->n, rk->k, r);
+    rk->gemm(a->data, ws->data, bias ? bias->data : NULL, c->data, rk->m, rk->n,
+            rk->k, r);
     return RVCL_SUCCESS;
 }
 
@@ -391,8 +399,8 @@ __attribute__((visibility("default"))) rvcl_status_t rvcl_ime_register(void) {
 #endif
 }
 
-__attribute__((visibility("default"))) rvcl_status_t
-rvcl_ime_register_portable(void) {
+__attribute__((visibility("default"))) rvcl_status_t rvcl_ime_register_portable(
+        void) {
 #if defined(__riscv)
     return RVCL_SUCCESS; /* RISC-V builds register the hardware-bound entry */
 #else

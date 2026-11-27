@@ -47,7 +47,7 @@ static int g_failures;
 
 /* ------------------------------------------------------------ helpers */
 
-static rvcl_tensor_t make_b_tensor(uint16_t *data, int64_t k, int64_t n) {
+static rvcl_tensor_t make_b_tensor(void *data, int64_t k, int64_t n) {
     rvcl_tensor_desc_t d;
     memset(&d, 0, sizeof(d));
     d.ndims = 2;
@@ -484,6 +484,41 @@ static void tc09_idempotent(void) {
     free(dst);
 }
 
+/* --------------------------------- 10: unaligned source and destination */
+
+/* Neither buffer is contractually 2-byte aligned (the workspace is
+ * imported as a byte view), so packing must produce the same bytes when
+ * both sit at an odd address as when both are aligned. */
+static void tc10_unaligned_buffers(void) {
+    printf("TC-10 unaligned source and destination buffers\n");
+    const int64_t n = 13, k = 11;
+    uint16_t b[11 * 13];
+    for (int64_t i = 0; i < k * n; i++)
+        b[i] = (uint16_t)((i * 29 + 3) % 997 + 1);
+
+    const size_t bytes = ime_packed_b_bytes(k, n, 2);
+    uint16_t *oracle = (uint16_t *)xaligned_alloc(bytes);
+    ime_oracle_pack_b(oracle, b, n, k);
+
+    uint8_t *src_raw = (uint8_t *)xaligned_alloc((size_t)(k * n) * 2 + 2);
+    uint8_t *dst_raw = (uint8_t *)xaligned_alloc(bytes + 2);
+    memcpy(src_raw + 1, b, (size_t)(k * n) * 2);
+    memset(dst_raw, 0x5a, bytes + 2);
+
+    rvcl_tensor_t src = make_b_tensor(src_raw + 1, k, n);
+    rvcl_tensor_t out = make_byte_view(dst_raw + 1, (int64_t)bytes);
+    const rvcl_status_t st = ime_pack_b_tiles(&src, &out, 8, n, k, 2);
+    CHECK(st == RVCL_SUCCESS, "unaligned pack succeeds");
+    CHECK(memcmp(dst_raw + 1, oracle, bytes) == 0,
+            "unaligned pack is byte-identical to the aligned oracle");
+    CHECK(dst_raw[0] == 0x5a && dst_raw[bytes + 1] == 0x5a,
+            "bytes outside the destination buffer are untouched");
+
+    free(oracle);
+    free(src_raw);
+    free(dst_raw);
+}
+
 int main(void) {
     tc01_known_answer();
     tc03_formulas();
@@ -493,6 +528,7 @@ int main(void) {
     tc07_c_boundary();
     tc08_reject();
     tc09_idempotent();
+    tc10_unaligned_buffers();
     printf(g_failures ? "IME pack tests: %d FAIL\n"
                       : "IME pack tests: all ok\n",
             g_failures);

@@ -697,6 +697,50 @@ static int vendor_probe_late_case(void) {
     return g_failures ? 1 : 0;
 }
 
+/* --------------------------------------------- internal probe channel
+ *
+ * The in-tree channel (capability_internal.h) shares the vendor channel's
+ * registration window and append-only sanitizer, but admits standard
+ * feature ids so a backend that owns the silicon knowledge of a standard
+ * feature can contribute it. A standard id must survive; RVCL_FEATURE_NONE
+ * is below the channel's floor and must be dropped; a registration after
+ * the first query must be refused like any other.
+ */
+static rvcl_status_t internal_probe_std(rvcl_capability_t *cap) {
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        cap->features[cap->num_features].id = RVCL_FEATURE_INT8;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        cap->features[cap->num_features].id = RVCL_FEATURE_NONE;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static int internal_probe_case(void) {
+    printf("internal probe: standard id admitted, NONE dropped\n");
+    if (rvcl_capability_register_probe(internal_probe_std) != RVCL_SUCCESS) {
+        printf("  FAIL: probe registration (line %d)\n", __LINE__);
+        return 1;
+    }
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    const rvcl_capability_t *cap = rvcl_get_capability();
+    CHECK(rvcl_capability_has(cap, RVCL_FEATURE_INT8),
+            "standard id appended by an in-tree probe survives");
+    CHECK(!rvcl_capability_has(cap, RVCL_FEATURE_NONE),
+            "RVCL_FEATURE_NONE below the channel floor is dropped");
+    CHECK(rvcl_capability_register_probe(internal_probe_std)
+                    == RVCL_ERROR_ALREADY_INITIALIZED,
+            "late internal-probe registration returns ALREADY_INITIALIZED");
+    printf(g_failures ? "INTERNAL-PROBE: %d failure(s)\n"
+                      : "INTERNAL-PROBE: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
 /* ------------------------------------------------------- probe sanitization
  *
  * U-P2-4: whatever a probe appends is filtered before it reaches the
@@ -985,6 +1029,8 @@ int main(int argc, char **argv) {
         return vendor_probe_noreg_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-late") == 0)
         return vendor_probe_late_case();
+    if (argc > 1 && strcmp(argv[1], "--probe-internal") == 0)
+        return internal_probe_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-sanitize") == 0)
         return vendor_probe_sanitize_case();
     if (argc > 1 && strcmp(argv[1], "--snapshot-dedup") == 0)

@@ -455,6 +455,10 @@ if(RVCL_BUILD_TESTS)
         COMMAND rvcl_unit_capability --vendor-probe-noreg)
     add_test(NAME unit_capability_vendor_probe_late
         COMMAND rvcl_unit_capability --vendor-probe-late)
+    # In-tree probe channel: standard ids admitted, RVCL_FEATURE_NONE
+    # dropped, late registration refused (fresh process, same window).
+    add_test(NAME unit_capability_probe_internal
+        COMMAND rvcl_unit_capability --probe-internal)
     add_test(NAME unit_capability_vendor_probe_sanitize
         COMMAND rvcl_unit_capability --vendor-probe-sanitize)
     add_test(NAME unit_capability_vendor_hint
