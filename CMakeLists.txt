@@ -7,7 +7,7 @@ project(rvcl
 # ------------------------------------------------------------------ options
 # Backends are independently buildable.
 option(RVCL_ENABLE_RVV   "Enable RVV backend"        ON)  # v0.1
-option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.2
+option(RVCL_ENABLE_IME   "Enable IME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_VME   "Enable VME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_AME   "Enable AME backend"        OFF) # lands in v0.3
 option(RVCL_ENABLE_OMP   "Built-in OpenMP scheduler backend" OFF)
@@ -155,6 +155,17 @@ if(RVCL_ENABLE_RVV)
     endif()
 endif()
 
+# IME backend: the f16 matrix-extension micro-kernels. Compiles on any
+# host — the instruction path is guarded by __riscv_vector inside the
+# translation units, everything else (packing, path selection, host
+# gate) is portable C and stays testable on any CI host.
+if(RVCL_ENABLE_IME)
+    list(APPEND RVCL_RUNTIME_SOURCES
+        src/backends/ime/ime_backend.cpp
+        src/backends/ime/ime_pack.cpp
+        src/backends/ime/ime_gemm_f16.cpp)
+endif()
+
 # OpenMP scheduler backend: zero-injection default parallelism for the
 # standalone product shape. OFF by default so the default build carries no
 # libgomp dependency and the source list stays OMP-free. The omp_scheduler
@@ -197,6 +208,12 @@ if(RVCL_ENABLE_RVV)
     # One dedicated descriptor per enabled tier; the intrinsics
     # implementation is shared across tiers for now (A-07).
     target_compile_definitions(rvcl PRIVATE ${_rvcl_tier_defs})
+endif()
+
+# Marks the IME backend as compiled into the library (its registration
+# hook and internal-header consumers key off it).
+if(RVCL_ENABLE_IME)
+    target_compile_definitions(rvcl PRIVATE RVCL_ENABLE_IME_BUILD)
 endif()
 
 # RVCL_HAVE_OMP marks the omp_scheduler TU compiled in; scheduler.cpp's
@@ -292,6 +309,25 @@ if(RVCL_ENABLE_RVV AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
     endif()
 endif()
 
+# Same per-file vector override for the IME backend. ime_backend.cpp MUST
+# be in the list, for the same reason as rvv_backend.cpp above: the path
+# table binds the instruction micro-kernel only in translation units where
+# __riscv_vector is visible — without the override the selector silently
+# binds the C fallback and the instruction path is unreachable.
+# ime_gemm_f16.cpp hosts the instruction path itself. An empty knob (the
+# default) leaves both at the global -march, which is how the no-vector
+# baseline build keeps the instruction path out.
+if(RVCL_ENABLE_IME AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv")
+    set(RVCL_IME_MARCH "" CACHE STRING
+        "Vector -march override for the IME backend files")
+    if(RVCL_IME_MARCH)
+        set_source_files_properties(
+            src/backends/ime/ime_backend.cpp
+            src/backends/ime/ime_gemm_f16.cpp
+            PROPERTIES COMPILE_OPTIONS "-march=${RVCL_IME_MARCH}")
+    endif()
+endif()
+
 # Backends (RVCL_ENABLE_*): each adds sources + a rvcl_<backend>_register()
 # call in init.cpp's register_all():
 #   cmake -DRVCL_ENABLE_RVV=ON -DRVCL_ENABLE_IME=OFF ...
@@ -337,6 +373,13 @@ if(RVCL_BUILD_TESTS)
             rvcl_differential PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
             rvcl_test_op_slots)
     add_test(NAME differential COMMAND rvcl_differential)
+    # The IME differential hook includes the backend's internal header (the
+    # direct C-vs-instruction cross-check), so the target sees the same
+    # backend build macro the library uses.
+    if(RVCL_ENABLE_IME)
+        target_compile_definitions(rvcl_differential
+            PRIVATE RVCL_ENABLE_IME_BUILD)
+    endif()
 
     # Concurrent driver: T pthreads take exclusive M slices through one
     # kernel instance + one tensor pack (the host-parallel contract).
@@ -412,6 +455,14 @@ if(RVCL_BUILD_TESTS)
         COMMAND rvcl_unit_capability --vendor-probe-noreg)
     add_test(NAME unit_capability_vendor_probe_late
         COMMAND rvcl_unit_capability --vendor-probe-late)
+    # In-tree probe channel: standard ids admitted, RVCL_FEATURE_NONE
+    # dropped, late registration refused (fresh process, same window).
+    add_test(NAME unit_capability_probe_internal
+        COMMAND rvcl_unit_capability --probe-internal)
+    # Duplicate registration of the same probe while the window is open is
+    # a no-op: one table slot, one snapshot-build run.
+    add_test(NAME unit_capability_probe_idempotent
+        COMMAND rvcl_unit_capability --probe-idempotent)
     add_test(NAME unit_capability_vendor_probe_sanitize
         COMMAND rvcl_unit_capability --vendor-probe-sanitize)
     add_test(NAME unit_capability_vendor_hint
@@ -449,6 +500,50 @@ if(RVCL_BUILD_TESTS)
     add_executable(rvcl_unit_dtype_traits tests/unit_dtype_traits.cpp)
     target_link_libraries(rvcl_unit_dtype_traits PRIVATE rvcl rvcl_test_golden)
     add_test(NAME unit_dtype_traits COMMAND rvcl_unit_dtype_traits)
+
+    # IME backend kernel tests (direct-driven, no dispatch/registry):
+    # pack-layout oracles, micro-kernel numerics, and the path-selector
+    # matrix. Registered when the IME backend is compiled in; the
+    # binaries are host-adaptive (instruction-path cases self-skip where
+    # the host gate says no), so the same ctest set runs on any host.
+    # The numeric/paths sources reference the instruction-path symbol,
+    # so on RISC-V they see the same vector -march override as the
+    # backend files; elsewhere the declaration guard compiles them out.
+    if(RVCL_ENABLE_IME)
+        add_executable(rvcl_ime_pack tests/ime_pack_test.cpp)
+        target_link_libraries(rvcl_ime_pack PRIVATE rvcl rvcl_test_golden)
+        add_test(NAME ime_pack COMMAND rvcl_ime_pack)
+
+        add_executable(rvcl_ime_numeric tests/ime_numeric_test.cpp)
+        target_link_libraries(rvcl_ime_numeric PRIVATE rvcl rvcl_test_golden)
+        add_test(NAME ime_numeric COMMAND rvcl_ime_numeric)
+        add_test(NAME ime_numeric_c COMMAND rvcl_ime_numeric --c-only)
+
+        add_executable(rvcl_ime_paths tests/ime_paths_test.cpp)
+        target_link_libraries(rvcl_ime_paths PRIVATE rvcl)
+        add_test(NAME ime_paths COMMAND rvcl_ime_paths)
+
+        # Concurrent run() on the hardware entry with a pre-packed B: the
+        # shared packed workspace must stay read-only across M slices. The
+        # case self-skips where the run-time gate reports the path absent.
+        add_executable(rvcl_ime_concurrent tests/ime_concurrent_test.cpp)
+        target_link_libraries(rvcl_ime_concurrent PRIVATE rvcl rvcl_test_golden)
+        add_test(NAME ime_concurrent COMMAND rvcl_ime_concurrent)
+
+        # One entry per RVCL_IME_KERNEL value: the knob is read once per
+        # process, so each value gets its own fresh-process invocation.
+        foreach(knob IN ITEMS auto c ime bogus)
+            add_test(NAME ime_paths_env_${knob} COMMAND rvcl_ime_paths)
+            set_tests_properties(ime_paths_env_${knob}
+                PROPERTIES ENVIRONMENT "RVCL_IME_KERNEL=${knob}")
+        endforeach()
+
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv" AND RVCL_IME_MARCH)
+            set_source_files_properties(
+                tests/ime_numeric_test.cpp tests/ime_paths_test.cpp
+                PROPERTIES COMPILE_OPTIONS "-march=${RVCL_IME_MARCH}")
+        endif()
+    endif()
 
     # Corpus registration: one line per corpus file -> one modeC ctest
     # target running the differential (the assertion engine) over it.
@@ -606,6 +701,11 @@ if(RVCL_BUILD_BENCH)
     target_link_libraries(
             rvcl_bench PRIVATE rvcl m rvcl_test_golden rvcl_test_dtype_ops
             rvcl_test_op_slots)
+    # kernel-only measurement for the IME f16 entries needs the backend's
+    # packing and selector entry points (internal header).
+    if(RVCL_ENABLE_IME)
+        target_compile_definitions(rvcl_bench PRIVATE RVCL_ENABLE_IME_BUILD)
+    endif()
 endif()
 
 # ------------------------------------------------------------------ install

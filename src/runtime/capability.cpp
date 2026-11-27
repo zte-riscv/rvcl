@@ -56,20 +56,26 @@ static pthread_mutex_t g_cap_mutex = PTHREAD_MUTEX_INITIALIZER;
  * same mutex so a registration racing the first build is serialized either
  * before the probes are captured or after the window closes. */
 static rvcl_vendor_probe_fn g_probes[RVCL_MAX_VENDOR_PROBES];
+/* Lowest feature id each probe may append. Public vendor probes are confined
+ * to the vendor range; the internal in-tree channel (see
+ * capability_internal.h) may also claim standard ids. */
+static unsigned g_probe_min_id[RVCL_MAX_VENDOR_PROBES];
 static int g_num_probes;
 static int g_probes_locked;
 
 /* ------------------------------------------------------- probe sanitizer
  *
  * Whatever a probe appends is filtered before it enters the snapshot:
- * only vendor-range ids are kept, an id already present is dropped
- * (append-only, never overwrite), and an over-full table rolls back to
- * the pre-probe count so a misbehaving probe cannot overflow or clobber
- * standard features. */
-static void sanitize_probe_increment(rvcl_capability_t *cap, int num_before) {
+ * only ids at or above the probe's floor are kept (the vendor range for a
+ * public plugin probe, the standard range for the internal in-tree
+ * channel), an id already present is dropped (append-only, never
+ * overwrite), and an over-full table rolls back to the pre-probe count so
+ * a misbehaving probe cannot overflow or clobber other features. */
+static void sanitize_probe_increment(
+        rvcl_capability_t *cap, int num_before, unsigned min_id) {
     int n = num_before;
     for (int i = num_before; i < cap->num_features; i++) {
-        if (cap->features[i].id < RVCL_FEATURE_VENDOR_FIRST) continue;
+        if ((unsigned)cap->features[i].id < min_id) continue;
         int dup = 0;
         for (int j = 0; j < n; j++)
             if (cap->features[j].id == cap->features[i].id) dup = 1;
@@ -86,10 +92,13 @@ static void run_vendor_probes(rvcl_capability_t *cap) {
      * window closes no registration can add to the array, so the copy is
      * stable for the duration of the build. */
     rvcl_vendor_probe_fn probes[RVCL_MAX_VENDOR_PROBES];
+    unsigned min_ids[RVCL_MAX_VENDOR_PROBES];
     int num = 0;
     pthread_mutex_lock(&g_cap_mutex);
-    for (int i = 0; i < g_num_probes; i++)
+    for (int i = 0; i < g_num_probes; i++) {
         probes[i] = g_probes[i];
+        min_ids[i] = g_probe_min_id[i];
+    }
     num = g_num_probes;
     pthread_mutex_unlock(&g_cap_mutex);
 
@@ -100,7 +109,7 @@ static void run_vendor_probes(rvcl_capability_t *cap) {
             cap->num_features = num_before;
             continue;
         }
-        sanitize_probe_increment(cap, num_before);
+        sanitize_probe_increment(cap, num_before, min_ids[i]);
     }
 }
 
@@ -154,6 +163,18 @@ static void detect_compiletime(rvcl_capability_t *cap) {
     cap->num_features = n;
 }
 
+/* Append-only merge rule of the runtime layer: a feature may be added
+ * when absent, but nothing already present is ever removed or
+ * downgraded — the compile-time view is a lower bound. Shared with
+ * backend probes so they follow the same rule. */
+void rvcl_capability_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
+    if (rvcl_capability_has(cap, id)) return;
+    if (cap->num_features >= RVCL_MAX_FEATURES) return;
+    cap->features[cap->num_features].id = id;
+    cap->features[cap->num_features].value = 1;
+    cap->num_features++;
+}
+
 /* ------------------------------------------------------------- VLEN probe
  *
  * Reads VLEN in bits from the vlenb CSR (VLEN/8, U-mode readable
@@ -164,13 +185,23 @@ static void detect_compiletime(rvcl_capability_t *cap) {
  * (vlenb is a power of two, at most VLEN 65536 bits) keeps value=1.
  */
 #if defined(__riscv)
+/* VLEN in bits from the vlenb CSR; 0 when the value is not a sane
+ * power-of-two width. Callers ensure V is confirmed first: the CSR read
+ * traps on a core without the vector extension. */
+static int read_vlenb_bits(uint32_t *bits) {
+    unsigned long vlenb;
+    __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
+    if (vlenb < 1 || vlenb > 8192 || (vlenb & (vlenb - 1)) != 0) return 0;
+    *bits = (uint32_t)vlenb * 8;
+    return 1;
+}
+
 static void fill_rvv_vlen(rvcl_capability_t *cap) {
+    uint32_t bits;
+    if (!read_vlenb_bits(&bits)) return;
     for (int i = 0; i < cap->num_features; i++) {
         if (cap->features[i].id != RVCL_FEATURE_RVV) continue;
-        unsigned long vlenb;
-        __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
-        if (vlenb >= 1 && vlenb <= 8192 && (vlenb & (vlenb - 1)) == 0)
-            cap->features[i].value = (uint32_t)vlenb * 8;
+        cap->features[i].value = bits;
         break;
     }
 }
@@ -179,7 +210,6 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 /* Runtime layer: hwprobe (Linux 6.4+). Absent or failing probes keep the
  * compile-time view; detection failure degrades instead of erroring. */
 #if defined(__riscv) && defined(__linux__)
-#include <unistd.h>
 #include <asm/hwprobe.h>
 #include <sys/syscall.h>
 
@@ -193,17 +223,6 @@ static void fill_rvv_vlen(rvcl_capability_t *cap) {
 #define RISCV_HWPROBE_IMA_V (1 << 2)
 #endif
 #endif
-
-/* Append-only merge rule of the runtime layer: a feature may be added
- * when absent, but nothing already present is ever removed or
- * downgraded — the compile-time view is a lower bound. */
-static void cap_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id) {
-    if (rvcl_capability_has(cap, id)) return;
-    if (cap->num_features >= RVCL_MAX_FEATURES) return;
-    cap->features[cap->num_features].id = id;
-    cap->features[cap->num_features].value = 1;
-    cap->num_features++;
-}
 
 static void detect_runtime(rvcl_capability_t *cap) {
     struct riscv_hwprobe pairs[] = {
@@ -227,7 +246,7 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * where they exist: each bit below can only add a feature, never
      * contradict the compile-time view. */
     const int has_rvv = (ext & RISCV_HWPROBE_IMA_V) != 0;
-    if (has_rvv) cap_add_feature(cap, RVCL_FEATURE_RVV);
+    if (has_rvv) rvcl_capability_add_feature(cap, RVCL_FEATURE_RVV);
 
 /* FP16 is a single feature bit: either Zvfh (native fp16 arithmetic)
  * or Zvfhmin (conversion-only) counts. The bit macros exist only in
@@ -242,12 +261,12 @@ static void detect_runtime(rvcl_capability_t *cap) {
 #if defined(RISCV_HWPROBE_EXT_ZVFHMIN)
         has_fp16 |= (ext & RISCV_HWPROBE_EXT_ZVFHMIN) != 0;
 #endif
-        if (has_fp16) cap_add_feature(cap, RVCL_FEATURE_FP16);
+        if (has_fp16) rvcl_capability_add_feature(cap, RVCL_FEATURE_FP16);
     }
 #endif
 #if defined(RISCV_HWPROBE_EXT_ZVFBFMIN)
     if ((ext & RISCV_HWPROBE_EXT_ZVFBFMIN) != 0)
-        cap_add_feature(cap, RVCL_FEATURE_BF16);
+        rvcl_capability_add_feature(cap, RVCL_FEATURE_BF16);
 #endif
 
     /* VLEN upgrade: safe whenever V is confirmed. hwprobe reporting V is
@@ -255,7 +274,7 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * macro covered the no-hwprobe return above. When hwprobe explicitly
      * reports no V on a compile-time-V build the environment is broken
      * — keep the degraded value=1 rather than trusting a CSR read. */
-    if (has_rvv) fill_rvv_vlen(cap);
+    if (has_rvv) { fill_rvv_vlen(cap); }
 }
 #else
 static void detect_runtime(rvcl_capability_t *cap) {
@@ -360,6 +379,20 @@ void rvcl_capability_test_override(const rvcl_capability_t *cap) {
     rvcl_dispatch_cache_clear();
 }
 
+/* Host detection, run at most once per process. The magic static
+ * serializes concurrent first calls; the probe registration window closes
+ * before the build (capability.h contract), so the snapshot content is
+ * fixed from here on and a later registration cannot change it. */
+static const rvcl_capability_t *host_capability(void) {
+    static rvcl_capability_t g_cap = [] {
+        pthread_mutex_lock(&g_cap_mutex);
+        g_probes_locked = 1;
+        pthread_mutex_unlock(&g_cap_mutex);
+        return build_capability();
+    }();
+    return &g_cap;
+}
+
 const rvcl_capability_t *rvcl_get_capability(void) {
     pthread_mutex_lock(&g_cap_mutex);
     if (g_cap_overridden) {
@@ -367,31 +400,57 @@ const rvcl_capability_t *rvcl_get_capability(void) {
         pthread_mutex_unlock(&g_cap_mutex);
         return overridden;
     }
-    /* First real snapshot access closes the probe registration window
-     * (capability.h contract): the snapshot content is fixed from here on,
-     * so a later registration cannot change what dispatch observes. */
-    g_probes_locked = 1;
     pthread_mutex_unlock(&g_cap_mutex);
-
-    static rvcl_capability_t g_cap = build_capability();
-    return &g_cap;
+    return host_capability();
 }
 
-rvcl_status_t rvcl_capability_register_vendor_probe(
-        rvcl_vendor_probe_fn probe) {
+/* Host snapshot accessor for run-time hard gates: it never returns the
+ * test override, so a synthetic feature set can drive selection but can
+ * never make hardware-only code execute. */
+const rvcl_capability_t *rvcl_capability_host(void) {
+    return host_capability();
+}
+
+static rvcl_status_t register_probe(
+        rvcl_vendor_probe_fn probe, unsigned min_id) {
     if (!probe) return RVCL_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock(&g_cap_mutex);
     if (g_probes_locked) {
         pthread_mutex_unlock(&g_cap_mutex);
         return RVCL_ERROR_ALREADY_INITIALIZED;
     }
+    /* Registration is idempotent while the window is open: the same probe
+     * reached through the same channel twice (e.g. a backend's pre-main
+     * constructor plus library init) is one registration. Appending it
+     * again would run it twice at the snapshot build and consume a second
+     * table slot, which could fail an otherwise valid later registration
+     * on a full table. */
+    for (int i = 0; i < g_num_probes; i++) {
+        if (g_probes[i] == probe && g_probe_min_id[i] == min_id) {
+            pthread_mutex_unlock(&g_cap_mutex);
+            return RVCL_SUCCESS;
+        }
+    }
     if (g_num_probes >= RVCL_MAX_VENDOR_PROBES) {
         pthread_mutex_unlock(&g_cap_mutex);
         return RVCL_ERROR_OUT_OF_MEMORY;
     }
-    g_probes[g_num_probes++] = probe;
+    g_probes[g_num_probes] = probe;
+    g_probe_min_id[g_num_probes] = min_id;
+    g_num_probes++;
     pthread_mutex_unlock(&g_cap_mutex);
     return RVCL_SUCCESS;
+}
+
+rvcl_status_t rvcl_capability_register_vendor_probe(
+        rvcl_vendor_probe_fn probe) {
+    return register_probe(probe, RVCL_FEATURE_VENDOR_FIRST);
+}
+
+rvcl_status_t rvcl_capability_register_probe(rvcl_vendor_probe_fn probe) {
+    /* Standard ids start at RVCL_FEATURE_RV64; everything below (NONE) is
+     * not a real feature and is dropped by the sanitizer's floor. */
+    return register_probe(probe, RVCL_FEATURE_RV64);
 }
 
 /* SIGILL-guarded csrr: the CSR may not exist on this core, and capability

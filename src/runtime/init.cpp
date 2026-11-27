@@ -59,12 +59,32 @@ rvcl_status_t rvcl_rvv_register_inner_product_portable(void);
  * ordering habit. */
 rvcl_status_t rvcl_rvv_register_pooling(void);
 rvcl_status_t rvcl_rvv_register_pooling_portable(void);
-/* ime/vme/ame backends: experimental, land in v0.2/v0.3 */
+/* ime backend: f16 matrix-extension GEMM. Registers before RVV so that
+ * equal-cost ties resolve to the more specialized entry, and contributes
+ * its capability probe before the snapshot is first built. */
+rvcl_status_t rvcl_ime_register(void);
+rvcl_status_t rvcl_ime_register_portable(void);
+rvcl_status_t ime_register_capability_probe(void);
+/* vme/ame backends: experimental, land in v0.3 */
 
 /* Registration failures propagate: a partially registered backend set
  * must not hide behind a successful init. */
 static rvcl_status_t register_all(void) {
     rvcl_status_t st = RVCL_SUCCESS;
+#if defined(RVCL_ENABLE_IME_BUILD)
+    /* IME before RVV: the tie-break between equal-cost candidates is
+     * registration order, and the hardware matrix entry is the more
+     * specialized one. Each call is a no-op on the build flavor whose
+     * entry it does not own. The probe registration must precede any
+     * capability query; a closed window (the snapshot was already built)
+     * means it is in place and is not an error. */
+    st = ime_register_capability_probe();
+    if (st != RVCL_SUCCESS && st != RVCL_ERROR_ALREADY_INITIALIZED) return st;
+    st = rvcl_ime_register();
+    if (st != RVCL_SUCCESS) return st;
+    st = rvcl_ime_register_portable();
+    if (st != RVCL_SUCCESS) return st;
+#endif
 #if defined(RVCL_ENABLE_RVV_BUILD)
     /* Dedicated tiers (high -> low) + generic, vector builds only. */
     st = rvcl_rvv_register();

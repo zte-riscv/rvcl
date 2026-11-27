@@ -688,21 +688,27 @@ static void tc11_table_invariant(void) {
 }
 
 /* TC-AC1-12: builtin order = dedicated (high tier -> low), then generic,
- * then fallback. Dedicated and generic entries must declare the vector
- * features they depend on. The grouping invariant is checked per operation
- * family (matmul here): other operators, e.g. the GEMV entries sharing the
- * f32 tuple, are ordered and grouped the same way within their own family,
- * but a cross-family interleave must not disturb this check. */
+ * then fallback. Dedicated and generic entries must declare the features
+ * they depend on. The grouping invariant is checked per operation family
+ * (matmul here): other operators, e.g. the GEMV entries sharing the f32
+ * tuple, are ordered and grouped the same way within their own family, but
+ * a cross-family interleave must not disturb this check.
+ *
+ * Two dedicated families can coexist on one tuple: the RVV tiers (which
+ * must descend) and a specialized matrix entry (a dedicated tier that
+ * does not require RVV, e.g. the IME backend). The specialized family is
+ * registered first and is its own class, so the RVV descent check and the
+ * "one generic entry" rule apply to the RVV family alone. */
 static void tc12_builtin_order(void) {
     printf("TC-AC1-12 builtin registration order\n");
     const int n = rvcl_registry_count();
-    const int vector = vector_build();
 
     for (int pass = 0; pass < 2; pass++) {
         const rvcl_dtype_t key = pass == 0 ? RVCL_DTYPE_FP32 : RVCL_DTYPE_FP16;
-        int prev_cls = -1; /* 0 dedicated, 1 generic, 2 fallback */
+        int prev_cls = -1; /* 0 specialized, 1 RVV dedicated, 2 RVV
+                               generic, 3 fallback */
         int prev_tier = 1 << 30;
-        int seen = 0, generic_count = 0;
+        int seen = 0, rvv_dedicated = 0, rvv_generic = 0;
         int group_ok = 1;
         for (int i = 0; i < n; i++) {
             const rvcl_kernel_desc_t *kd = rvcl_registry_get(i);
@@ -711,33 +717,43 @@ static void tc12_builtin_order(void) {
                 continue;
             seen++;
 
+            const int is_rvv = has_feature(kd, RVCL_FEATURE_RVV);
             int cls;
             if (kd->vlen_tier != RVCL_VLEN_TIER_ANY) {
-                cls = 0;
-                if (!has_feature(kd, RVCL_FEATURE_RVV)) group_ok = 0;
-                if (pass == 1 && !has_feature(kd, RVCL_FEATURE_FP16))
-                    group_ok = 0;
-                /* tiers must strictly descend among consecutive
-                 * dedicated entries */
-                if (prev_cls == 0 && (int)kd->vlen_tier >= prev_tier)
-                    group_ok = 0;
+                if (is_rvv) {
+                    cls = 1;
+                    rvv_dedicated++;
+                    if (pass == 1 && !has_feature(kd, RVCL_FEATURE_FP16))
+                        group_ok = 0;
+                    /* tiers must strictly descend among consecutive RVV
+                     * dedicated entries */
+                    if (prev_cls == 1 && (int)kd->vlen_tier >= prev_tier)
+                        group_ok = 0;
+                } else {
+                    /* a dedicated tier outside the RVV family must
+                     * declare the feature that justifies it */
+                    cls = 0;
+                    if (!has_feature(kd, RVCL_FEATURE_IME)) group_ok = 0;
+                }
                 prev_tier = (int)kd->vlen_tier;
-            } else if (has_feature(kd, RVCL_FEATURE_RVV)) {
-                cls = 1; /* generic vector variant */
-                generic_count++;
+            } else if (is_rvv) {
+                cls = 2; /* generic vector variant */
+                rvv_generic++;
                 if (pass == 1 && !has_feature(kd, RVCL_FEATURE_FP16))
                     group_ok = 0;
             } else {
-                cls = 2; /* fallback: no vector feature requirement */
+                cls = 3; /* fallback: no vector feature requirement */
                 if (kd->max_m != 0 || kd->max_n != 0 || kd->max_k != 0)
                     group_ok = 0;
             }
             if (cls < prev_cls) group_ok = 0; /* never go backwards */
             prev_cls = cls;
         }
-        /* Vector builds expose exactly one generic entry per tuple;
-         * other builds must have no RVV entry at all. */
-        if (vector ? generic_count != 1 : generic_count != 0) group_ok = 0;
+        /* One generic entry per tuple when the RVV family is present;
+         * a tuple served only by the portable fallback carries none. */
+        if (rvv_generic > 1) group_ok = 0;
+        if (rvv_dedicated > 0 && rvv_generic != 1) group_ok = 0;
+        if (rvv_dedicated == 0 && rvv_generic != 0) group_ok = 0;
         if (pass == 0) CHECK(group_ok && seen >= 2, "f32 group ordered");
         if (pass == 1) CHECK(group_ok && seen >= 1, "f16 group ordered");
     }

@@ -69,7 +69,10 @@ RVCL_API const rvcl_capability_t *rvcl_get_capability(void);
  * rather than silently ignoring the probe. The accepted probes are invoked
  * during the single-threaded snapshot build, so no probe is ever run
  * concurrently with another. Registered probes persist for the process
- * lifetime and cannot be unregistered.
+ * lifetime and cannot be unregistered. Registration is idempotent while the
+ * window is open: registering the same probe again returns RVCL_SUCCESS and
+ * leaves the table unchanged, so a probe reached from both a constructor and
+ * an explicit init call runs once at the snapshot build.
  *
  * Sanitization: whatever a probe appends is filtered before it becomes
  * part of the snapshot — only feature ids in the vendor range

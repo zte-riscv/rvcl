@@ -88,6 +88,34 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # IME backend tier on the x86 CI: the matrix-extension micro-kernels
+  # compile anywhere (the instruction path is guarded by __riscv_vector),
+  # so this job exercises the portable packing, selection and numerics
+  # of the backend on a host without the extension — the C path is the
+  # correctness carrier where the hardware path cannot run.
+  x86-ime:
+    name: ubuntu-24.04 / gcc / ninja / IME portable
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout rvcl
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The wheel skips the apt index refresh; the runner python is outside
+      # the PEP 668 externally-managed environment.
+      - name: Install ninja
+        run: python -m pip install ninja
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DRVCL_ENABLE_IME=ON -DRVCL_ENABLE_WERROR=ON -DRVCL_TEST_SET=ci
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # ASan + UBSan build on the x86 CI. This is the recurring evidence for the
   # attack surface SECURITY.md self-describes: stride/dims validation, integer
   # overflow in size/stride math (rvcl_tensor_bytes, workspace sizing) and

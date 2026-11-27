@@ -19,8 +19,9 @@
 /* Declarations shared between the library and its test executables only.
  * This header is deliberately outside include/rvcl/: it is not part of the
  * public API, is never installed, and carries no stability promise. It gives
- * tests the VLEN-tier vocabulary dispatch consumes and a hook to replace the
- * process capability snapshot with a synthetic one. */
+ * tests the VLEN-tier vocabulary dispatch consumes, a hook to replace the
+ * process capability snapshot with a synthetic one, and the append-only
+ * feature helper the in-tree backend probes share with the detector. */
 
 #ifndef RVCL_CAPABILITY_INTERNAL_H
 #define RVCL_CAPABILITY_INTERNAL_H
@@ -41,6 +42,29 @@ extern "C" {
 RVCL_API int rvcl_capability_vlen_tier(const rvcl_capability_t *cap);
 
 /*
+ * Append-only feature merge used inside a capability probe: adds id with
+ * value 1 when absent, leaves an existing entry untouched, and is a no-op
+ * on a full table. Shared by the runtime detector and in-tree backend
+ * probes so both follow one rule. Not public API, no stability promise.
+ */
+void rvcl_capability_add_feature(rvcl_capability_t *cap, rvcl_feature_id_t id);
+
+/*
+ * In-tree backend probe registration, not a public API, no stability
+ * promise. Exported for the test executables, not installed as API.
+ * Same registration window, invocation and sanitization contract
+ * as rvcl_capability_register_vendor_probe(), except that the probe may
+ * also append standard feature ids: an in-tree backend owns the silicon
+ * knowledge for a standard feature (e.g. a matrix extension proven from
+ * sysfs), so the generic detector need not carry vendor specifics. The
+ * append-only rule still holds (an id already present is not overwritten),
+ * and the standard-vendor split keeps an out-of-tree plugin unable to
+ * claim a standard feature through the public channel.
+ */
+RVCL_API rvcl_status_t rvcl_capability_register_probe(
+        rvcl_vendor_probe_fn probe);
+
+/*
  * Test facility, not a public API, no stability promise.
  * Replaces the process capability snapshot with a copy of *cap;
  * cap == NULL restores the host detection result (host detection
@@ -54,6 +78,14 @@ RVCL_API int rvcl_capability_vlen_tier(const rvcl_capability_t *cap);
  * during their single-threaded setup phase.
  */
 RVCL_API void rvcl_capability_test_override(const rvcl_capability_t *cap);
+
+/*
+ * Host detection result, ignoring any test override: what this process
+ * can really execute. Backend run-time gates use it so an injected
+ * snapshot can never make hardware-only code run. Detection happens at
+ * most once per process.
+ */
+RVCL_API const rvcl_capability_t *rvcl_capability_host(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

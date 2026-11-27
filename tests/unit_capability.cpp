@@ -272,7 +272,6 @@ static void case_query_semantics(void) {
 
     /* Ids no detection layer ever reports must stay absent on any host. */
     static const rvcl_feature_id_t never[] = {
-            RVCL_FEATURE_IME,
             RVCL_FEATURE_VME,
             RVCL_FEATURE_AME,
             RVCL_FEATURE_FP32,
@@ -285,6 +284,24 @@ static void case_query_semantics(void) {
                 || rvcl_capability_get(cap, never[i]) != NULL)
             absent_ok = 0;
     CHECK(absent_ok, "undetected feature ids report absent");
+
+    /* The matrix extension is a run-time-only feature: it is reported only
+     * where the whole process affinity mask can execute it, and a report
+     * implies the vector tier and fp16 channel the kernel requires. */
+#if !defined(__riscv)
+    CHECK(!rvcl_capability_has(cap, RVCL_FEATURE_IME),
+            "non-riscv host never reports the matrix extension");
+#else
+    {
+        const int has_ime = rvcl_capability_has(cap, RVCL_FEATURE_IME);
+        const rvcl_feature_t *rvvx = rvcl_capability_get(cap, RVCL_FEATURE_RVV);
+        const int implies = !has_ime
+                || ((rvvx && rvvx->value >= RVCL_VLEN_TIER_1024)
+                        && rvcl_capability_has(cap, RVCL_FEATURE_FP16));
+        CHECK(implies,
+                "a reported matrix extension implies vlen>=1024 and fp16");
+    }
+#endif
 
     CHECK(!rvcl_capability_has(NULL, RVCL_FEATURE_RV64), "has(NULL) is false");
     CHECK(rvcl_capability_get(NULL, RVCL_FEATURE_RV64) == NULL,
@@ -680,6 +697,93 @@ static int vendor_probe_late_case(void) {
     return g_failures ? 1 : 0;
 }
 
+/* --------------------------------------------- internal probe channel
+ *
+ * The in-tree channel (capability_internal.h) shares the vendor channel's
+ * registration window and append-only sanitizer, but admits standard
+ * feature ids so a backend that owns the silicon knowledge of a standard
+ * feature can contribute it. A standard id must survive; RVCL_FEATURE_NONE
+ * is below the channel's floor and must be dropped; a registration after
+ * the first query must be refused like any other.
+ */
+static rvcl_status_t internal_probe_std(rvcl_capability_t *cap) {
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        cap->features[cap->num_features].id = RVCL_FEATURE_INT8;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        cap->features[cap->num_features].id = RVCL_FEATURE_NONE;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static int internal_probe_case(void) {
+    printf("internal probe: standard id admitted, NONE dropped\n");
+    if (rvcl_capability_register_probe(internal_probe_std) != RVCL_SUCCESS) {
+        printf("  FAIL: probe registration (line %d)\n", __LINE__);
+        return 1;
+    }
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    const rvcl_capability_t *cap = rvcl_get_capability();
+    CHECK(rvcl_capability_has(cap, RVCL_FEATURE_INT8),
+            "standard id appended by an in-tree probe survives");
+    CHECK(!rvcl_capability_has(cap, RVCL_FEATURE_NONE),
+            "RVCL_FEATURE_NONE below the channel floor is dropped");
+    CHECK(rvcl_capability_register_probe(internal_probe_std)
+                    == RVCL_ERROR_ALREADY_INITIALIZED,
+            "late internal-probe registration returns ALREADY_INITIALIZED");
+    printf(g_failures ? "INTERNAL-PROBE: %d failure(s)\n"
+                      : "INTERNAL-PROBE: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
+/* ------------------------------------------- probe registration idempotence
+ *
+ * A backend may reach the same registration from a pre-main constructor and
+ * again from library init while the probe window is still open. The second
+ * call must be a no-op: one table slot and one snapshot-build invocation,
+ * never a duplicate that doubles the probe's work and can fill the table
+ * ahead of a later registration.
+ */
+static int g_idempotent_probe_runs;
+
+static rvcl_status_t idempotent_probe(rvcl_capability_t *cap) {
+    g_idempotent_probe_runs++;
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = (rvcl_feature_id_t)0x1004;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static int probe_idempotent_case(void) {
+    printf("probe registration: duplicate registration is a no-op\n");
+    CHECK(rvcl_capability_register_probe(idempotent_probe) == RVCL_SUCCESS,
+            "first registration succeeds");
+    CHECK(rvcl_capability_register_probe(idempotent_probe) == RVCL_SUCCESS,
+            "duplicate registration while the window is open succeeds");
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    const rvcl_capability_t *cap = rvcl_get_capability(); /* builds */
+    CHECK(g_idempotent_probe_runs == 1,
+            "probe runs once at the snapshot build");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_has(cap, (rvcl_feature_id_t)0x1004),
+            "feature appended by the single run survives");
+    CHECK(rvcl_capability_register_probe(idempotent_probe)
+                    == RVCL_ERROR_ALREADY_INITIALIZED,
+            "registration after the window closes is still refused");
+    printf(g_failures ? "PROBE-IDEMPOTENT: %d failure(s)\n"
+                      : "PROBE-IDEMPOTENT: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
 /* ------------------------------------------------------- probe sanitization
  *
  * U-P2-4: whatever a probe appends is filtered before it reaches the
@@ -968,6 +1072,10 @@ int main(int argc, char **argv) {
         return vendor_probe_noreg_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-late") == 0)
         return vendor_probe_late_case();
+    if (argc > 1 && strcmp(argv[1], "--probe-internal") == 0)
+        return internal_probe_case();
+    if (argc > 1 && strcmp(argv[1], "--probe-idempotent") == 0)
+        return probe_idempotent_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-sanitize") == 0)
         return vendor_probe_sanitize_case();
     if (argc > 1 && strcmp(argv[1], "--snapshot-dedup") == 0)

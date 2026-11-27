@@ -217,6 +217,8 @@ jobs:
       # RVCL_ENABLE_OMP is enabled so the compile database covers the built-in
       # OpenMP scheduler TU and its test (with -fopenmp), letting clang-tidy
       # analyze them; libomp-18-dev above supplies the omp.h they include.
+      # RVCL_ENABLE_IME puts the optional backend's sources into the database
+      # as well, so its files are analyzed like every other touched file.
       - name: Configure (compile database)
         if: steps.collect.outputs.has_files == 'true'
         run: |
@@ -224,7 +226,8 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-18 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DRVCL_TEST_SET=ci \
-            -DRVCL_ENABLE_OMP=ON
+            -DRVCL_ENABLE_OMP=ON \
+            -DRVCL_ENABLE_IME=ON
 
       - name: Run clang-tidy-18
         if: steps.collect.outputs.has_files == 'true'
