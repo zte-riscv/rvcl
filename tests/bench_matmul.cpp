@@ -431,8 +431,7 @@ static void bench_pack_only(void *p) {
     const case_t *cs = pc->cs;
 #if defined(RVCL_ENABLE_IME_BUILD)
     if (pc->is_ime) {
-        ime_pack_b_tiles(pc->b, pc->dst, cs->m, cs->n, cs->k,
-                sizeof(uint16_t));
+        ime_pack_b_tiles(pc->b, pc->dst, cs->m, cs->n, cs->k, sizeof(uint16_t));
         return;
     }
 #endif
@@ -911,7 +910,8 @@ int main(int argc, char **argv) {
                     && strstr(kname, "_ime_") != NULL;
 #endif
 
-            konly_ctx_t kc = {.cs = &cs,
+            konly_ctx_t kc = {
+                    .cs = &cs,
                     .packed = NULL,
                     .gemm = NULL,
                     .gemm_mxfp8 = NULL,
@@ -922,13 +922,16 @@ int main(int argc, char **argv) {
             size_t pbytes = 0;
 #if defined(RVCL_ENABLE_IME_BUILD)
             if (is_ime) {
-                /* IME f16 case: the IME selector, resolved by name when
-                 * --path forces one, else its auto policy. */
-                kc.ime_gemm = path ? ime_pick_gemm_f16_by_name(path)
-                                   : ime_pick_gemm_f16();
+                /* An explicit name forces that micro-kernel; "auto" (like
+                 * an absent --path) defers to the policy entry, which also
+                 * honours RVCL_IME_KERNEL. Reading the knob here keeps the
+                 * measured entry the one the backend factory binds. */
+                const int ime_force = path && strcmp(path, "auto") != 0;
+                kc.ime_gemm = ime_force ? ime_pick_gemm_f16_by_name(path)
+                                        : ime_pick_gemm_f16();
                 if (!kc.ime_gemm) {
                     fprintf(stderr, "error: --path=%s is unavailable for %s\n",
-                            path, dtstr);
+                            ime_force ? path : "auto", dtstr);
                     rig_release(&rig);
                     free_case(&cs);
                     return 2;
@@ -943,8 +946,7 @@ int main(int argc, char **argv) {
                  * Block-scale dtypes (MXFP8/NVFP4/MXFP4) use the
                  * block-scale selector (distinct function type carrying
                  * the scale tensors). */
-                const int is_block_scale
-                        = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
+                const int is_block_scale = dop->dtype == RVCL_DTYPE_MXFP8_E4M3
                         || dop->dtype == RVCL_DTYPE_MXFP8_E5M2
                         || dop->dtype == RVCL_DTYPE_NVFP4
                         || dop->dtype == RVCL_DTYPE_MXFP4;
@@ -995,8 +997,8 @@ int main(int argc, char **argv) {
                 rvcl_tensor_init(&b_dst, &pd, packed);
 #if defined(RVCL_ENABLE_IME_BUILD)
                 if (is_ime)
-                    ime_pack_b_tiles(&b_src, &b_dst, cs.m, cs.n, cs.k,
-                            sizeof(uint16_t));
+                    ime_pack_b_tiles(
+                            &b_src, &b_dst, cs.m, cs.n, cs.k, sizeof(uint16_t));
                 else
 #endif
                     rvv_pack_b_panel(&b_src, &b_dst, cs.m, cs.n, cs.k, elt);
@@ -1006,7 +1008,8 @@ int main(int argc, char **argv) {
                     ? time_once(bench_kernel_only, &kc)
                     : time_best_of(bench_kernel_only, &kc, reps);
 
-            pack_ctx_t pc = {.cs = &cs,
+            pack_ctx_t pc = {
+                    .cs = &cs,
                     .b = &b_src,
                     .dst = &b_dst,
 #if defined(RVCL_ENABLE_IME_BUILD)
