@@ -273,9 +273,7 @@ static void detect_runtime(rvcl_capability_t *cap) {
      * macro covered the no-hwprobe return above. When hwprobe explicitly
      * reports no V on a compile-time-V build the environment is broken
      * — keep the degraded value=1 rather than trusting a CSR read. */
-    if (has_rvv) {
-        fill_rvv_vlen(cap);
-    }
+    if (has_rvv) { fill_rvv_vlen(cap); }
 }
 #else
 static void detect_runtime(rvcl_capability_t *cap) {
@@ -419,6 +417,18 @@ static rvcl_status_t register_probe(
     if (g_probes_locked) {
         pthread_mutex_unlock(&g_cap_mutex);
         return RVCL_ERROR_ALREADY_INITIALIZED;
+    }
+    /* Registration is idempotent while the window is open: the same probe
+     * reached through the same channel twice (e.g. a backend's pre-main
+     * constructor plus library init) is one registration. Appending it
+     * again would run it twice at the snapshot build and consume a second
+     * table slot, which could fail an otherwise valid later registration
+     * on a full table. */
+    for (int i = 0; i < g_num_probes; i++) {
+        if (g_probes[i] == probe && g_probe_min_id[i] == min_id) {
+            pthread_mutex_unlock(&g_cap_mutex);
+            return RVCL_SUCCESS;
+        }
     }
     if (g_num_probes >= RVCL_MAX_VENDOR_PROBES) {
         pthread_mutex_unlock(&g_cap_mutex);

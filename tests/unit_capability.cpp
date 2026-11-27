@@ -741,6 +741,49 @@ static int internal_probe_case(void) {
     return g_failures ? 1 : 0;
 }
 
+/* ------------------------------------------- probe registration idempotence
+ *
+ * A backend may reach the same registration from a pre-main constructor and
+ * again from library init while the probe window is still open. The second
+ * call must be a no-op: one table slot and one snapshot-build invocation,
+ * never a duplicate that doubles the probe's work and can fill the table
+ * ahead of a later registration.
+ */
+static int g_idempotent_probe_runs;
+
+static rvcl_status_t idempotent_probe(rvcl_capability_t *cap) {
+    g_idempotent_probe_runs++;
+    if (cap->num_features < RVCL_MAX_FEATURES) {
+        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+        cap->features[cap->num_features].id = (rvcl_feature_id_t)0x1004;
+        cap->features[cap->num_features].value = 1;
+        cap->num_features++;
+    }
+    return RVCL_SUCCESS;
+}
+
+static int probe_idempotent_case(void) {
+    printf("probe registration: duplicate registration is a no-op\n");
+    CHECK(rvcl_capability_register_probe(idempotent_probe) == RVCL_SUCCESS,
+            "first registration succeeds");
+    CHECK(rvcl_capability_register_probe(idempotent_probe) == RVCL_SUCCESS,
+            "duplicate registration while the window is open succeeds");
+    CHECK(rvcl_init() == RVCL_SUCCESS, "init succeeds");
+    const rvcl_capability_t *cap = rvcl_get_capability(); /* builds */
+    CHECK(g_idempotent_probe_runs == 1,
+            "probe runs once at the snapshot build");
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+    CHECK(rvcl_capability_has(cap, (rvcl_feature_id_t)0x1004),
+            "feature appended by the single run survives");
+    CHECK(rvcl_capability_register_probe(idempotent_probe)
+                    == RVCL_ERROR_ALREADY_INITIALIZED,
+            "registration after the window closes is still refused");
+    printf(g_failures ? "PROBE-IDEMPOTENT: %d failure(s)\n"
+                      : "PROBE-IDEMPOTENT: all passed\n",
+            g_failures);
+    return g_failures ? 1 : 0;
+}
+
 /* ------------------------------------------------------- probe sanitization
  *
  * U-P2-4: whatever a probe appends is filtered before it reaches the
@@ -1031,6 +1074,8 @@ int main(int argc, char **argv) {
         return vendor_probe_late_case();
     if (argc > 1 && strcmp(argv[1], "--probe-internal") == 0)
         return internal_probe_case();
+    if (argc > 1 && strcmp(argv[1], "--probe-idempotent") == 0)
+        return probe_idempotent_case();
     if (argc > 1 && strcmp(argv[1], "--vendor-probe-sanitize") == 0)
         return vendor_probe_sanitize_case();
     if (argc > 1 && strcmp(argv[1], "--snapshot-dedup") == 0)

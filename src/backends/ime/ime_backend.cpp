@@ -162,8 +162,9 @@ rvcl_status_t ime_register_capability_probe(void) {
  * constructor covers an application that queries capability before
  * rvcl_init(); library init calls the same function again so a build
  * where constructor ordering (or a static-link dead-strip) skipped it
- * still registers before dispatch. Both calls are idempotent: a closed
- * window returns ALREADY_INITIALIZED, which init treats as done. */
+ * still registers before dispatch. Both calls are idempotent: registering
+ * the already-registered probe is a no-op, and a closed window returns
+ * ALREADY_INITIALIZED, which init treats as done. */
 __attribute__((constructor)) static void ime_probe_register(void) {
     (void)ime_register_capability_probe();
 }

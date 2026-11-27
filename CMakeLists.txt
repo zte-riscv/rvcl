@@ -459,6 +459,10 @@ if(RVCL_BUILD_TESTS)
     # dropped, late registration refused (fresh process, same window).
     add_test(NAME unit_capability_probe_internal
         COMMAND rvcl_unit_capability --probe-internal)
+    # Duplicate registration of the same probe while the window is open is
+    # a no-op: one table slot, one snapshot-build run.
+    add_test(NAME unit_capability_probe_idempotent
+        COMMAND rvcl_unit_capability --probe-idempotent)
     add_test(NAME unit_capability_vendor_probe_sanitize
         COMMAND rvcl_unit_capability --vendor-probe-sanitize)
     add_test(NAME unit_capability_vendor_hint
